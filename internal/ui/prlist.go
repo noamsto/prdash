@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/noamsto/prdash/internal/cache"
@@ -12,13 +13,15 @@ import (
 )
 
 type Model struct {
-	dir    string
-	filter string
-	cache  *cache.Cache
-	runner gh.Runner
-	table  table.Model
-	prs    []gh.PR
-	err    error
+	dir         string
+	filter      string
+	cache       *cache.Cache
+	runner      gh.Runner
+	table       table.Model
+	prs         []gh.PR
+	err         error
+	filtering   bool
+	filterInput textinput.Model
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -31,15 +34,22 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		}),
 		table.WithFocused(true),
 	)
-	return Model{dir: dir, filter: filter, cache: c, table: t}
+	ti := textinput.New()
+	ti.Prompt = "/"
+	return Model{dir: dir, filter: filter, cache: c, table: t, filterInput: ti}
 }
 
 func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	m.prs = prs
-	rows := make([]table.Row, 0, len(prs))
-	for _, p := range prs {
+	m.applyFilter()
+}
+
+func (m *Model) applyFilter() {
+	shown := filterPRs(m.prs, m.filterInput.Value())
+	rows := make([]table.Row, 0, len(shown))
+	for _, p := range shown {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("#%d", p.Number), p.Title, p.Author.Login, p.CIState(),
 		})
@@ -93,7 +103,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 	case tea.KeyMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
+		if m.filtering {
+			switch msg.String() {
+			case "esc":
+				m.filtering = false
+				m.filterInput.SetValue("")
+				m.filterInput.Blur()
+				m.applyFilter()
+				return m, nil
+			case "enter":
+				m.filtering = false
+				m.filterInput.Blur()
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.applyFilter()
+			return m, cmd
+		}
+		switch msg.String() {
+		case "/":
+			m.filtering = true
+			return m, m.filterInput.Focus()
+		case "q", "ctrl+c":
 			return m, tea.Quit
 		}
 	}
@@ -103,6 +135,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.filtering {
+		return m.filterInput.View() + "\n" + m.table.View()
+	}
 	if len(m.prs) == 0 && m.err == nil {
 		return "Loading PRs…  (q to quit)"
 	}
