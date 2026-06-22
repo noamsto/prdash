@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -61,12 +62,13 @@ func (m *Model) hydrate() {
 	if m.cache == nil {
 		return
 	}
-	e, ok := m.cache.Get(cache.Key("pr", m.filter, 20, schemaVer))
+	e, ok := m.cache.Get(cache.Key("pr", m.filter, defaultLimit, schemaVer))
 	if !ok {
 		return
 	}
 	var prs []gh.PR
 	if err := json.Unmarshal(e.Rows, &prs); err != nil {
+		slog.Debug("cache unmarshal failed", "err", err)
 		return
 	}
 	m.setPRs(prs)
@@ -77,7 +79,7 @@ func (m *Model) Hydrate() { m.hydrate() }
 func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
 	dir, filter := m.dir, m.filter
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.PRListArgs(filter, 20)...)
+		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
 		if err != nil {
 			return fetchFailedMsg{err}
 		}
@@ -96,7 +98,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prsFetchedMsg:
 		m.setPRs(msg.prs)
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(cache.Key("pr", m.filter, 20, schemaVer), msg.raw)
+			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
 		}
 		return m, nil
 	case fetchFailedMsg:
@@ -149,3 +151,7 @@ func (m Model) View() string {
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
 const schemaVer = "v2"
+
+// defaultLimit caps the PR list fetch. The fetch, cache write, and cache
+// hydrate must all key on the same value or hydration silently misses.
+const defaultLimit = 20
