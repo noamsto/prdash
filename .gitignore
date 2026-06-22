@@ -1,0 +1,9 @@
+result
+result-*
+.direnv
+.claude/settings.local.json
+.pre-commit-config.yaml
+
+# Go
+/prdash
+/bin/
