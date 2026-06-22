@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -14,6 +15,7 @@ type Model struct {
 	dir    string
 	filter string
 	cache  *cache.Cache
+	runner gh.Runner
 	table  table.Model
 	prs    []gh.PR
 	err    error
@@ -32,6 +34,8 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	return Model{dir: dir, filter: filter, cache: c, table: t}
 }
 
+func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
+
 func (m *Model) setPRs(prs []gh.PR) {
 	m.prs = prs
 	rows := make([]table.Row, 0, len(prs))
@@ -43,7 +47,39 @@ func (m *Model) setPRs(prs []gh.PR) {
 	m.table.SetRows(rows)
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m *Model) hydrate() {
+	if m.cache == nil {
+		return
+	}
+	e, ok := m.cache.Get(cache.Key("pr", m.filter, 20, schemaVer))
+	if !ok {
+		return
+	}
+	var prs []gh.PR
+	if err := json.Unmarshal(e.Rows, &prs); err != nil {
+		return
+	}
+	m.setPRs(prs)
+}
+
+func (m *Model) Hydrate() { m.hydrate() }
+
+func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
+	dir, filter := m.dir, m.filter
+	return func() tea.Msg {
+		raw, err := r.Run(dir, gh.PRListArgs(filter, 20)...)
+		if err != nil {
+			return fetchFailedMsg{err}
+		}
+		prs, err := gh.ParsePRs(raw)
+		if err != nil {
+			return fetchFailedMsg{err}
+		}
+		return prsFetchedMsg{prs: prs, raw: raw}
+	}
+}
+
+func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
