@@ -79,8 +79,7 @@ func (m *Model) moveCursor(delta int) {
 	m.renderList()
 }
 
-// renderList rebuilds the viewport content from the shown rows and scrolls so
-// the cursor row is visible. Each row is 2 visual lines (+1 blank spacer).
+// renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
 	listW := l.ListWidth

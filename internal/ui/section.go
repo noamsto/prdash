@@ -119,15 +119,13 @@ func labelSlice(ls []gh.Label) []string {
 }
 func joinSpace(s []string) string { return strings.Join(s, " ") }
 
-// renderItemRow renders the airy 2-line form:
-//
-//	‹marker›‹num› ‹title›                         ‹ci›
-//	       ‹author · age · labels · review›
 const metaIndent = "         " // 9 cols — aligns the meta line under the title
 
 // renderItemRow renders the airy 2-line form, truncating title + meta so each
-// row is exactly two lines and never wraps past the pane width (the CI glyph
-// hugs the right edge of line 1).
+// row is exactly two lines and never wraps past the pane width:
+//
+//	‹marker›‹num› ‹title›                         ‹ci›
+//	       ‹author · age · labels · review›
 func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string) string {
 	w := o.Width
 	if w < 10 {

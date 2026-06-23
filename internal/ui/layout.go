@@ -6,7 +6,7 @@ const sideThreshold = 120
 // chromeRows is the vertical space taken by the header + spacer + status bar.
 const chromeRows = 3
 
-// Layout is the computed geometry for one frame. Pure output of computeLayout.
+// Layout is the computed geometry for one frame.
 type Layout struct {
 	ShowSide      bool
 	ListWidth     int
@@ -15,7 +15,7 @@ type Layout struct {
 	ContentHeight int // rows available for the list/side bodies
 }
 
-// computeLayout derives pane geometry from the terminal size. Pure + tested.
+// computeLayout derives pane geometry from the terminal size.
 func computeLayout(w, h int) Layout {
 	ch := h - chromeRows
 	if ch < 1 {
