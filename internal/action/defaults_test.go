@@ -15,3 +15,12 @@ func TestDefaultsHaveEnterAndExits(t *testing.T) {
 		t.Fatal("r must be the rerun-failed builtin")
 	}
 }
+
+func TestDefaultsHaveBulkW(t *testing.T) {
+	if w := DefaultPRActions()["W"]; w.Scope != "per-selected" || !w.ExitsTUI {
+		t.Fatalf("PR W must be per-selected + exits-tui: %+v", w)
+	}
+	if w := DefaultIssueActions()["W"]; w.Scope != "per-selected" {
+		t.Fatalf("issue W must be per-selected: %+v", w)
+	}
+}

@@ -77,3 +77,32 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	}
 	return m.runAction(*a)
 }
+
+// runBulk applies a per-selected action to each selected row (or the cursor row
+// if none selected), writing one handoff line each, then quits if exits-tui.
+func (m *Model) runBulk(a action.Action) tea.Cmd {
+	idx := m.sel.indices()
+	if len(idx) == 0 {
+		idx = []int{m.table.Cursor()}
+	}
+	path := os.Getenv("PRDASH_ACTION_FILE")
+	for _, i := range idx {
+		if i < 0 || i >= m.section.Len() {
+			continue
+		}
+		v := m.section.VarsAt(i)
+		v.Repo = m.repo
+		argv, err := a.ExpandArgv(v)
+		if err != nil {
+			m.err = err
+			continue
+		}
+		if a.ExitsTUI && path != "" {
+			_ = action.AppendHandoff(path, a.Key, argv)
+		}
+	}
+	if a.ExitsTUI {
+		return tea.Quit
+	}
+	return nil
+}

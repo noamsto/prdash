@@ -14,5 +14,21 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Builtin: "copy"}, Scope: "single"},
 		"o": {Key: "o", Label: "Open in browser",
 			Command: Command{Argv: []string{"gh", "pr", "view", "{{.Number}}", "--web"}}, Scope: "single"},
+		"W": {Key: "W", Label: "Bulk worktrees",
+			Command:  Command{Argv: []string{"wt", "switch", "pr:{{.Number}}"}},
+			ExitsTUI: true, Scope: "per-selected"},
+	}
+}
+
+func DefaultIssueActions() map[string]Action {
+	return map[string]Action{
+		"enter": {Key: "enter", Label: "Open worktree",
+			Command:  Command{Argv: []string{"wt", "switch", "-c", "{{.Branch}}"}},
+			ExitsTUI: true, Scope: "single"},
+		"W": {Key: "W", Label: "Bulk worktrees",
+			Command:  Command{Argv: []string{"wt", "switch", "-c", "{{.Branch}}"}},
+			ExitsTUI: true, Scope: "per-selected"},
+		"o": {Key: "o", Label: "Open in browser",
+			Command: Command{Argv: []string{"gh", "issue", "view", "{{.Number}}", "--web"}}, Scope: "single"},
 	}
 }

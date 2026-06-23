@@ -157,6 +157,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionCursor = 0
 				if i >= 0 && i < len(acts) {
 					a := acts[i]
+					if a.Scope == "per-selected" {
+						return m, m.runBulk(a)
+					}
 					if a.Confirm {
 						m.pending = &a
 						return m, nil
@@ -201,6 +204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
+				if a.Scope == "per-selected" {
+					return m, m.runBulk(a)
+				}
 				if a.Confirm {
 					m.pending = &a
 					return m, nil
