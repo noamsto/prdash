@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
 
@@ -120,4 +121,4 @@ func labelSlice(ls []gh.Label) []string {
 	}
 	return out
 }
-func joinSpace(s []string) string { return fmt.Sprint(s) } // simple; refine rendering later
+func joinSpace(s []string) string { return strings.Join(s, " ") }

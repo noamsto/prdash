@@ -107,6 +107,7 @@ func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
+		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
@@ -128,6 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filtering = false
 				m.filterInput.SetValue("")
 				m.filterInput.Blur()
+				m.sel.clear() // shown set changes; stale indexes would point elsewhere
 				m.applyFilter()
 				return m, nil
 			case "enter":
@@ -137,6 +139,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.sel.clear() // editing the query reorders the shown set
 			m.applyFilter()
 			return m, cmd
 		}
@@ -198,7 +201,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "V":
 			for i := 0; i < m.section.Len(); i++ {
-				m.sel.toggle(i)
+				if !m.sel.has(i) {
+					m.sel.toggle(i)
+				}
 			}
 			m.applyFilter()
 			return m, nil
