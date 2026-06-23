@@ -17,6 +17,10 @@ func DefaultPRActions() map[string]Action {
 		"W": {Key: "W", Label: "Bulk worktrees",
 			Command:  Command{Argv: []string{"wt", "switch", "pr:{{.Number}}"}},
 			ExitsTUI: true, Scope: "per-selected"},
+		"u": {Key: "u", Label: "Update branch",
+			Command: Command{Argv: []string{"gh", "pr", "update-branch", "{{.Number}}"}}, Scope: "single"},
+		"ready": {Key: "ready", Label: "Mark ready",
+			Command: Command{Argv: []string{"gh", "pr", "ready", "{{.Number}}"}}, Scope: "single"},
 	}
 }
 

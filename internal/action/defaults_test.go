@@ -24,3 +24,18 @@ func TestDefaultsHaveBulkW(t *testing.T) {
 		t.Fatalf("issue W must be per-selected: %+v", w)
 	}
 }
+
+func TestDefaultsHaveUpdateAndReady(t *testing.T) {
+	d := DefaultPRActions()
+	u := d["u"]
+	if u.Command.Argv[0] != "gh" || u.Command.Argv[1] != "pr" || u.Command.Argv[2] != "update-branch" {
+		t.Fatalf("u must be gh pr update-branch: %+v", u.Command.Argv)
+	}
+	if u.ExitsTUI {
+		t.Fatal("update-branch is inline, not exits-tui")
+	}
+	ready := d["ready"]
+	if ready.Label != "Mark ready" || ready.Command.Argv[2] != "ready" {
+		t.Fatalf("ready action wrong: %+v", ready)
+	}
+}
