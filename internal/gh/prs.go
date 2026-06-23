@@ -22,17 +22,21 @@ type Label struct {
 }
 
 type PR struct {
-	Number            int       `json:"number"`
-	Title             string    `json:"title"`
-	Author            struct{ Login string `json:"login"` } `json:"author"`
-	ReviewDecision    string    `json:"reviewDecision"`
-	StatusCheckRollup []Check   `json:"statusCheckRollup"`
-	Labels            []Label   `json:"labels"`
-	Assignees         []struct{ Login string `json:"login"` } `json:"assignees"`
-	HeadRefName       string    `json:"headRefName"`
-	BaseRefName       string    `json:"baseRefName"`
-	URL               string    `json:"url"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	ReviewDecision    string  `json:"reviewDecision"`
+	StatusCheckRollup []Check `json:"statusCheckRollup"`
+	Labels            []Label `json:"labels"`
+	Assignees         []struct {
+		Login string `json:"login"`
+	} `json:"assignees"`
+	HeadRefName string    `json:"headRefName"`
+	BaseRefName string    `json:"baseRefName"`
+	URL         string    `json:"url"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func PRListArgs(filter string, limit int) []string {

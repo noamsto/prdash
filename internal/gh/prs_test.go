@@ -45,9 +45,9 @@ func TestFetchPRsParses(t *testing.T) {
 
 func TestCIState(t *testing.T) {
 	cases := []struct {
-		name    string
-		rollup  []Check
-		want    string
+		name   string
+		rollup []Check
+		want   string
 	}{
 		{"empty", nil, "none"},
 		{"all pass", []Check{{State: "SUCCESS"}, {State: "SUCCESS"}}, "pass"},
