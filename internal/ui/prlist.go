@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -23,6 +24,10 @@ type Model struct {
 	err         error
 	filtering   bool
 	filterInput textinput.Model
+	repo        string
+	actions     map[string]action.Action
+	shown       []gh.PR
+	pending     *action.Action
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -37,10 +42,11 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	)
 	ti := textinput.New()
 	ti.Prompt = "/"
-	return Model{dir: dir, filter: filter, cache: c, table: t, filterInput: ti}
+	return Model{dir: dir, filter: filter, cache: c, table: t, filterInput: ti, actions: action.DefaultPRActions()}
 }
 
 func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
+func (m *Model) SetRepo(repo string)   { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	m.prs = prs
@@ -48,9 +54,9 @@ func (m *Model) setPRs(prs []gh.PR) {
 }
 
 func (m *Model) applyFilter() {
-	shown := filterPRs(m.prs, m.filterInput.Value())
-	rows := make([]table.Row, 0, len(shown))
-	for _, p := range shown {
+	m.shown = filterPRs(m.prs, m.filterInput.Value())
+	rows := make([]table.Row, 0, len(m.shown))
+	for _, p := range m.shown {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("#%d", p.Number), p.Title, p.Author.Login, p.CIState(),
 		})
@@ -129,6 +135,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.filterInput.Focus()
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		default:
+			if a, ok := m.actions[msg.String()]; ok {
+				if a.Confirm {
+					m.pending = &a
+					return m, nil
+				}
+				return m, m.runAction(a)
+			}
 		}
 	}
 	var cmd tea.Cmd

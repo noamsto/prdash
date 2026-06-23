@@ -17,7 +17,8 @@ func main() {
 	dir, _ := os.Getwd()
 	runner := gh.ExecRunner{}
 
-	if _, err := gh.CurrentRepo(runner, dir); err != nil {
+	repo, err := gh.CurrentRepo(runner, dir)
+	if err != nil {
 		if errors.Is(err, gh.ErrNoRepo) {
 			fmt.Fprintln(os.Stderr, "prdash: not in a GitHub repo")
 		} else {
@@ -35,6 +36,7 @@ func main() {
 
 	m := ui.NewModel(dir, "is:open author:@me", c)
 	m.SetRunner(runner)
+	m.SetRepo(repo)
 	m.Hydrate()
 
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
