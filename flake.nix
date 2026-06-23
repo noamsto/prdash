@@ -24,17 +24,18 @@
         config,
         ...
       }: {
-        packages.default = pkgs.buildGoModule {
+        packages.prdash = pkgs.buildGoModule {
           pname = "prdash";
           version = "0.1.0";
           src = ./.;
-          vendorHash = null; # null = stdlib only; set to "sha256-..." once deps land
+          vendorHash = "sha256-uDVN1hRzDndFANqkdCzKw8FKYa7trrmtqV4R7AGQTWM=";
           ldflags = ["-s" "-w"];
           meta = {
             description = "Lean, worktree-first PR/issue TUI";
             mainProgram = "prdash";
           };
         };
+        packages.default = config.packages.prdash;
 
         treefmt = {
           projectRootFile = "flake.nix";
