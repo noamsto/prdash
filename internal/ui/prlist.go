@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -15,19 +16,22 @@ import (
 )
 
 type Model struct {
-	dir         string
-	filter      string
-	cache       *cache.Cache
-	runner      gh.Runner
-	table       table.Model
-	prs         []gh.PR
-	err         error
-	filtering   bool
-	filterInput textinput.Model
-	repo        string
-	actions     map[string]action.Action
-	shown       []gh.PR
-	pending     *action.Action
+	dir          string
+	filter       string
+	cache        *cache.Cache
+	runner       gh.Runner
+	table        table.Model
+	prs          []gh.PR
+	err          error
+	filtering    bool
+	filterInput  textinput.Model
+	repo         string
+	actions      map[string]action.Action
+	shown        []gh.PR
+	pending      *action.Action
+	showActions  bool
+	actionFilter textinput.Model
+	actionCursor int
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -42,7 +46,9 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	)
 	ti := textinput.New()
 	ti.Prompt = "/"
-	return Model{dir: dir, filter: filter, cache: c, table: t, filterInput: ti, actions: action.DefaultPRActions()}
+	af := textinput.New()
+	af.Prompt = "› "
+	return Model{dir: dir, filter: filter, cache: c, table: t, filterInput: ti, actions: action.DefaultPRActions(), actionFilter: af}
 }
 
 func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
@@ -129,7 +135,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 			return m, cmd
 		}
+		if m.showActions {
+			switch msg.String() {
+			case "esc":
+				m.showActions = false
+				m.actionFilter.SetValue("")
+				m.actionFilter.Blur()
+				m.actionCursor = 0
+				return m, nil
+			case "enter":
+				acts := filterActions(m.actions, m.actionFilter.Value())
+				m.showActions = false
+				m.actionFilter.Blur()
+				m.actionFilter.SetValue("")
+				i := m.actionCursor
+				m.actionCursor = 0
+				if i >= 0 && i < len(acts) {
+					a := acts[i]
+					if a.Confirm {
+						m.pending = &a
+						return m, nil
+					}
+					return m, m.runAction(a)
+				}
+				return m, nil
+			case "up", "ctrl+k":
+				if m.actionCursor > 0 {
+					m.actionCursor--
+				}
+				return m, nil
+			case "down", "ctrl+j":
+				if m.actionCursor < len(filterActions(m.actions, m.actionFilter.Value()))-1 {
+					m.actionCursor++
+				}
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.actionFilter, cmd = m.actionFilter.Update(msg)
+			m.actionCursor = 0
+			return m, cmd
+		}
 		switch msg.String() {
+		case "a":
+			m.showActions = true
+			return m, m.actionFilter.Focus()
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
@@ -151,6 +200,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.showActions {
+		acts := filterActions(m.actions, m.actionFilter.Value())
+		var b strings.Builder
+		b.WriteString(m.actionFilter.View() + "\n")
+		for i, a := range acts {
+			cursor := "  "
+			if i == m.actionCursor {
+				cursor = "> "
+			}
+			b.WriteString(fmt.Sprintf("%s%-6s %s\n", cursor, a.Key, a.Label))
+		}
+		return b.String()
+	}
 	if m.filtering {
 		return m.filterInput.View() + "\n" + m.table.View()
 	}
