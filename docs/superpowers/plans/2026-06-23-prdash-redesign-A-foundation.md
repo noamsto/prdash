@@ -756,7 +756,7 @@ git commit -m "feat(ui): header + status bar + cursor-driven Update/View; remove
 - [ ] **Step 1: Build and run against a repo with PRs**
 
 ```bash
-go build -o /tmp/prdash-rd . 
+go build -o /tmp/prdash-rd .
 ```
 From a checkout with open PRs (e.g. the gh-dash checkout), run `/tmp/prdash-rd` in a real terminal (or via the tmux-interactive capture pattern). Verify, at several terminal widths:
 - Narrow (<120 cols): full-width airy 2-line list, **no side pane**, nothing overflows.
