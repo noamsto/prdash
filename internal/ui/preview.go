@@ -9,6 +9,7 @@ import (
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
+	"github.com/noamsto/prdash/internal/triage"
 )
 
 type prDetailMsg struct {
@@ -75,7 +76,8 @@ func (m Model) previewWidth() int {
 	return l.SideWidth
 }
 
-// previewPane renders the timeline for the cursor PR, or a loading/empty hint.
+// previewPane renders the triage card (if available) followed by the timeline,
+// or a loading/empty hint.
 func (m Model) previewPane() string {
 	v, ok := m.cursorVars()
 	if !ok {
@@ -85,7 +87,16 @@ func (m Model) previewPane() string {
 	if !cached {
 		return "Loading preview…"
 	}
-	return renderTimeline(preview.Timeline(d), m.previewN, m.previewWidth(), m.previewExpanded)
+	w := m.previewWidth()
+	var card string
+	if ps, ok := m.section.(*PRSection); ok {
+		card = renderCard(triage.Compute(ps.prAt(m.cursor), d), w)
+	}
+	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
+	if card == "" {
+		return timeline
+	}
+	return card + "\n" + timeline
 }
 
 // renderMain lays the list and (when wide) the contained side preview together.

@@ -43,6 +43,9 @@ func (s *PRSection) SetPRs(p []gh.PR)       { s.prs = p; s.shown = allIdx(len(p)
 func (s *PRSection) Len() int               { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int)     { s.shown = idx }
 
+// prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
+func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
+
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
