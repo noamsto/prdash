@@ -58,7 +58,10 @@ func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 		if it.Kind == preview.KindReview && it.State != "" {
 			hdr += " · " + it.State
 		}
-		body, _ := preview.Render(it.Body, width)
+		body, err := preview.Render(it.Body, width)
+		if err != nil {
+			body = it.Body // render failed; show the raw markdown rather than nothing
+		}
 		b.WriteString(hdr + "\n" + body + "\n")
 	}
 	return b.String()
@@ -68,7 +71,7 @@ func (m Model) previewWidth() int {
 	if m.width <= 0 {
 		return 40
 	}
-	w := m.width * 45 / 100
+	w := m.width*45/100 - 2 // -2 for the pane's left padding in tableWithPreview
 	if w < 20 {
 		w = 20
 	}
