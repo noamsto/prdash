@@ -24,3 +24,13 @@ func TestRunActionExitsTUIWritesHandoff(t *testing.T) {
 		t.Fatalf("handoff file not written: %v", err)
 	}
 }
+
+func TestConfirmDefaultNoCancels(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	a := action.Action{Key: "m", Confirm: true}
+	m.pending = &a
+	m.confirmAnswer(false) // default No
+	if m.pending != nil {
+		t.Fatal("pending should clear on No")
+	}
+}

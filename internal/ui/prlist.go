@@ -117,6 +117,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 	case tea.KeyMsg:
+		if m.pending != nil {
+			if msg.String() == "y" {
+				return m, m.confirmAnswer(true)
+			}
+			return m, m.confirmAnswer(false)
+		}
 		if m.filtering {
 			switch msg.String() {
 			case "esc":
@@ -200,6 +206,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.pending != nil {
+		n := 0
+		if cur := m.cursorPR(); cur != nil {
+			n = cur.Number
+		}
+		return fmt.Sprintf("%s #%d? y/N", m.pending.Label, n) + "\n" + m.table.View()
+	}
 	if m.showActions {
 		acts := filterActions(m.actions, m.actionFilter.Value())
 		var b strings.Builder

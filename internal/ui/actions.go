@@ -76,3 +76,12 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 	}
 }
+
+func (m *Model) confirmAnswer(yes bool) tea.Cmd {
+	a := m.pending
+	m.pending = nil
+	if !yes || a == nil {
+		return nil
+	}
+	return m.runAction(*a)
+}

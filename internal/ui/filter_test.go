@@ -11,7 +11,9 @@ func sample() []gh.PR {
 	a.Author.Login = "noam"
 	b := gh.PR{Number: 12, Title: "fix render", HeadRefName: "fix/render"}
 	b.Author.Login = "dlvhdr"
-	b.Assignees = []struct{ Login string `json:"login"` }{{Login: "noam"}}
+	b.Assignees = []struct {
+		Login string `json:"login"`
+	}{{Login: "noam"}}
 	return []gh.PR{a, b}
 }
 
