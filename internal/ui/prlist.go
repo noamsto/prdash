@@ -16,22 +16,26 @@ import (
 )
 
 type Model struct {
-	dir          string
-	filter       string
-	cache        *cache.Cache
-	runner       gh.Runner
-	table        table.Model
-	section      Section
-	err          error
-	filtering    bool
-	filterInput  textinput.Model
-	repo         string
-	actions      map[string]action.Action
-	pending      *action.Action
-	showActions  bool
-	actionFilter textinput.Model
-	actionCursor int
-	sel          selection
+	dir             string
+	filter          string
+	cache           *cache.Cache
+	runner          gh.Runner
+	table           table.Model
+	section         Section
+	err             error
+	filtering       bool
+	filterInput     textinput.Model
+	repo            string
+	actions         map[string]action.Action
+	pending         *action.Action
+	showActions     bool
+	actionFilter    textinput.Model
+	actionCursor    int
+	sel             selection
+	detail          map[int]gh.PRDetail
+	previewExpanded bool
+	previewN        int
+	width           int
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -45,7 +49,8 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	af := textinput.New()
 	af.Prompt = "› "
 	return Model{dir: dir, filter: filter, cache: c, table: t, section: sec,
-		filterInput: ti, actions: action.DefaultPRActions(), actionFilter: af}
+		filterInput: ti, actions: action.DefaultPRActions(), actionFilter: af,
+		detail: map[int]gh.PRDetail{}, previewN: 3}
 }
 
 func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
@@ -112,9 +117,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
 		}
-		return m, nil
+		return m, m.detailCmdForCursor()
 	case fetchFailedMsg:
 		m.err = msg.err
+		return m, nil
+	case prDetailMsg:
+		m.detail[msg.number] = msg.detail
+		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.table.SetWidth(msg.Width * 55 / 100)
 		return m, nil
 	case tea.KeyMsg:
 		if m.pending != nil {
@@ -207,6 +219,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.applyFilter()
 			return m, nil
+		case "tab":
+			m.previewExpanded = !m.previewExpanded
+			return m, nil
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
@@ -222,7 +237,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
-	return m, cmd
+	return m, tea.Batch(cmd, m.detailCmdForCursor())
 }
 
 func (m Model) View() string {
@@ -255,7 +270,7 @@ func (m Model) View() string {
 	if m.err != nil && m.section.Len() == 0 {
 		return "Error: " + m.err.Error() + "  (q to quit)"
 	}
-	return m.table.View() + "\n(q to quit)"
+	return m.tableWithPreview() + "\n(q to quit)"
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
