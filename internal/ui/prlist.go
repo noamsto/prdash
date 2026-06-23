@@ -31,6 +31,7 @@ type Model struct {
 	showActions  bool
 	actionFilter textinput.Model
 	actionCursor int
+	sel          selection
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -59,7 +60,13 @@ func (m *Model) setPRs(prs []gh.PR) {
 
 func (m *Model) applyFilter() {
 	m.section.SetShown(matchIdx(m.section.Haystacks(), m.filterInput.Value()))
-	m.table.SetRows(m.section.Rows())
+	rows := m.section.Rows()
+	for i := range rows {
+		if m.sel.has(i) {
+			rows[i][0] = "● " + rows[i][0]
+		}
+	}
+	m.table.SetRows(rows)
 }
 
 func (m *Model) hydrate() {
@@ -182,6 +189,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.filterInput.Focus()
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case " ":
+			m.sel.toggle(m.table.Cursor())
+			m.applyFilter()
+			return m, nil
+		case "V":
+			for i := 0; i < m.section.Len(); i++ {
+				m.sel.toggle(i)
+			}
+			m.applyFilter()
+			return m, nil
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Confirm {
