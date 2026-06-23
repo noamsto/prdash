@@ -17,3 +17,35 @@ func TestParsePRDetail(t *testing.T) {
 		t.Fatalf("reviews=%+v", d.Reviews)
 	}
 }
+
+func TestParsePRDetailMergeState(t *testing.T) {
+	d, err := ParsePRDetail([]byte(`{
+		"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","isDraft":false,
+		"reviewRequests":[{"login":"octocat"}],
+		"files":[{"path":"a.go","additions":10,"deletions":2},{"path":"b.go","additions":1,"deletions":1}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.MergeStateStatus != "BLOCKED" || d.Mergeable != "MERGEABLE" {
+		t.Fatalf("merge state not parsed: %+v", d)
+	}
+	if len(d.ReviewRequests) != 1 || d.ReviewRequests[0].Login != "octocat" {
+		t.Fatalf("review requests: %+v", d.ReviewRequests)
+	}
+	if d.Diffstat().Files != 2 || d.Diffstat().Additions != 11 || d.Diffstat().Deletions != 3 {
+		t.Fatalf("diffstat: %+v", d.Diffstat())
+	}
+}
+
+func TestCheckLabel(t *testing.T) {
+	if got := (Check{Name: "test (ubuntu)"}).Label(); got != "test (ubuntu)" {
+		t.Errorf("name-first: %q", got)
+	}
+	if got := (Check{WorkflowName: "CI"}).Label(); got != "CI" {
+		t.Errorf("workflow fallback: %q", got)
+	}
+	if got := (Check{Context: "ci/circleci"}).Label(); got != "ci/circleci" {
+		t.Errorf("context fallback: %q", got)
+	}
+}

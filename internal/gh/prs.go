@@ -9,12 +9,27 @@ import (
 
 var prFields = []string{
 	"number", "title", "author", "statusCheckRollup", "reviewDecision",
-	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt",
+	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt", "isDraft",
 }
 
 type Check struct {
-	State      string `json:"state"`
-	Conclusion string `json:"conclusion"`
+	State        string `json:"state"`
+	Conclusion   string `json:"conclusion"`
+	Name         string `json:"name"`         // CheckRun
+	WorkflowName string `json:"workflowName"` // CheckRun
+	Context      string `json:"context"`      // StatusContext (no name)
+}
+
+// Label is the display name for a check, handling the CheckRun/StatusContext union.
+func (c Check) Label() string {
+	switch {
+	case c.Name != "":
+		return c.Name
+	case c.WorkflowName != "":
+		return c.WorkflowName
+	default:
+		return c.Context
+	}
 }
 
 type Label struct {
@@ -37,6 +52,7 @@ type PR struct {
 	BaseRefName string    `json:"baseRefName"`
 	URL         string    `json:"url"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	IsDraft     bool      `json:"isDraft"`
 }
 
 func PRListArgs(filter string, limit int) []string {
