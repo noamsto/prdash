@@ -68,14 +68,11 @@ func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 }
 
 func (m Model) previewWidth() int {
-	if m.width <= 0 {
+	l := computeLayout(m.width, m.height)
+	if !l.ShowSide {
 		return 40
 	}
-	w := m.width*45/100 - 2 // -2 for the pane's left padding in tableWithPreview
-	if w < 20 {
-		w = 20
-	}
-	return w
+	return l.SideWidth
 }
 
 // previewPane renders the timeline for the cursor PR, or a loading/empty hint.
@@ -91,8 +88,13 @@ func (m Model) previewPane() string {
 	return renderTimeline(preview.Timeline(d), m.previewN, m.previewWidth(), m.previewExpanded)
 }
 
-// tableWithPreview lays the list and preview pane side by side.
-func (m Model) tableWithPreview() string {
-	pane := lipgloss.NewStyle().PaddingLeft(2).Render(m.previewPane())
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.table.View(), pane)
+// renderMain lays the list and (when wide) the contained side preview together.
+func (m Model) renderMain() string {
+	l := computeLayout(m.width, m.height)
+	if !l.ShowSide {
+		return m.vp.View()
+	}
+	side := lipgloss.NewStyle().Width(l.SideWidth).Height(l.ContentHeight).
+		PaddingLeft(2).Render(m.previewPane())
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.vp.View(), side)
 }

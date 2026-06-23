@@ -8,10 +8,10 @@ import (
 	"github.com/noamsto/prdash/internal/action"
 )
 
-// cursorVars returns the template vars for the row under the table cursor, or
+// cursorVars returns the template vars for the row under the cursor, or
 // false if the cursor is out of range. Repo is injected from the model.
 func (m *Model) cursorVars() (action.Vars, bool) {
-	i := m.table.Cursor()
+	i := m.cursor
 	if i < 0 || i >= m.section.Len() {
 		return action.Vars{}, false
 	}
@@ -83,7 +83,7 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 func (m *Model) runBulk(a action.Action) tea.Cmd {
 	idx := m.sel.indices()
 	if len(idx) == 0 {
-		idx = []int{m.table.Cursor()}
+		idx = []int{m.cursor}
 	}
 	path := os.Getenv("PRDASH_ACTION_FILE")
 	for _, i := range idx {
