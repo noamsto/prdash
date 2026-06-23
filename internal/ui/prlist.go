@@ -94,7 +94,28 @@ func (m *Model) renderList() {
 	m.vp.Width = listW
 	m.vp.Height = l.ContentHeight
 	m.vp.SetContent(b.String())
-	m.vp.SetYOffset(m.cursor * 3) // 3 lines per row; keep cursor in view (good enough; refine live)
+	m.scrollToCursor()
+}
+
+// rowLines is the visual height of one rendered row: a 2-line body + 1 spacer.
+const rowLines = 3
+
+// scrollToCursor nudges the viewport offset only when the cursor row would fall
+// outside the visible window, so surrounding rows stay in view (no jump-to-top).
+func (m *Model) scrollToCursor() {
+	top := m.cursor * rowLines
+	bottom := top + rowLines - 1
+	off := m.vp.YOffset
+	switch {
+	case top < off:
+		off = top
+	case bottom >= off+m.vp.Height:
+		off = bottom - m.vp.Height + 1
+	}
+	if off < 0 {
+		off = 0
+	}
+	m.vp.SetYOffset(off)
 }
 
 func (m *Model) applyFilter() {
@@ -255,7 +276,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "tab":
 			m.previewExpanded = !m.previewExpanded
-			return m, nil
+			return m, m.detailCmdForCursor()
 		case "down", "j":
 			m.moveCursor(1)
 			return m, m.detailCmdForCursor()

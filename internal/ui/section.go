@@ -123,33 +123,55 @@ func joinSpace(s []string) string { return strings.Join(s, " ") }
 //
 //	‹marker›‹num› ‹title›                         ‹ci›
 //	       ‹author · age · labels · review›
+const metaIndent = "         " // 9 cols — aligns the meta line under the title
+
+// renderItemRow renders the airy 2-line form, truncating title + meta so each
+// row is exactly two lines and never wraps past the pane width (the CI glyph
+// hugs the right edge of line 1).
 func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string) string {
+	w := o.Width
+	if w < 10 {
+		w = 10 // floor keeps truncation sane before the first WindowSizeMsg
+	}
 	marker := "  "
 	if o.Selected {
 		marker = selMarkStyle.Render("● ")
 	}
-	head := fmt.Sprintf("%s%s  %s", marker, accentStyle.Render(num), title)
-	meta := dimStyle.Render(strings.TrimRight(author+" · "+age+metaTail(labels, review), " ·"))
-	line1 := fitLine(head, ci, o.Width)
-	line2 := "         " + meta
+	prefix := marker + accentStyle.Render(num) + "  "
+	ciW := lipgloss.Width(ci)
+	titleRoom := w - lipgloss.Width(prefix) - ciW - 1 // 1 = min gap before ci
+	left := prefix + truncate(title, titleRoom)
+	line1 := left
+	if ci != "" {
+		gap := w - lipgloss.Width(left) - ciW
+		if gap < 1 {
+			gap = 1
+		}
+		line1 = left + strings.Repeat(" ", gap) + ci
+	}
+	metaRaw := strings.TrimRight(author+" · "+age+metaTail(labels, review), " ·")
+	line2 := metaIndent + dimStyle.Render(truncate(metaRaw, w-len(metaIndent)))
 	body := line1 + "\n" + line2
 	if o.Focused {
-		body = cursorRowStyle.Width(o.Width).Render(body)
+		body = cursorRowStyle.Width(w).Render(body)
 	}
 	return body
 }
 
-// fitLine left-aligns left and right-aligns right within width (CI glyph hugs
-// the right edge); falls back to a single space when there's no room.
-func fitLine(left, right string, width int) string {
-	if right == "" {
-		return lipgloss.NewStyle().Width(width).Render(left)
+// truncate shortens a plain (unstyled) string to at most w display cells, adding
+// an ellipsis when it cuts. Safe only for plain text (the row title/meta).
+func truncate(s string, w int) string {
+	if w <= 0 {
+		return ""
 	}
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+	r := []rune(s)
+	if len(r) <= w {
+		return s
 	}
-	return left + strings.Repeat(" ", gap) + right
+	if w == 1 {
+		return "…"
+	}
+	return string(r[:w-1]) + "…"
 }
 
 func metaTail(labels, review string) string {

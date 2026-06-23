@@ -7,7 +7,6 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))  // blue
 	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // gray
-	mutedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("78"))  // green
 	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red
 	pendStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // yellow
