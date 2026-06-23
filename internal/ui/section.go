@@ -3,23 +3,30 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/issue"
 )
 
+// RowOpts controls how a section renders one row.
+type RowOpts struct {
+	Width    int
+	Focused  bool
+	Selected bool
+}
+
 type Section interface {
 	Kind() string
 	Filter() string
-	Columns() []table.Column
-	Rows() []table.Row // from the current (filtered) items
+	RenderRow(i int, o RowOpts) string // render shown-row i as an airy 2-line block
 	Len() int
 	VarsAt(i int) action.Vars
-	Haystacks() []string // for fuzzy filter (full item list)
-	SetShown(idx []int)  // indices (into the full list) the table currently shows
+	Haystacks() []string
+	SetShown(idx []int)
 }
 
 // --- PR section ---
@@ -36,18 +43,13 @@ func (s *PRSection) SetPRs(p []gh.PR)       { s.prs = p; s.shown = allIdx(len(p)
 func (s *PRSection) Len() int               { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int)     { s.shown = idx }
 
-func (s *PRSection) Columns() []table.Column {
-	return []table.Column{{Title: "#", Width: 6}, {Title: "Title", Width: 50},
-		{Title: "Author", Width: 14}, {Title: "CI", Width: 8}}
+func (s *PRSection) RenderRow(i int, o RowOpts) string {
+	p := s.prs[s.shown[i]]
+	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
+		p.Author.Login, ageString(p.UpdatedAt), labelNames(p.Labels),
+		reviewGlyph(p.ReviewDecision), ciGlyph(p.CIState()))
 }
-func (s *PRSection) Rows() []table.Row {
-	rows := make([]table.Row, 0, len(s.shown))
-	for _, i := range s.shown {
-		p := s.prs[i]
-		rows = append(rows, table.Row{fmt.Sprintf("#%d", p.Number), p.Title, p.Author.Login, p.CIState()})
-	}
-	return rows
-}
+
 func (s *PRSection) VarsAt(i int) action.Vars {
 	p := s.prs[s.shown[i]]
 	return action.Vars{Number: p.Number, Title: p.Title, HeadRefName: p.HeadRefName,
@@ -75,18 +77,12 @@ func (s *IssueSection) SetIssues(is []gh.Issue)   { s.issues = is; s.shown = all
 func (s *IssueSection) Len() int                  { return len(s.shown) }
 func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
 
-func (s *IssueSection) Columns() []table.Column {
-	return []table.Column{{Title: "#", Width: 6}, {Title: "Title", Width: 50},
-		{Title: "Author", Width: 14}, {Title: "Labels", Width: 20}}
+func (s *IssueSection) RenderRow(i int, o RowOpts) string {
+	is := s.issues[s.shown[i]]
+	return renderItemRow(o, fmt.Sprintf("#%d", is.Number), is.Title,
+		is.Author.Login, ageString(is.UpdatedAt), labelNames(is.Labels), "", "")
 }
-func (s *IssueSection) Rows() []table.Row {
-	rows := make([]table.Row, 0, len(s.shown))
-	for _, i := range s.shown {
-		is := s.issues[i]
-		rows = append(rows, table.Row{fmt.Sprintf("#%d", is.Number), is.Title, is.Author.Login, labelNames(is.Labels)})
-	}
-	return rows
-}
+
 func (s *IssueSection) VarsAt(i int) action.Vars {
 	is := s.issues[s.shown[i]]
 	return action.Vars{Number: is.Number, Title: is.Title, Author: is.Author.Login,
@@ -122,3 +118,75 @@ func labelSlice(ls []gh.Label) []string {
 	return out
 }
 func joinSpace(s []string) string { return strings.Join(s, " ") }
+
+// renderItemRow renders the airy 2-line form:
+//
+//	‹marker›‹num› ‹title›                         ‹ci›
+//	       ‹author · age · labels · review›
+func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string) string {
+	marker := "  "
+	if o.Selected {
+		marker = selMarkStyle.Render("● ")
+	}
+	head := fmt.Sprintf("%s%s  %s", marker, accentStyle.Render(num), title)
+	meta := dimStyle.Render(strings.TrimRight(author+" · "+age+metaTail(labels, review), " ·"))
+	line1 := fitLine(head, ci, o.Width)
+	line2 := "         " + meta
+	body := line1 + "\n" + line2
+	if o.Focused {
+		body = cursorRowStyle.Width(o.Width).Render(body)
+	}
+	return body
+}
+
+// fitLine left-aligns left and right-aligns right within width (CI glyph hugs
+// the right edge); falls back to a single space when there's no room.
+func fitLine(left, right string, width int) string {
+	if right == "" {
+		return lipgloss.NewStyle().Width(width).Render(left)
+	}
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func metaTail(labels, review string) string {
+	out := ""
+	if labels != "" {
+		out += " · " + labels
+	}
+	if review != "" {
+		out += " · " + review
+	}
+	return out
+}
+
+func reviewGlyph(decision string) string {
+	switch decision {
+	case "APPROVED":
+		return passStyle.Render("✓ appr")
+	case "CHANGES_REQUESTED":
+		return failStyle.Render("✎ changes")
+	case "REVIEW_REQUIRED":
+		return dimStyle.Render("◌ review")
+	default:
+		return ""
+	}
+}
+
+func ageString(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
