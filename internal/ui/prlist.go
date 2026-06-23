@@ -21,13 +21,12 @@ type Model struct {
 	cache        *cache.Cache
 	runner       gh.Runner
 	table        table.Model
-	prs          []gh.PR
+	section      Section
 	err          error
 	filtering    bool
 	filterInput  textinput.Model
 	repo         string
 	actions      map[string]action.Action
-	shown        []gh.PR
 	pending      *action.Action
 	showActions  bool
 	actionFilter textinput.Model
@@ -35,39 +34,32 @@ type Model struct {
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
+	sec := NewPRSection(filter)
 	t := table.New(
-		table.WithColumns([]table.Column{
-			{Title: "#", Width: 6},
-			{Title: "Title", Width: 50},
-			{Title: "Author", Width: 14},
-			{Title: "CI", Width: 8},
-		}),
+		table.WithColumns(sec.Columns()),
 		table.WithFocused(true),
 	)
 	ti := textinput.New()
 	ti.Prompt = "/"
 	af := textinput.New()
 	af.Prompt = "› "
-	return Model{dir: dir, filter: filter, cache: c, table: t, filterInput: ti, actions: action.DefaultPRActions(), actionFilter: af}
+	return Model{dir: dir, filter: filter, cache: c, table: t, section: sec,
+		filterInput: ti, actions: action.DefaultPRActions(), actionFilter: af}
 }
 
 func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
 func (m *Model) SetRepo(repo string)   { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
-	m.prs = prs
+	if s, ok := m.section.(*PRSection); ok {
+		s.SetPRs(prs)
+	}
 	m.applyFilter()
 }
 
 func (m *Model) applyFilter() {
-	m.shown = filterPRs(m.prs, m.filterInput.Value())
-	rows := make([]table.Row, 0, len(m.shown))
-	for _, p := range m.shown {
-		rows = append(rows, table.Row{
-			fmt.Sprintf("#%d", p.Number), p.Title, p.Author.Login, p.CIState(),
-		})
-	}
-	m.table.SetRows(rows)
+	m.section.SetShown(matchIdx(m.section.Haystacks(), m.filterInput.Value()))
+	m.table.SetRows(m.section.Rows())
 }
 
 func (m *Model) hydrate() {
@@ -208,8 +200,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if m.pending != nil {
 		n := 0
-		if cur := m.cursorPR(); cur != nil {
-			n = cur.Number
+		if v, ok := m.cursorVars(); ok {
+			n = v.Number
 		}
 		return fmt.Sprintf("%s #%d? y/N", m.pending.Label, n) + "\n" + m.table.View()
 	}
@@ -229,10 +221,10 @@ func (m Model) View() string {
 	if m.filtering {
 		return m.filterInput.View() + "\n" + m.table.View()
 	}
-	if len(m.prs) == 0 && m.err == nil {
+	if m.section.Len() == 0 && m.err == nil {
 		return "Loading PRs…  (q to quit)"
 	}
-	if m.err != nil && len(m.prs) == 0 {
+	if m.err != nil && m.section.Len() == 0 {
 		return "Error: " + m.err.Error() + "  (q to quit)"
 	}
 	return m.table.View() + "\n(q to quit)"

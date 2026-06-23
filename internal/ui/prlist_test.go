@@ -30,8 +30,9 @@ func TestHydrateFromCache(t *testing.T) {
 
 	m := NewModel("/repo", "is:open", c)
 	m.hydrate()
-	if len(m.prs) != 1 || m.prs[0].Number != 42 {
-		t.Fatalf("hydrate did not paint cached rows: %+v", m.prs)
+	sec := m.section.(*PRSection)
+	if len(sec.prs) != 1 || sec.prs[0].Number != 42 {
+		t.Fatalf("hydrate did not paint cached rows: %+v", sec.prs)
 	}
 	if len(m.table.Rows()) != 1 {
 		t.Fatal("table not painted from cache")

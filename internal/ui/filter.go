@@ -41,3 +41,17 @@ func filterPRs(prs []gh.PR, query string) []gh.PR {
 	}
 	return out
 }
+
+// matchIdx returns the indices of hay that fuzzy-match query, ranked by score.
+// Empty query returns all indices in order.
+func matchIdx(hay []string, query string) []int {
+	if strings.TrimSpace(query) == "" {
+		return allIdx(len(hay))
+	}
+	matches := fuzzy.Find(query, hay)
+	idx := make([]int, 0, len(matches))
+	for _, m := range matches {
+		idx = append(idx, m.Index)
+	}
+	return idx
+}

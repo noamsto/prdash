@@ -6,35 +6,27 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/noamsto/prdash/internal/action"
-	"github.com/noamsto/prdash/internal/gh"
 )
 
-func (m *Model) varsFor(p gh.PR) action.Vars {
-	return action.Vars{
-		Number: p.Number, Title: p.Title, HeadRefName: p.HeadRefName,
-		BaseRefName: p.BaseRefName, URL: p.URL, Author: p.Author.Login,
-		Repo: m.repo, Branch: p.HeadRefName,
-	}
-}
-
-// cursorPR returns the PR under the table cursor within the currently shown
-// (filtered) slice, or nil if out of range.
-func (m *Model) cursorPR() *gh.PR {
+// cursorVars returns the template vars for the row under the table cursor, or
+// false if the cursor is out of range. Repo is injected from the model.
+func (m *Model) cursorVars() (action.Vars, bool) {
 	i := m.table.Cursor()
-	if i < 0 || i >= len(m.shown) {
-		return nil
+	if i < 0 || i >= m.section.Len() {
+		return action.Vars{}, false
 	}
-	return &m.shown[i]
+	v := m.section.VarsAt(i)
+	v.Repo = m.repo
+	return v, true
 }
 
-// runAction executes a single-scope action against the cursor PR. exits-tui
+// runAction executes a single-scope action against the cursor row. exits-tui
 // actions write the handoff file and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
-	cur := m.cursorPR()
-	if cur == nil {
+	v, ok := m.cursorVars()
+	if !ok {
 		return nil
 	}
-	v := m.varsFor(*cur)
 
 	if a.ExitsTUI {
 		argv, err := a.ExpandArgv(v)
