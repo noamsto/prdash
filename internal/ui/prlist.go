@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -20,7 +20,10 @@ type Model struct {
 	filter          string
 	cache           *cache.Cache
 	runner          gh.Runner
-	table           table.Model
+	vp              viewport.Model
+	cursor          int // indexes the section's shown set
+	width           int
+	height          int
 	section         Section
 	err             error
 	filtering       bool
@@ -35,22 +38,18 @@ type Model struct {
 	detail          map[int]gh.PRDetail
 	previewExpanded bool
 	previewN        int
-	width           int
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
-	sec := NewPRSection(filter)
-	t := table.New(
-		table.WithColumns(sec.Columns()),
-		table.WithFocused(true),
-	)
 	ti := textinput.New()
 	ti.Prompt = "/"
 	af := textinput.New()
 	af.Prompt = "› "
-	return Model{dir: dir, filter: filter, cache: c, table: t, section: sec,
-		filterInput: ti, actions: action.DefaultPRActions(), actionFilter: af,
-		detail: map[int]gh.PRDetail{}, previewN: 3}
+	return Model{
+		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
+		vp: viewport.New(0, 0), filterInput: ti, actionFilter: af,
+		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 3,
+	}
 }
 
 func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
@@ -63,15 +62,50 @@ func (m *Model) setPRs(prs []gh.PR) {
 	m.applyFilter()
 }
 
+// moveCursor clamps the cursor to the shown set and keeps it visible.
+func (m *Model) moveCursor(delta int) {
+	n := m.section.Len()
+	if n == 0 {
+		m.cursor = 0
+		return
+	}
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= n {
+		m.cursor = n - 1
+	}
+	m.renderList()
+}
+
+// renderList rebuilds the viewport content from the shown rows and scrolls so
+// the cursor row is visible. Each row is 2 visual lines (+1 blank spacer).
+func (m *Model) renderList() {
+	l := computeLayout(m.width, m.height)
+	listW := l.ListWidth
+	var b strings.Builder
+	for i := 0; i < m.section.Len(); i++ {
+		b.WriteString(m.section.RenderRow(i, RowOpts{
+			Width: listW, Focused: i == m.cursor, Selected: m.sel.has(i),
+		}))
+		b.WriteString("\n\n")
+	}
+	m.vp.Width = listW
+	m.vp.Height = l.ContentHeight
+	m.vp.SetContent(b.String())
+	m.vp.SetYOffset(m.cursor * 3) // 3 lines per row; keep cursor in view (good enough; refine live)
+}
+
 func (m *Model) applyFilter() {
 	m.section.SetShown(matchIdx(m.section.Haystacks(), m.filterInput.Value()))
-	rows := m.section.Rows()
-	for i := range rows {
-		if m.sel.has(i) {
-			rows[i][0] = "● " + rows[i][0]
-		}
+	if m.cursor >= m.section.Len() {
+		m.cursor = m.section.Len() - 1
 	}
-	m.table.SetRows(rows)
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	m.renderList()
 }
 
 func (m *Model) hydrate() {
@@ -125,8 +159,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail[msg.number] = msg.detail
 		return m, nil
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.table.SetWidth(msg.Width * 55 / 100)
+		m.width, m.height = msg.Width, msg.Height
+		m.renderList()
 		return m, nil
 	case tea.KeyMsg:
 		if m.pending != nil {
@@ -208,8 +242,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case " ":
-			m.sel.toggle(m.table.Cursor())
-			m.applyFilter()
+			m.sel.toggle(m.cursor)
+			m.renderList()
 			return m, nil
 		case "V":
 			for i := 0; i < m.section.Len(); i++ {
@@ -217,11 +251,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sel.toggle(i)
 				}
 			}
-			m.applyFilter()
+			m.renderList()
 			return m, nil
 		case "tab":
 			m.previewExpanded = !m.previewExpanded
 			return m, nil
+		case "down", "j":
+			m.moveCursor(1)
+			return m, m.detailCmdForCursor()
+		case "up", "k":
+			m.moveCursor(-1)
+			return m, m.detailCmdForCursor()
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
@@ -235,9 +275,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	var cmd tea.Cmd
-	m.table, cmd = m.table.Update(msg)
-	return m, tea.Batch(cmd, m.detailCmdForCursor())
+	return m, nil
 }
 
 func (m Model) View() string {
@@ -246,31 +284,47 @@ func (m Model) View() string {
 		if v, ok := m.cursorVars(); ok {
 			n = v.Number
 		}
-		return fmt.Sprintf("%s #%d? y/N", m.pending.Label, n) + "\n" + m.table.View()
+		return m.header() + "\n" + accentStyle.Render(fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)) +
+			"\n" + m.renderMain()
 	}
 	if m.showActions {
 		acts := filterActions(m.actions, m.actionFilter.Value())
 		var b strings.Builder
 		b.WriteString(m.actionFilter.View() + "\n")
 		for i, a := range acts {
-			cursor := "  "
+			cur := "  "
 			if i == m.actionCursor {
-				cursor = "> "
+				cur = "> "
 			}
-			b.WriteString(fmt.Sprintf("%s%-6s %s\n", cursor, a.Key, a.Label))
+			b.WriteString(fmt.Sprintf("%s%-6s %s\n", cur, a.Key, a.Label))
 		}
 		return b.String()
 	}
 	if m.filtering {
-		return m.filterInput.View() + "\n" + m.table.View()
+		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()
 	}
 	if m.section.Len() == 0 && m.err == nil {
-		return "Loading PRs…  (q to quit)"
+		return m.header() + "\n\n" + dimStyle.Render("  Loading…") + "\n" + m.statusBar()
 	}
 	if m.err != nil && m.section.Len() == 0 {
-		return "Error: " + m.err.Error() + "  (q to quit)"
+		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
 	}
-	return m.tableWithPreview() + "\n(q to quit)"
+	return m.header() + "\n" + m.renderMain() + "\n" + m.statusBar()
+}
+
+// header is the top line: repo · filter · open count.
+func (m Model) header() string {
+	return headerStyle.Render("  "+m.repo) + dimStyle.Render(
+		fmt.Sprintf("   %s · %d open", m.filter, m.section.Len()))
+}
+
+// statusBar is the bottom key/context line.
+func (m Model) statusBar() string {
+	keys := "↑↓ move · → expand · / filter · a actions · space select · q quit"
+	if n := m.sel.count(); n > 0 {
+		keys = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · " + keys
+	}
+	return statusBarStyle.Render("  " + keys)
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.

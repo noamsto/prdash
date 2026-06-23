@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/noamsto/prdash/internal/cache"
@@ -15,11 +16,11 @@ func TestSetPRsBuildsRows(t *testing.T) {
 		{Number: 7, Title: "hello", HeadRefName: "feat/x"},
 		{Number: 9, Title: "world", HeadRefName: "fix/y"},
 	})
-	if got := len(m.table.Rows()); got != 2 {
-		t.Fatalf("table rows = %d, want 2", got)
+	if got := m.section.Len(); got != 2 {
+		t.Fatalf("shown len = %d, want 2", got)
 	}
-	if m.table.Rows()[0][0] != "#7" {
-		t.Errorf("first row number cell = %q, want #7", m.table.Rows()[0][0])
+	if !strings.Contains(m.section.RenderRow(0, RowOpts{Width: 80}), "#7") {
+		t.Fatalf("first row should render #7")
 	}
 }
 
@@ -34,7 +35,22 @@ func TestHydrateFromCache(t *testing.T) {
 	if len(sec.prs) != 1 || sec.prs[0].Number != 42 {
 		t.Fatalf("hydrate did not paint cached rows: %+v", sec.prs)
 	}
-	if len(m.table.Rows()) != 1 {
-		t.Fatal("table not painted from cache")
+	if m.section.Len() != 1 {
+		t.Fatal("section not painted from cache")
+	}
+}
+
+func TestViewShowsHeaderAndStatus(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.width, m.height = 100, 30
+	m.renderList()
+	out := m.View()
+	if !strings.Contains(out, "noamsto/prdash") {
+		t.Fatalf("header should show the repo: %q", out)
+	}
+	if !strings.Contains(out, "q quit") {
+		t.Fatalf("status bar should show key hints: %q", out)
 	}
 }
