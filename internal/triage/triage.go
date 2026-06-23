@@ -57,6 +57,9 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 	case mss == "BEHIND":
 		return Card{Kind: KindBehind, Headline: "Behind base",
 			ActionKey: "u", ActionLabel: "update branch"}
+	// BLOCKED is often caused by a missing review; when so, the next case shows
+	// the specific "awaiting review" card. Reserve this generic one for BLOCKED
+	// from other protections (e.g. unresolved threads).
 	case mss == "BLOCKED" && pr.ReviewDecision != "REVIEW_REQUIRED":
 		return Card{Kind: KindBlocked, Headline: "Blocked by branch protection",
 			JumpTab: "conversation"}
