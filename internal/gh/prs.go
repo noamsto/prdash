@@ -84,14 +84,10 @@ func (p PR) CIState() string {
 	}
 	pending, failed := false, false
 	for _, c := range p.StatusCheckRollup {
-		s := c.State
-		if s == "" {
-			s = c.Conclusion
-		}
-		switch s {
-		case "FAILURE", "ERROR", "TIMED_OUT", "CANCELLED":
+		switch c.Result() {
+		case "fail":
 			failed = true
-		case "PENDING", "QUEUED", "IN_PROGRESS", "":
+		case "pending":
 			pending = true
 		}
 	}
@@ -99,6 +95,22 @@ func (p PR) CIState() string {
 	case failed:
 		return "fail"
 	case pending:
+		return "pending"
+	default:
+		return "pass"
+	}
+}
+
+// Result collapses one check to pass/fail/pending, resolving state→conclusion.
+func (c Check) Result() string {
+	s := c.State
+	if s == "" {
+		s = c.Conclusion
+	}
+	switch s {
+	case "FAILURE", "ERROR", "TIMED_OUT", "CANCELLED":
+		return "fail"
+	case "PENDING", "QUEUED", "IN_PROGRESS", "":
 		return "pending"
 	default:
 		return "pass"

@@ -60,3 +60,15 @@ func TestCIState(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckResult(t *testing.T) {
+	cases := map[string]string{"SUCCESS": "pass", "FAILURE": "fail", "PENDING": "pending", "": "pending"}
+	for state, want := range cases {
+		if got := (Check{State: state}).Result(); got != want {
+			t.Errorf("Check{State:%q}.Result() = %q, want %q", state, got, want)
+		}
+	}
+	if got := (Check{Conclusion: "FAILURE"}).Result(); got != "fail" {
+		t.Errorf("conclusion fallback: %q", got)
+	}
+}
