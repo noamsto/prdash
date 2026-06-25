@@ -40,6 +40,7 @@ type Model struct {
 	previewN        int
 	expanded        bool
 	expandedTab     int
+	loaded          bool // first live fetch has returned; distinguishes empty from loading
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -168,6 +169,7 @@ func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
+		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
 		if m.cache != nil && msg.raw != nil {
@@ -334,11 +336,15 @@ func (m Model) View() string {
 	if m.filtering {
 		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()
 	}
-	if m.section.Len() == 0 && m.err == nil {
-		return m.header() + "\n\n" + dimStyle.Render("  Loading…") + "\n" + m.statusBar()
-	}
 	if m.err != nil && m.section.Len() == 0 {
 		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
+	}
+	if m.section.Len() == 0 {
+		hint := "  Loading…"
+		if m.loaded {
+			hint = "  No open PRs."
+		}
+		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
 	return m.header() + "\n" + m.renderMain() + "\n" + m.statusBar()
 }

@@ -40,6 +40,28 @@ func TestHydrateFromCache(t *testing.T) {
 	}
 }
 
+func TestEmptyResultShowsEmptyStateNotLoading(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+
+	m.renderList()
+	if !strings.Contains(m.View(), "Loading…") {
+		t.Fatalf("pre-fetch view should show Loading…: %q", m.View())
+	}
+
+	updated, _ := m.Update(prsFetchedMsg{prs: []gh.PR{}})
+	m = updated.(Model)
+	m.renderList()
+	out := m.View()
+	if strings.Contains(out, "Loading…") {
+		t.Fatalf("loaded-but-empty view should not show Loading…: %q", out)
+	}
+	if !strings.Contains(out, "No open PRs") {
+		t.Fatalf("loaded-but-empty view should show the empty state: %q", out)
+	}
+}
+
 func TestViewShowsHeaderAndStatus(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("noamsto/prdash")
