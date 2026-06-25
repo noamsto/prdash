@@ -52,18 +52,18 @@ func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 	}
 	var b strings.Builder
 	if older > 0 {
-		b.WriteString(fmt.Sprintf("▸ %d earlier comments\n\n", older))
+		b.WriteString(dimStyle.Render(fmt.Sprintf("▸ %d earlier comments", older)) + "\n\n")
 	}
-	for _, it := range latest {
-		hdr := "@" + it.Author
-		if it.Kind == preview.KindReview && it.State != "" {
-			hdr += " · " + it.State
+	sep := dimStyle.Render(strings.Repeat("─", width))
+	for i, it := range latest {
+		if i > 0 {
+			b.WriteString(sep + "\n\n")
 		}
 		body, err := preview.Render(it.Body, width)
 		if err != nil {
 			body = it.Body // render failed; show the raw markdown rather than nothing
 		}
-		b.WriteString(hdr + "\n" + body + "\n")
+		b.WriteString(metaLine(it.Author, it.State, it.At) + "\n" + body + "\n")
 	}
 	return b.String()
 }

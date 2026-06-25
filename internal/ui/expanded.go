@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
@@ -31,7 +32,7 @@ func tabStrip(active int) string {
 	parts := make([]string, len(expandedTabs))
 	for i, t := range expandedTabs {
 		if i == active {
-			parts[i] = accentStyle.Render(t)
+			parts[i] = headerStyle.Render(t)
 		} else {
 			parts[i] = dimStyle.Render(t)
 		}
@@ -44,12 +45,12 @@ func renderReviews(d gh.PRDetail, w int) string {
 		return dimStyle.Render("  No reviews yet.")
 	}
 	var b strings.Builder
-	for _, r := range d.LatestReviews {
-		hdr := "@" + r.Author.Login
-		if r.State != "" {
-			hdr += " · " + r.State
+	sep := dimStyle.Render(strings.Repeat("─", w))
+	for i, r := range d.LatestReviews {
+		if i > 0 {
+			b.WriteString(sep + "\n\n")
 		}
-		b.WriteString(accentStyle.Render(hdr) + "\n")
+		b.WriteString(metaLine(r.Author.Login, r.State, r.SubmittedAt) + "\n")
 		if r.Body != "" {
 			body, err := preview.Render(r.Body, w)
 			if err != nil {
@@ -79,10 +80,19 @@ func renderDiffstat(d gh.PRDetail, w int) string {
 		return dimStyle.Render("  No file changes.")
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("  %d files  %s  %s\n\n", s.Files,
+	b.WriteString(fmt.Sprintf("  %s files  %s  %s\n\n", accentStyle.Render(fmt.Sprintf("%d", s.Files)),
 		passStyle.Render(fmt.Sprintf("+%d", s.Additions)), failStyle.Render(fmt.Sprintf("-%d", s.Deletions))))
-	for _, f := range d.Files {
-		b.WriteString(fmt.Sprintf("  %s  %s %s\n", truncate(f.Path, w-16),
+	paths := make([]string, len(d.Files))
+	pathW := 0
+	for i, f := range d.Files {
+		paths[i] = truncate(f.Path, w-16)
+		if l := lipgloss.Width(paths[i]); l > pathW {
+			pathW = l
+		}
+	}
+	for i, f := range d.Files {
+		pad := strings.Repeat(" ", pathW-lipgloss.Width(paths[i]))
+		b.WriteString(fmt.Sprintf("  %s%s  %s %s\n", paths[i], pad,
 			passStyle.Render(fmt.Sprintf("+%d", f.Additions)), failStyle.Render(fmt.Sprintf("-%d", f.Deletions))))
 	}
 	return b.String()
@@ -141,7 +151,7 @@ func (m *Model) renderExpanded() {
 // updateExpanded handles keys while in expanded mode.
 func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "left", "h":
+	case "esc":
 		m.expanded = false
 		m.renderList()
 		return m, nil
@@ -149,7 +159,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.expandedTab = (m.expandedTab + 1) % len(expandedTabs)
 		m.renderExpanded()
 		return m, nil
-	case "shift+tab":
+	case "shift+tab", "left", "h":
 		m.expandedTab = (m.expandedTab + len(expandedTabs) - 1) % len(expandedTabs)
 		m.renderExpanded()
 		return m, nil
@@ -189,6 +199,13 @@ func (m Model) expandedView() string {
 		n = v.Number
 	}
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
-	foot := statusBarStyle.Render("  ↑↓ scroll · tab view · j/k PR · ↵ worktree · esc back")
+	if ps, ok := m.section.(*PRSection); ok {
+		if title := ps.prAt(m.cursor).Title; title != "" {
+			if avail := m.width - lipgloss.Width(head) - 4; avail > 12 {
+				head += dimStyle.Render("  " + truncate(title, avail))
+			}
+		}
+	}
+	foot := statusBarStyle.Render("  ↑↓ scroll · h/l tabs · j/k PR · ↵ worktree · esc back")
 	return head + "\n" + tabStrip(m.expandedTab) + "\n" + m.vp.View() + "\n" + foot
 }
