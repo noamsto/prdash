@@ -2,6 +2,8 @@ package ui
 
 import (
 	"os"
+	"strconv"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -66,6 +68,48 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			}
 			return nil
 		}
+	}
+}
+
+// reviewerDiff compares the currently-requested reviewers against the picked
+// set, returning logins to add and to remove.
+func reviewerDiff(current []string, picked map[string]bool) (add, remove []string) {
+	cur := map[string]bool{}
+	for _, l := range current {
+		cur[l] = true
+	}
+	for l, on := range picked {
+		if on && !cur[l] {
+			add = append(add, l)
+		}
+	}
+	for l := range cur {
+		if !picked[l] {
+			remove = append(remove, l)
+		}
+	}
+	return add, remove
+}
+
+// assignReviewersCmd applies an add/remove reviewer diff to one PR, then refetches.
+func (m Model) assignReviewersCmd(number int, add, remove []string) tea.Cmd {
+	if len(add) == 0 && len(remove) == 0 {
+		return nil
+	}
+	r, dir := m.runner, m.dir
+	args := []string{"pr", "edit", strconv.Itoa(number)}
+	if len(add) > 0 {
+		args = append(args, "--add-reviewer", strings.Join(add, ","))
+	}
+	if len(remove) > 0 {
+		args = append(args, "--remove-reviewer", strings.Join(remove, ","))
+	}
+	fetch := m.fetchCmd(m.runner)
+	return func() tea.Msg {
+		if _, err := r.Run(dir, args...); err != nil {
+			return fetchFailedMsg{err}
+		}
+		return fetch()
 	}
 }
 

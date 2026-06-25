@@ -8,3 +8,5 @@ type prsFetchedMsg struct {
 }
 
 type fetchFailedMsg struct{ err error }
+
+type membersFetchedMsg struct{ users []gh.User }

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
 )
 
@@ -16,5 +17,16 @@ func TestRenderPreviewBodyShowsOlderMarker(t *testing.T) {
 	out := renderTimeline(items, 3, 80, false) // n=3, not expanded
 	if !strings.Contains(out, "earlier") {
 		t.Fatalf("expected older marker: %q", out)
+	}
+}
+
+func TestReviewersLine(t *testing.T) {
+	got := reviewersLine(nil)
+	if !strings.Contains(got, "no reviewers") {
+		t.Fatalf("empty reviewers should warn: %q", got)
+	}
+	got = reviewersLine([]gh.ReviewRequest{{Login: "alice"}, {Login: "bob"}})
+	if !strings.Contains(got, "alice") || !strings.Contains(got, "bob") {
+		t.Fatalf("should list reviewers: %q", got)
 	}
 }

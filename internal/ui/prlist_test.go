@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -74,5 +75,22 @@ func TestViewShowsHeaderAndStatus(t *testing.T) {
 	}
 	if !strings.Contains(out, "q quit") {
 		t.Fatalf("status bar should show key hints: %q", out)
+	}
+}
+
+func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	if m.presetIdx != 0 {
+		t.Fatalf("initial presetIdx = %d, want 0 (mine)", m.presetIdx)
+	}
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	m = m2.(Model)
+	if m.filter != "is:open review-requested:@me" {
+		t.Fatalf("after f, filter = %q", m.filter)
+	}
+	if !strings.Contains(m.View(), "review-requested") {
+		t.Fatalf("header should show the active preset name: %q", m.View())
 	}
 }

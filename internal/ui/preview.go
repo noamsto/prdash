@@ -92,11 +92,27 @@ func (m Model) previewPane() string {
 	if ps, ok := m.section.(*PRSection); ok {
 		card = renderCard(triage.Compute(ps.prAt(m.cursor), d), w)
 	}
+	revs := reviewersLine(d.ReviewRequests)
 	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
 	if card == "" {
-		return timeline
+		return revs + "\n\n" + timeline
 	}
-	return card + "\n" + timeline
+	return card + "\n" + revs + "\n\n" + timeline
+}
+
+// reviewersLine summarises requested reviewers for the quick window. Team
+// requests have no login and are skipped.
+func reviewersLine(reqs []gh.ReviewRequest) string {
+	var logins []string
+	for _, r := range reqs {
+		if r.Login != "" {
+			logins = append(logins, r.Login)
+		}
+	}
+	if len(logins) == 0 {
+		return pendStyle.Render("  ⚠ no reviewers")
+	}
+	return dimStyle.Render("  reviewers: " + strings.Join(logins, ", "))
 }
 
 // renderMain lays the list and (when wide) the contained side preview together.

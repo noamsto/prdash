@@ -56,3 +56,17 @@ func TestBulkWritesPerItem(t *testing.T) {
 		t.Fatalf("want 2 handoff lines, got %d: %q", n, b)
 	}
 }
+
+func TestReviewerDiff(t *testing.T) {
+	add, rm := reviewerDiff([]string{"a", "c"}, map[string]bool{"b": true, "c": true})
+	if len(add) != 1 || add[0] != "b" {
+		t.Fatalf("add = %v, want [b]", add)
+	}
+	if len(rm) != 1 || rm[0] != "a" {
+		t.Fatalf("remove = %v, want [a]", rm)
+	}
+	add, rm = reviewerDiff([]string{"a"}, map[string]bool{"a": true})
+	if len(add) != 0 || len(rm) != 0 {
+		t.Fatalf("no change expected, got add=%v rm=%v", add, rm)
+	}
+}

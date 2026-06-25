@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -41,6 +42,11 @@ type Model struct {
 	expanded        bool
 	expandedTab     int
 	loaded          bool // first live fetch has returned; distinguishes empty from loading
+	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
+	showPicker      bool
+	pickerMode      string // "author" | "reviewer"
+	pick            picker
+	members         []gh.User // cached assignable users for this repo
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -52,6 +58,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
 		vp: viewport.New(0, 0), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 3,
+		presetIdx: presetIndexFor(filter),
 	}
 }
 
@@ -167,6 +174,82 @@ func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
 	}
 }
 
+// openPicker shows the member picker in the given mode, pre-checking the right
+// set, and fetches the member list if it isn't cached yet.
+func (m *Model) openPicker(mode string) tea.Cmd {
+	checked := map[string]bool{}
+	title := "Filter by author"
+	if mode == "reviewer" {
+		title = "Assign reviewers"
+		if v, ok := m.cursorVars(); ok {
+			if d, cached := m.detail[v.Number]; cached {
+				for _, r := range d.ReviewRequests {
+					if r.Login != "" {
+						checked[r.Login] = true
+					}
+				}
+			}
+		}
+	}
+	m.showPicker = true
+	m.pickerMode = mode
+	m.pick = newPicker(title, m.members, checked)
+	if m.members == nil {
+		return m.fetchMembersCmd()
+	}
+	return nil
+}
+
+func (m Model) fetchMembersCmd() tea.Cmd {
+	r, dir, repo := m.runner, m.dir, m.repo
+	return func() tea.Msg {
+		users, err := gh.FetchAssignableUsers(r, dir, repo)
+		if err != nil {
+			return fetchFailedMsg{err}
+		}
+		return membersFetchedMsg{users: users}
+	}
+}
+
+// confirmPicker applies the picker result based on the active mode.
+func (m *Model) confirmPicker() tea.Cmd {
+	checked := m.pick.checked
+	switch m.pickerMode {
+	case "author":
+		var terms []string
+		for login, on := range checked {
+			if on {
+				terms = append(terms, "author:"+login)
+			}
+		}
+		if len(terms) == 0 {
+			return nil // empty selection: keep the current filter
+		}
+		slices.Sort(terms)
+		m.filter = "is:open " + strings.Join(terms, " ")
+		m.presetIdx = -1
+		m.cursor = 0
+		m.loaded = false
+		return m.fetchCmd(m.runner)
+	case "reviewer":
+		v, ok := m.cursorVars()
+		if !ok {
+			return nil
+		}
+		var current []string
+		if d, cached := m.detail[v.Number]; cached {
+			for _, rr := range d.ReviewRequests {
+				if rr.Login != "" {
+					current = append(current, rr.Login)
+				}
+			}
+		}
+		add, remove := reviewerDiff(current, checked)
+		return m.assignReviewersCmd(v.Number, add, remove)
+	}
+	return nil
+}
+
 func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -184,6 +267,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detailCmdForCursor()
 	case fetchFailedMsg:
 		m.err = msg.err
+		return m, nil
+	case membersFetchedMsg:
+		m.members = msg.users
+		if m.showPicker {
+			m.pick.cands = msg.users
+		}
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
@@ -221,6 +310,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sel.clear() // editing the query reorders the shown set
 			m.applyFilter()
 			return m, cmd
+		}
+		if m.showPicker {
+			switch msg.String() {
+			case "esc":
+				m.showPicker = false
+				return m, nil
+			case "enter":
+				m.showPicker = false
+				return m, m.confirmPicker()
+			case " ":
+				m.pick.toggleCursor()
+				return m, nil
+			case "up", "ctrl+p":
+				if m.pick.cursor > 0 {
+					m.pick.cursor--
+				}
+				return m, nil
+			case "down", "ctrl+n":
+				if m.pick.cursor < len(m.pick.visible())-1 {
+					m.pick.cursor++
+				}
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.pick.filter, cmd = m.pick.filter.Update(msg)
+				m.pick.cursor = 0
+				return m, cmd
+			}
 		}
 		if m.showActions {
 			switch msg.String() {
@@ -269,6 +386,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			m.showActions = true
 			return m, m.actionFilter.Focus()
+		case "f":
+			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
+			m.presetIdx = nextPreset(max(m.presetIdx, 0))
+			m.filter = defaultPresets[m.presetIdx].search
+			m.cursor = 0
+			m.loaded = false
+			return m, m.fetchCmd(m.runner)
+		case "F":
+			return m, m.openPicker("author")
+		case "R":
+			if _, ok := m.cursorVars(); ok {
+				return m, m.openPicker("reviewer")
+			}
+			return m, nil
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
@@ -326,6 +457,9 @@ func (m Model) View() string {
 		return m.header() + "\n" + accentStyle.Render(fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)) +
 			"\n" + m.renderMain()
 	}
+	if m.showPicker {
+		return m.pickerView()
+	}
 	if m.showActions {
 		acts := filterActions(m.actions, m.actionFilter.Value())
 		var b strings.Builder
@@ -357,13 +491,17 @@ func (m Model) View() string {
 
 // header is the top line: repo · filter · open count.
 func (m Model) header() string {
+	label := m.filter
+	if m.presetIdx >= 0 {
+		label = defaultPresets[m.presetIdx].name
+	}
 	return headerStyle.Render("  "+m.repo) + dimStyle.Render(
-		fmt.Sprintf("   %s · %d open", m.filter, m.section.Len()))
+		fmt.Sprintf("   %s · %d open", label, m.section.Len()))
 }
 
 // statusBar is the bottom key/context line.
 func (m Model) statusBar() string {
-	keys := "↑↓ move · → expand · / filter · a actions · space select · q quit"
+	keys := "↑↓ move · → expand · f filter · F author · R reviewers · / find · a actions · space select · q quit"
 	if n := m.sel.count(); n > 0 {
 		keys = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · " + keys
 	}
