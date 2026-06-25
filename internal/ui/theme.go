@@ -9,14 +9,15 @@ import (
 // Palette roles. Concrete colors inherit the terminal's theme (lazytmux
 // Catppuccin overlay); these adaptive defaults read well on dark backgrounds.
 var (
-	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))  // blue
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // gray
+	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))  // blue — links, authors
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // meta text
+	sepStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("238")) // divider rules — recede below text
 	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("78"))  // green
 	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red
 	pendStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // yellow
 	selMarkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // mauve
 	cursorRowStyle = lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	headerStyle    = accentStyle.Bold(true)
+	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true) // bright cyan — top header + active tab
 	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
 
@@ -24,7 +25,7 @@ var (
 // timeline and the reviews tab. state is "" for plain comments; age is omitted
 // for a zero time.
 func metaLine(author, state string, at time.Time) string {
-	s := accentStyle.Render("@" + author)
+	s := accentStyle.Bold(true).Render("@" + author)
 	if state != "" {
 		s += dimStyle.Render(" · ") + reviewStateLabel(state)
 	}

@@ -54,7 +54,7 @@ func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 	if older > 0 {
 		b.WriteString(dimStyle.Render(fmt.Sprintf("▸ %d earlier comments", older)) + "\n\n")
 	}
-	sep := dimStyle.Render(strings.Repeat("─", width))
+	sep := sepStyle.Render(strings.Repeat("─", width))
 	for i, it := range latest {
 		if i > 0 {
 			b.WriteString(sep + "\n\n")
@@ -121,7 +121,11 @@ func (m Model) renderMain() string {
 	if !l.ShowSide {
 		return m.vp.View()
 	}
+	// MaxWidth/MaxHeight hard-clip the pane: Width/Height only pad up, so a long
+	// timeline or wide glamour line would otherwise overflow and scroll the list
+	// out of view. The card + reviewers line lead, so only the timeline tail clips.
 	side := lipgloss.NewStyle().Width(l.SideWidth).Height(l.ContentHeight).
+		MaxWidth(l.SideWidth).MaxHeight(l.ContentHeight).
 		PaddingLeft(2).Render(m.previewPane())
 	return lipgloss.JoinHorizontal(lipgloss.Top, m.vp.View(), side)
 }

@@ -45,7 +45,7 @@ func renderReviews(d gh.PRDetail, w int) string {
 		return dimStyle.Render("  No reviews yet.")
 	}
 	var b strings.Builder
-	sep := dimStyle.Render(strings.Repeat("─", w))
+	sep := sepStyle.Render(strings.Repeat("─", w))
 	for i, r := range d.LatestReviews {
 		if i > 0 {
 			b.WriteString(sep + "\n\n")
@@ -170,13 +170,19 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.expandedTab = int(msg.String()[0] - '1')
 		m.renderExpanded()
 		return m, nil
-	case "j":
+	case "j", "down":
+		m.vp.LineDown(1)
+		return m, nil
+	case "k", "up":
+		m.vp.LineUp(1)
+		return m, nil
+	case "J":
 		if m.cursor < m.section.Len()-1 {
 			m.cursor++
 		}
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
-	case "k":
+	case "K":
 		if m.cursor > 0 {
 			m.cursor--
 		}
@@ -209,6 +215,6 @@ func (m Model) expandedView() string {
 			}
 		}
 	}
-	foot := statusBarStyle.Render("  ↑↓ scroll · h/l tabs · j/k PR · ↵ worktree · esc back")
+	foot := statusBarStyle.Render("  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back")
 	return head + "\n" + tabStrip(m.expandedTab) + "\n" + m.vp.View() + "\n" + foot
 }
