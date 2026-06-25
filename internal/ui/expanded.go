@@ -101,6 +101,9 @@ func renderDiffstat(d gh.PRDetail, w int) string {
 // enterExpanded opens the focused PR's detail, deep-linking to the tab the
 // triage card points at (when its detail is already cached).
 func (m *Model) enterExpanded() {
+	if m.section.Len() == 0 {
+		return
+	}
 	m.expanded = true
 	m.expandedTab = 0
 	if v, ok := m.cursorVars(); ok {

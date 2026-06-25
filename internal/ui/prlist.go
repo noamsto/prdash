@@ -63,6 +63,9 @@ func (m *Model) setPRs(prs []gh.PR) {
 		s.SetPRs(prs)
 	}
 	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n { // a refetch may shrink the shown set
+		m.cursor = max(0, n-1)
+	}
 }
 
 // moveCursor clamps the cursor to the shown set and keeps it visible.
@@ -172,6 +175,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
+		}
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
 		}

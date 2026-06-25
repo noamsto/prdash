@@ -74,6 +74,37 @@ func TestEnterExpandedDeepLinks(t *testing.T) {
 	}
 }
 
+func TestExpandOnEmptyListDoesNotEnterOrPanic(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	updated, _ := m.Update(prsFetchedMsg{prs: []gh.PR{}})
+	m = updated.(Model)
+	m.renderList()
+
+	m.enterExpanded()
+	if m.expanded {
+		t.Fatal("enterExpanded should be a no-op with no PRs")
+	}
+	_ = m.View() // must not panic
+}
+
+func TestRefetchToEmptyCollapsesExpanded(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.width, m.height = 100, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.enterExpanded()
+	if !m.expanded {
+		t.Fatal("precondition: should be expanded with a PR")
+	}
+	updated, _ := m.Update(prsFetchedMsg{prs: []gh.PR{}})
+	m = updated.(Model)
+	if m.expanded {
+		t.Fatal("a refetch emptying the list should collapse the expanded view")
+	}
+	_ = m.View() // must not panic
+}
+
 func TestExpandedViewShowsTabStrip(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 30
