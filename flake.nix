@@ -28,7 +28,7 @@
           pname = "prdash";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-uDVN1hRzDndFANqkdCzKw8FKYa7trrmtqV4R7AGQTWM=";
+          vendorHash = "sha256-tiyfUtsz2g+xVFgXB8B7jkFL0TNYVo0ErxuHBoTjBC8=";
           ldflags = ["-s" "-w"];
           meta = {
             description = "Lean, worktree-first PR/issue TUI";
