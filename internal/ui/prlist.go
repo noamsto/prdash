@@ -38,6 +38,8 @@ type Model struct {
 	detail          map[int]gh.PRDetail
 	previewExpanded bool
 	previewN        int
+	expanded        bool
+	expandedTab     int
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -183,6 +185,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderList()
 		return m, nil
 	case tea.KeyMsg:
+		if m.expanded {
+			return m.updateExpanded(msg)
+		}
 		if m.pending != nil {
 			if msg.String() == "y" {
 				return m, m.confirmAnswer(true)
@@ -282,6 +287,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.moveCursor(-1)
 			return m, m.detailCmdForCursor()
+		case "right", "l":
+			m.enterExpanded()
+			return m, m.detailCmdForCursor()
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
@@ -299,6 +307,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.expanded {
+		return m.expandedView()
+	}
 	if m.pending != nil {
 		n := 0
 		if v, ok := m.cursorVars(); ok {

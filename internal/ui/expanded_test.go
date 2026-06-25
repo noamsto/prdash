@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/triage"
 )
 
 func TestJumpTabIndex(t *testing.T) {
@@ -50,5 +51,40 @@ func TestTabStripMarksActive(t *testing.T) {
 		if !strings.Contains(out, name) {
 			t.Fatalf("tab %q missing from strip: %q", name, out)
 		}
+	}
+}
+
+func TestEnterExpandedDeepLinks(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}})
+	// detail with BLOCKED so the card is "checks failing" → JumpTab "checks" (index 2)
+	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+
+	m.enterExpanded()
+	if !m.expanded {
+		t.Fatal("enterExpanded should set expanded")
+	}
+	if m.expandedTab != 2 {
+		t.Fatalf("deep-link to Checks tab expected (2), got %d", m.expandedTab)
+	}
+	// sanity: the triage card for this PR really is checks-failing
+	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}).JumpTab != "checks" {
+		t.Fatal("precondition: expected checks JumpTab")
+	}
+}
+
+func TestExpandedViewShowsTabStrip(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded()
+	out := m.expandedView()
+	if !strings.Contains(out, "Conversation") || !strings.Contains(out, "Checks") {
+		t.Fatalf("expanded view should show the tab strip: %q", out)
+	}
+	if !strings.Contains(out, "#7") {
+		t.Fatalf("expanded view should show the PR number: %q", out)
 	}
 }
