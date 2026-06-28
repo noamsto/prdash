@@ -9,27 +9,50 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Palette roles. Concrete colors inherit the terminal's theme (lazytmux
-// Catppuccin overlay); these adaptive defaults read well on dark backgrounds.
-var (
-	titleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))           // primary text — row titles, body
-	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))            // blue — PR#, action keys, links
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))           // meta text — age, labels
-	sepStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))           // divider rules — recede below text
-	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))           // green
-	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))           // red
-	pendStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))           // yellow
-	selMarkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))           // mauve — multi-select ●
-	focusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))            // cyan — cursor-row left bar
-	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true) // bright cyan — top header + active tab
-	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	errBarStyle    = lipgloss.NewStyle().Background(lipgloss.Color("203")).Foreground(lipgloss.Color("16")).Bold(true) // red toast bar
-	confirmBorder  = lipgloss.Color("214")                                                                             // yellow — confirm modal frame
+// Catppuccin Mocha — the fixed dark palette (matches the lazytmux terminal
+// theme). Hardcoded hex so the TUI reads identically regardless of the terminal's
+// 16/256 ANSI mapping.
+const (
+	ctpBase     = "#1e1e2e"
+	ctpText     = "#cdd6f4"
+	ctpOverlay1 = "#7f849c"
+	ctpSurface2 = "#585b70"
+	ctpSurface1 = "#45475a"
+	ctpRed      = "#f38ba8"
+	ctpGreen    = "#a6e3a1"
+	ctpYellow   = "#f9e2af"
+	ctpPeach    = "#fab387"
+	ctpBlue     = "#89b4fa"
+	ctpSky      = "#89dceb"
+	ctpMauve    = "#cba6f7"
+	ctpLavender = "#b4befe"
+	ctpTeal     = "#94e2d5"
+	ctpPink     = "#f5c2e7"
+	ctpSapphire = "#74c7ec"
+	ctpFlamingo = "#f2cdcd"
 )
 
-// authorPalette: legible-on-dark hues that stay distinct from the state colors
-// (red/green/yellow) so an author tint never reads as a CI signal.
-var authorPalette = []string{"75", "114", "176", "80", "215", "139", "179", "211", "73"}
+// Palette roles, mapped onto Catppuccin Mocha.
+var (
+	titleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpText))           // primary text — row titles, body
+	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpBlue))           // PR#, action keys, links
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpOverlay1))       // meta text — age, labels
+	sepStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpSurface1))       // divider rules — recede below text
+	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpGreen))          // green
+	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpRed))            // red
+	pendStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpYellow))         // yellow
+	selMarkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpMauve))          // mauve — multi-select ●
+	focusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpSky))            // sky — cursor-row left bar
+	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpSky)).Bold(true) // header + active tab
+	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ctpOverlay1))
+	errBarStyle    = lipgloss.NewStyle().Background(lipgloss.Color(ctpRed)).Foreground(lipgloss.Color(ctpBase)).Bold(true)
+	confirmBorder  = lipgloss.Color(ctpYellow)   // confirm modal frame
+	borderColor    = lipgloss.Color(ctpSurface2) // pane frames
+)
+
+// authorPalette: Mocha hues that stay clear of the state colors (red/green/
+// yellow) so an author tint never reads as a CI signal.
+var authorPalette = []string{ctpBlue, ctpMauve, ctpTeal, ctpPeach, ctpPink, ctpSapphire, ctpLavender, ctpSky, ctpFlamingo}
 
 // authorStyle gives each login a stable color so the same person reads the same
 // everywhere. Bots are muted — they're noise, not people.
@@ -110,12 +133,12 @@ const (
 // labelChip renders one rounded label pill: GitHub hex as the fill with auto
 // black/white text by luminance; empty/invalid colors fall back to a dim chip.
 func labelChip(name, hex string) string {
-	fg, bg := lipgloss.Color("16"), lipgloss.Color("#"+hex)
+	fg, bg := lipgloss.Color(ctpBase), lipgloss.Color("#"+hex)
 	switch {
 	case len(hex) != 6:
-		fg, bg = lipgloss.Color("252"), lipgloss.Color("238")
+		fg, bg = lipgloss.Color(ctpText), lipgloss.Color(ctpSurface1)
 	case lightText(hex):
-		fg = lipgloss.Color("231")
+		fg = lipgloss.Color(ctpText)
 	}
 	caps := lipgloss.NewStyle().Foreground(bg)
 	body := lipgloss.NewStyle().Foreground(fg).Background(bg)

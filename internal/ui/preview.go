@@ -78,12 +78,17 @@ func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 	if older > 0 {
 		b.WriteString(dimStyle.Render(fmt.Sprintf("▸ %d earlier comments", older)) + "\n\n")
 	}
+	// Expanded view pans horizontally (wrap 0); the narrow quick view wraps.
+	wrap := width
+	if expanded {
+		wrap = 0
+	}
 	sep := sepStyle.Render(strings.Repeat("─", width))
 	for i, it := range latest {
 		if i > 0 {
 			b.WriteString(sep + "\n\n")
 		}
-		body, err := preview.Render(it.Body, width)
+		body, err := preview.Render(it.Body, wrap)
 		if err != nil {
 			body = it.Body // render failed; show the raw markdown rather than nothing
 		}
@@ -204,14 +209,13 @@ func (m Model) renderMain() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, m.vp.View(), side)
 }
 
-// paneBorder frames a side/preview pane: a rounded border + 1-col padding inside
-// a total width×height cell budget, offset by marginLeft (the list/preview gap).
-// Content wraps to width-4 (2 border + 2 padding); see previewWidth.
+// paneBorder frames a pane: a rounded border + 1-col padding. width/height are
+// the OUTER box size (excl. marginLeft); lipgloss Width/Height already account for
+// the border and padding, so interior content is width-4 wide × height-2 tall.
 func paneBorder(width, height, marginLeft int) lipgloss.Style {
-	inner := width - 2 // border eats 2 cols; Width() then includes the 1+1 padding
 	return lipgloss.NewStyle().
-		Width(inner).MaxWidth(inner).
-		Height(height-2).MaxHeight(height-2).
+		Width(width).MaxWidth(width+marginLeft).
+		Height(height).MaxHeight(height).
 		Padding(0, 1).MarginLeft(marginLeft).
-		Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
+		Border(lipgloss.RoundedBorder()).BorderForeground(borderColor)
 }

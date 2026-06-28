@@ -39,31 +39,28 @@ type ExpandedGeom struct {
 	VPHeight int // scrollable viewport height
 }
 
-// ExpandedLayout splits the expanded view by terminal width: a metadata rail +
-// content pane when wide, a single column with a compact meta header when narrow.
-// Dimensions are the interior of the outer frame (rounded border + h-padding):
-// 4 cols and 2 rows narrower than the body between header and footer.
+// ExpandedLayout splits the expanded view by terminal width: a metadata rail box
+// beside a content box when wide, a single content box when narrow. RailW/ContentW
+// are the OUTER box widths (each box owns its own rounded border + 1-col padding,
+// so inner content is width-4); RailH is the box outer height; VPHeight is the
+// scrollable viewport's inner height.
 func ExpandedLayout(w, h int) ExpandedGeom {
-	innerW := w - 4 // outer border (2) + h-padding (2)
-	innerH := h - 4 // header + footer (2) + outer border (2)
-	if innerW < 1 {
-		innerW = 1
-	}
-	if innerH < 1 {
-		innerH = 1
+	bodyH := h - 2 // header + footer rows
+	if bodyH < 3 {
+		bodyH = 3
 	}
 	if w < sideThreshold {
-		vp := innerH - 2 // compact meta line + tab strip
+		vp := bodyH - 4 // box border (2) + meta line + tab strip
 		if vp < 1 {
 			vp = 1
 		}
-		return ExpandedGeom{TwoCol: false, ContentW: innerW, VPHeight: vp}
+		return ExpandedGeom{TwoCol: false, ContentW: w, RailH: bodyH, VPHeight: vp}
 	}
 	const gap = 2
-	rail := max(32, min(innerW*30/100, 44))
-	vp := innerH - 1 // tab strip
+	rail := max(32, min(w*30/100, 44))
+	vp := bodyH - 3 // box border (2) + tab strip
 	if vp < 1 {
 		vp = 1
 	}
-	return ExpandedGeom{TwoCol: true, RailW: rail, RailH: innerH, ContentW: innerW - rail - gap, VPHeight: vp}
+	return ExpandedGeom{TwoCol: true, RailW: rail, RailH: bodyH, ContentW: w - rail - gap, VPHeight: vp}
 }

@@ -8,8 +8,10 @@ import "charm.land/glamour/v2"
 // bubbletea View loop (single goroutine), so no locking is needed.
 var rendererByWidth = map[int]*glamour.TermRenderer{}
 
-// Render renders markdown to ANSI at the given wrap width. No pipe-stripping —
-// tables and pipe-containing code render normally.
+// Render renders markdown to ANSI, word-wrapping at width. Pass width 0 to disable
+// wrapping — the caller's viewport then pans horizontally over wide content
+// instead of hard-wrapping it. No pipe-stripping — tables and pipe-containing
+// code render normally.
 func Render(md string, width int) (string, error) {
 	r, ok := rendererByWidth[width]
 	if !ok {

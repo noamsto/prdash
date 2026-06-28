@@ -67,7 +67,7 @@ func renderReviews(d gh.PRDetail, w int) string {
 		}
 		b.WriteString(metaLine(r.Author.Login, r.State, r.SubmittedAt) + "\n")
 		if r.Body != "" {
-			body, err := preview.Render(r.Body, w)
+			body, err := preview.Render(r.Body, 0) // expanded: no wrap, viewport pans
 			if err != nil {
 				body = r.Body
 			}
@@ -85,7 +85,7 @@ func renderChecks(pr gh.PR, w, cursor int) string {
 	}
 	var b strings.Builder
 	for i, c := range checks {
-		label := truncate(c.Label(), w-4)
+		label := c.Label() // full name; the viewport pans if it overflows
 		gutter := "  "
 		st := titleStyle
 		if i == cursor {
@@ -105,17 +105,15 @@ func renderDiffstat(d gh.PRDetail, w int) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("  %s files  %s  %s\n\n", accentStyle.Render(fmt.Sprintf("%d", s.Files)),
 		passStyle.Render(fmt.Sprintf("+%d", s.Additions)), failStyle.Render(fmt.Sprintf("-%d", s.Deletions))))
-	paths := make([]string, len(d.Files))
-	pathW := 0
-	for i, f := range d.Files {
-		paths[i] = truncate(f.Path, w-16)
-		if l := lipgloss.Width(paths[i]); l > pathW {
+	pathW := 0 // align +/- columns; full paths shown, viewport pans if they overflow
+	for _, f := range d.Files {
+		if l := lipgloss.Width(f.Path); l > pathW {
 			pathW = l
 		}
 	}
-	for i, f := range d.Files {
-		pad := strings.Repeat(" ", pathW-lipgloss.Width(paths[i]))
-		b.WriteString(fmt.Sprintf("  %s%s  %s %s\n", paths[i], pad,
+	for _, f := range d.Files {
+		pad := strings.Repeat(" ", pathW-lipgloss.Width(f.Path))
+		b.WriteString(fmt.Sprintf("  %s%s  %s %s\n", f.Path, pad,
 			passStyle.Render(fmt.Sprintf("+%d", f.Additions)), failStyle.Render(fmt.Sprintf("-%d", f.Deletions))))
 	}
 	return b.String()
@@ -172,10 +170,14 @@ func (m Model) expandedBody(w int) string {
 // markdown and timelines wrap to the pane, not the whole screen.
 func (m *Model) renderExpanded() {
 	el := ExpandedLayout(m.width, m.height)
-	m.vp.SetWidth(el.ContentW)
+	inner := el.ContentW - 4 // content box: border (2) + padding (2)
+	if inner < 1 {
+		inner = 1
+	}
+	m.vp.SetWidth(inner)
 	m.vp.SetHeight(el.VPHeight)
-	m.vp.SetHorizontalStep(8) // < / > pan wide content (tables, diffs) instead of wrapping
-	m.vp.SetContent(m.expandedBody(el.ContentW))
+	m.vp.SetHorizontalStep(8) // ctrl+h/l pan wide content (diffs, long lines) instead of wrapping
+	m.vp.SetContent(m.expandedBody(inner))
 	m.vp.SetYOffset(0)
 }
 
@@ -231,11 +233,17 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.rerunAllFailed()
-	case ">", ".":
+	case "ctrl+l", ">", ".": // pan content right
 		m.vp.ScrollRight(8)
 		return m, nil
-	case "<", ",":
+	case "ctrl+h", "<", ",": // pan content left
 		m.vp.ScrollLeft(8)
+		return m, nil
+	case "ctrl+j": // scroll content down (works on every tab, incl. Checks)
+		m.vp.ScrollDown(1)
+		return m, nil
+	case "ctrl+k": // scroll content up
+		m.vp.ScrollUp(1)
 		return m, nil
 	case "J":
 		if m.cursor < m.section.Len()-1 {
@@ -344,20 +352,19 @@ func (m Model) expandedView() string {
 	}
 	foot := statusBarStyle.Render(m.expandedFooter())
 	content := tabStrip(m.expandedTab) + "\n" + m.vp.View()
+	contentBox := paneBorder(el.ContentW, el.RailH, 0)
 
-	var inner string
 	if el.TwoCol {
-		rail := lipgloss.NewStyle().Width(el.RailW).Height(el.RailH).
-			MaxWidth(el.RailW).MaxHeight(el.RailH).Render(metaRail(pr, d, el.RailW))
-		inner = lipgloss.JoinHorizontal(lipgloss.Top, rail, "  ", content)
-	} else {
-		inner = content
-		if meta := narrowMeta(pr, d, el.ContentW); meta != "" {
-			inner = meta + "\n" + content
-		}
+		// Rail and content are separate framed boxes — no shared border.
+		rail := paneBorder(el.RailW, el.RailH, 0).Render(metaRail(pr, d, el.RailW-4))
+		body := lipgloss.JoinHorizontal(lipgloss.Top, rail, "  ", contentBox.Render(content))
+		return head + "\n" + body + "\n" + foot
 	}
-	framed := paneBorder(m.width, m.height-2, 0).Render(inner) // -2: header + footer rows
-	return head + "\n" + framed + "\n" + foot
+	inner := content
+	if meta := narrowMeta(pr, d, el.ContentW-4); meta != "" {
+		inner = meta + "\n" + content
+	}
+	return head + "\n" + contentBox.Render(inner) + "\n" + foot
 }
 
 // ciSummary renders a one-line CI state for the rail / narrow header.
@@ -459,5 +466,5 @@ func (m Model) expandedFooter() string {
 	if m.expandedTab == 2 {
 		return "  j/k move · r rerun · R rerun all · h/l tabs · J/K PR · esc back"
 	}
-	return "  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back"
+	return "  j/k scroll · ⌃hjkl pan · h/l tabs · J/K PR · ↵ worktree · esc back"
 }
