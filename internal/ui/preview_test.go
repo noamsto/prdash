@@ -20,6 +20,24 @@ func TestRenderPreviewBodyShowsOlderMarker(t *testing.T) {
 	}
 }
 
+func TestCILineFailingIsVerticalList(t *testing.T) {
+	pr := gh.PR{StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "lint"},
+		{State: "FAILURE", Name: "test"},
+		{State: "SUCCESS", Name: "build"},
+	}}
+	out := ciLine(pr)
+	if !strings.Contains(out, "2 checks failing") {
+		t.Errorf("want failing count header: %q", out)
+	}
+	if !strings.Contains(out, "lint") || !strings.Contains(out, "test") {
+		t.Errorf("want each failing check name: %q", out)
+	}
+	if strings.Count(out, "\n") < 2 { // header + 2 names = ≥2 newlines
+		t.Errorf("want a vertical list, got: %q", out)
+	}
+}
+
 func TestReviewersLine(t *testing.T) {
 	got := reviewersLine(nil)
 	if !strings.Contains(got, "no reviewers") {

@@ -79,27 +79,40 @@ func (m Model) previewWidth() int {
 	return l.SideWidth
 }
 
-// previewPane renders the triage card (if available) followed by the timeline,
-// or a loading/empty hint.
+// previewPane renders the triage card followed by the timeline. Before the
+// per-PR detail loads it pre-fills a card from list-only data (triage.Preliminary)
+// so the cursor never lands on a bare "Loading…" — detail enriches it in place.
 func (m Model) previewPane() string {
 	v, ok := m.cursorVars()
 	if !ok {
 		return ""
 	}
-	d, cached := m.detail[v.Number]
-	if !cached {
-		return "Loading preview…"
-	}
 	w := m.previewWidth()
+	d, cached := m.detail[v.Number]
+
 	var parts []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
-		if card := renderCard(triage.Compute(pr, d), w); card != "" {
-			parts = append(parts, strings.TrimRight(card, "\n"))
+		card := triage.Preliminary(pr)
+		if cached {
+			card = triage.Compute(pr, d)
 		}
-		if ci := ciLine(pr); ci != "" {
-			parts = append(parts, ci)
+		if c := renderCard(card, w); c != "" {
+			parts = append(parts, strings.TrimRight(c, "\n"))
 		}
+		// ciLine surfaces failing/running CI only when the card headline is about
+		// something else; a checks card already lists them, so skip the dup.
+		if card.Kind != triage.KindChecksFailing && card.Kind != triage.KindChecksRunning {
+			if ci := ciLine(pr); ci != "" {
+				parts = append(parts, ci)
+			}
+		}
+	}
+	if !cached {
+		if len(parts) == 0 {
+			return "Loading preview…"
+		}
+		return strings.Join(parts, "\n") + "\n\n" + dimStyle.Render("  loading details…")
 	}
 	parts = append(parts, reviewersLine(d.ReviewRequests))
 	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
@@ -118,9 +131,9 @@ func ciLine(pr gh.PR) string {
 				names = append(names, c.Label())
 			}
 		}
-		s := failStyle.Render("  ✗ checks failing")
-		if len(names) > 0 {
-			s += dimStyle.Render(": " + strings.Join(names, ", "))
+		s := failStyle.Render(fmt.Sprintf("  ✗ %d checks failing", len(names)))
+		for _, n := range names {
+			s += "\n" + failStyle.Render("    ✗ ") + dimStyle.Render(n)
 		}
 		return s
 	case "pending":
