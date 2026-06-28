@@ -41,23 +41,29 @@ type ExpandedGeom struct {
 
 // ExpandedLayout splits the expanded view by terminal width: a metadata rail +
 // content pane when wide, a single column with a compact meta header when narrow.
+// Dimensions are the interior of the outer frame (rounded border + h-padding):
+// 4 cols and 2 rows narrower than the body between header and footer.
 func ExpandedLayout(w, h int) ExpandedGeom {
-	body := h - 2 // header + footer rows
-	if body < 1 {
-		body = 1
+	innerW := w - 4 // outer border (2) + h-padding (2)
+	innerH := h - 4 // header + footer (2) + outer border (2)
+	if innerW < 1 {
+		innerW = 1
+	}
+	if innerH < 1 {
+		innerH = 1
 	}
 	if w < sideThreshold {
-		vp := body - 2 // compact meta line + tab strip
+		vp := innerH - 2 // compact meta line + tab strip
 		if vp < 1 {
 			vp = 1
 		}
-		return ExpandedGeom{TwoCol: false, ContentW: w, VPHeight: vp}
+		return ExpandedGeom{TwoCol: false, ContentW: innerW, VPHeight: vp}
 	}
 	const gap = 2
-	rail := max(32, min(w*30/100, 44))
-	vp := body - 1 // tab strip
+	rail := max(32, min(innerW*30/100, 44))
+	vp := innerH - 1 // tab strip
 	if vp < 1 {
 		vp = 1
 	}
-	return ExpandedGeom{TwoCol: true, RailW: rail, RailH: body, ContentW: w - rail - gap, VPHeight: vp}
+	return ExpandedGeom{TwoCol: true, RailW: rail, RailH: innerH, ContentW: innerW - rail - gap, VPHeight: vp}
 }

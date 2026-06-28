@@ -30,6 +30,18 @@ func TestDetailCmdsPrefetchesNeighbors(t *testing.T) {
 	}
 }
 
+func TestFilterDebounceCoalesces(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRunner(nopRunner{})
+	m.filterGen = 5
+	if _, cmd := m.Update(filterDebounceMsg{gen: 4}); cmd != nil {
+		t.Fatal("a superseded debounce timer must not fetch")
+	}
+	if _, cmd := m.Update(filterDebounceMsg{gen: 5}); cmd == nil {
+		t.Fatal("the latest debounce timer should fetch")
+	}
+}
+
 func TestFilterSwitchClearsStaleRows(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRunner(nopRunner{})

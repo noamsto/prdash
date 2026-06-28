@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -45,6 +46,7 @@ type Model struct {
 	expandedTab     int
 	checkCursor     int    // row cursor within the expanded Checks tab
 	notice          string // transient one-line hint in the expanded footer (rerun feedback)
+	filterGen       int    // generation counter so a debounced f-fetch ignores stale timers
 	loaded          bool   // first live fetch has returned; distinguishes empty from loading
 	presetIdx       int    // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool   // z: preview takes full width, list hidden
@@ -180,10 +182,10 @@ func (m Model) detailKey(num int) string {
 
 func (m *Model) Hydrate() { m.hydrate() }
 
-// switchFilter changes the active filter and clears the shown rows so the
-// previous filter's PRs don't linger (with a stale count) during the refetch.
-// Cached rows for the new filter show instantly; otherwise the loading state does.
-func (m *Model) switchFilter(filter string) tea.Cmd {
+// applyFilterSwitch swaps the active filter and clears the shown rows so the
+// previous filter's PRs don't linger (with a stale count). Cached rows for the
+// new filter show instantly; otherwise the loading state does. Does NOT fetch.
+func (m *Model) applyFilterSwitch(filter string) {
 	m.filter = filter
 	m.cursor = 0
 	m.sel.clear()
@@ -193,7 +195,25 @@ func (m *Model) switchFilter(filter string) tea.Cmd {
 	m.loaded = false
 	m.hydrate() // surface cached rows for the new filter at once, if any
 	m.renderList()
+}
+
+// switchFilter switches and fetches immediately (used by the author picker).
+func (m *Model) switchFilter(filter string) tea.Cmd {
+	m.applyFilterSwitch(filter)
+	m.filterGen++ // invalidate any in-flight f-debounce
 	return m.fetchCmd(m.runner)
+}
+
+// filterDebounce is how long rapid f presses coalesce before a live fetch fires.
+const filterDebounce = 250 * time.Millisecond
+
+// cycleFilterDebounced switches the visible filter at once but defers the live
+// fetch, so holding/spamming f cycles presets without a fetch per press.
+func (m *Model) cycleFilterDebounced(filter string) tea.Cmd {
+	m.applyFilterSwitch(filter)
+	m.filterGen++
+	gen := m.filterGen
+	return tea.Tick(filterDebounce, func(time.Time) tea.Msg { return filterDebounceMsg{gen: gen} })
 }
 
 func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
@@ -301,6 +321,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detailCmds()
 	case fetchFailedMsg:
 		m.err = msg.err
+		return m, nil
+	case filterDebounceMsg:
+		if msg.gen == m.filterGen { // still the latest f press → fetch now
+			return m, m.fetchCmd(m.runner)
+		}
 		return m, nil
 	case membersFetchedMsg:
 		m.members = msg.users
@@ -429,7 +454,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f":
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			m.presetIdx = nextPreset(max(m.presetIdx, 0))
-			return m, m.switchFilter(defaultPresets[m.presetIdx].search)
+			return m, m.cycleFilterDebounced(defaultPresets[m.presetIdx].search)
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil

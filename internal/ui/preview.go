@@ -98,9 +98,9 @@ func (m Model) previewWidth() int {
 		return 40
 	}
 	if m.previewMax {
-		return m.width - 2 // full width minus the pane's left padding
+		return m.width - 4 // border (2) + padding (2)
 	}
-	return l.SideWidth
+	return l.SideWidth - 4 // border (2) + padding (2)
 }
 
 // previewPane renders the triage card followed by the timeline. Before the
@@ -167,15 +167,21 @@ func ciLine(pr gh.PR) string {
 	}
 }
 
-// reviewersLine summarises requested reviewers for the quick window. Team
-// requests have no login and are skipped.
-func reviewersLine(reqs []gh.ReviewRequest) string {
+// requestedLogins returns the logins of requested reviewers. Team requests have
+// no login and are skipped.
+func requestedLogins(reqs []gh.ReviewRequest) []string {
 	var logins []string
 	for _, r := range reqs {
 		if r.Login != "" {
 			logins = append(logins, r.Login)
 		}
 	}
+	return logins
+}
+
+// reviewersLine summarises requested reviewers for the quick window.
+func reviewersLine(reqs []gh.ReviewRequest) string {
+	logins := requestedLogins(reqs)
 	if len(logins) == 0 {
 		return pendStyle.Render("  ⚠ no reviewers")
 	}
@@ -190,15 +196,22 @@ func (m Model) renderMain() string {
 	}
 	// z maximizes the preview to full width, hiding the list for deep reading.
 	if m.previewMax {
-		return lipgloss.NewStyle().Width(m.width).Height(l.ContentHeight).
-			MaxWidth(m.width).MaxHeight(l.ContentHeight).
-			PaddingLeft(2).Render(m.previewPane())
+		return paneBorder(m.width, l.ContentHeight, 0).Render(m.previewPane())
 	}
-	// MaxWidth/MaxHeight hard-clip the pane: Width/Height only pad up, so a long
-	// timeline or wide glamour line would otherwise overflow and scroll the list
-	// out of view. The card + reviewers line lead, so only the timeline tail clips.
-	side := lipgloss.NewStyle().Width(l.SideWidth).Height(l.ContentHeight).
-		MaxWidth(l.SideWidth).MaxHeight(l.ContentHeight).
-		PaddingLeft(2).Render(m.previewPane())
+	// MaxWidth/MaxHeight (inside paneBorder) hard-clip the pane so a long timeline
+	// or wide glamour line can't overflow and scroll the list out of view.
+	side := paneBorder(l.SideWidth, l.ContentHeight, l.Gap).Render(m.previewPane())
 	return lipgloss.JoinHorizontal(lipgloss.Top, m.vp.View(), side)
+}
+
+// paneBorder frames a side/preview pane: a rounded border + 1-col padding inside
+// a total width×height cell budget, offset by marginLeft (the list/preview gap).
+// Content wraps to width-4 (2 border + 2 padding); see previewWidth.
+func paneBorder(width, height, marginLeft int) lipgloss.Style {
+	inner := width - 2 // border eats 2 cols; Width() then includes the 1+1 padding
+	return lipgloss.NewStyle().
+		Width(inner).MaxWidth(inner).
+		Height(height-2).MaxHeight(height-2).
+		Padding(0, 1).MarginLeft(marginLeft).
+		Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
 }

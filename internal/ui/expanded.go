@@ -42,11 +42,25 @@ func tabStrip(active int) string {
 }
 
 func renderReviews(d gh.PRDetail, w int) string {
-	if len(d.LatestReviews) == 0 {
-		return dimStyle.Render("  No reviews yet.")
-	}
 	var b strings.Builder
 	sep := sepStyle.Render(strings.Repeat("─", w))
+	// Lead with who's been *asked* to review — submitted reviews below are often
+	// just bots, so the assigned humans are otherwise invisible on this tab.
+	if logins := requestedLogins(d.ReviewRequests); len(logins) > 0 {
+		styled := make([]string, len(logins))
+		for i, l := range logins {
+			styled[i] = authorStyle(l).Bold(true).Render("@" + l)
+		}
+		b.WriteString(dimStyle.Render("Requested  ") + strings.Join(styled, dimStyle.Render(", ")) + "\n")
+		b.WriteString(sep + "\n\n")
+	}
+	if len(d.LatestReviews) == 0 {
+		if b.Len() == 0 {
+			return dimStyle.Render("  No reviews yet.")
+		}
+		b.WriteString(dimStyle.Render("  No reviews submitted yet."))
+		return b.String()
+	}
 	for i, r := range d.LatestReviews {
 		if i > 0 {
 			b.WriteString(sep + "\n\n")
@@ -331,17 +345,19 @@ func (m Model) expandedView() string {
 	foot := statusBarStyle.Render(m.expandedFooter())
 	content := tabStrip(m.expandedTab) + "\n" + m.vp.View()
 
-	if !el.TwoCol {
-		body := content
-		if meta := narrowMeta(pr, d, m.width); meta != "" {
-			body = meta + "\n" + content
+	var inner string
+	if el.TwoCol {
+		rail := lipgloss.NewStyle().Width(el.RailW).Height(el.RailH).
+			MaxWidth(el.RailW).MaxHeight(el.RailH).Render(metaRail(pr, d, el.RailW))
+		inner = lipgloss.JoinHorizontal(lipgloss.Top, rail, "  ", content)
+	} else {
+		inner = content
+		if meta := narrowMeta(pr, d, el.ContentW); meta != "" {
+			inner = meta + "\n" + content
 		}
-		return head + "\n" + body + "\n" + foot
 	}
-	rail := lipgloss.NewStyle().Width(el.RailW).Height(el.RailH).
-		MaxWidth(el.RailW).MaxHeight(el.RailH).Render(metaRail(pr, d, el.RailW))
-	body := lipgloss.JoinHorizontal(lipgloss.Top, rail, "  ", content)
-	return head + "\n" + body + "\n" + foot
+	framed := paneBorder(m.width, m.height-2, 0).Render(inner) // -2: header + footer rows
+	return head + "\n" + framed + "\n" + foot
 }
 
 // ciSummary renders a one-line CI state for the rail / narrow header.

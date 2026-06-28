@@ -37,8 +37,8 @@ func TestExpandedLayoutNarrowSingleColumn(t *testing.T) {
 	if g.TwoCol {
 		t.Fatal("narrow terminal should be single-column")
 	}
-	if g.ContentW != 80 {
-		t.Fatalf("content should be full width when single-column: %d", g.ContentW)
+	if g.ContentW != 76 { // 80 minus the outer frame (border 2 + padding 2)
+		t.Fatalf("content should fill the frame interior: %d", g.ContentW)
 	}
 }
 
