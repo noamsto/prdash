@@ -49,7 +49,7 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 			ActionKey: "enter", ActionLabel: "worktree to resolve"}
 	case len(failing) > 0:
 		return Card{Kind: KindChecksFailing,
-			Headline: fmt.Sprintf("%d checks failing", len(failing)), Lines: failing,
+			Headline: ChecksFailingHeadline(len(failing)), Lines: failing,
 			ActionKey: "r", ActionLabel: "rerun failed", JumpTab: "checks"}
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
@@ -90,7 +90,7 @@ func Preliminary(pr gh.PR) Card {
 			ActionKey: "a", ActionLabel: "Mark ready"}
 	case len(failing) > 0:
 		return Card{Kind: KindChecksFailing,
-			Headline: fmt.Sprintf("%d checks failing", len(failing)), Lines: failing,
+			Headline: ChecksFailingHeadline(len(failing)), Lines: failing,
 			ActionKey: "r", ActionLabel: "rerun failed", JumpTab: "checks"}
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
@@ -105,9 +105,17 @@ func Preliminary(pr gh.PR) Card {
 	}
 }
 
+// ChecksFailingHeadline renders the failing-checks count with correct grammar.
+func ChecksFailingHeadline(n int) string {
+	if n == 1 {
+		return "1 check failing"
+	}
+	return fmt.Sprintf("%d checks failing", n)
+}
+
 func checksByState(pr gh.PR, want string) []string {
 	var out []string
-	for _, c := range pr.StatusCheckRollup {
+	for _, c := range pr.Checks() {
 		if checkState(c) == want {
 			out = append(out, c.Label())
 		}

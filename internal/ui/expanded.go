@@ -65,11 +65,12 @@ func renderReviews(d gh.PRDetail, w int) string {
 }
 
 func renderChecks(pr gh.PR, w, cursor int) string {
-	if len(pr.StatusCheckRollup) == 0 {
+	checks := pr.Checks()
+	if len(checks) == 0 {
 		return dimStyle.Render("  No checks.")
 	}
 	var b strings.Builder
-	for i, c := range pr.StatusCheckRollup {
+	for i, c := range checks {
 		label := truncate(c.Label(), w-4)
 		gutter := "  "
 		st := titleStyle
@@ -252,7 +253,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // checksLen returns the rollup length for the cursor PR (0 for non-PR sections).
 func (m Model) checksLen() int {
 	if ps, ok := m.section.(*PRSection); ok {
-		return len(ps.prAt(m.cursor).StatusCheckRollup)
+		return len(ps.prAt(m.cursor).Checks())
 	}
 	return 0
 }
@@ -276,11 +277,11 @@ func (m Model) rerunHovered() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	pr := ps.prAt(m.cursor)
-	if m.checkCursor < 0 || m.checkCursor >= len(pr.StatusCheckRollup) {
+	checks := ps.prAt(m.cursor).Checks()
+	if m.checkCursor < 0 || m.checkCursor >= len(checks) {
 		return m, nil
 	}
-	c := pr.StatusCheckRollup[m.checkCursor]
+	c := checks[m.checkCursor]
 	job := c.JobID()
 	if job == "" {
 		m.notice = "⚠ no rerun for external check: " + c.Label()
@@ -351,7 +352,7 @@ func ciSummary(pr gh.PR) string {
 		return passStyle.Render("✓ passing")
 	case "fail":
 		n := 0
-		for _, c := range pr.StatusCheckRollup {
+		for _, c := range pr.Checks() {
 			if c.Result() == "fail" {
 				n++
 			}

@@ -19,6 +19,7 @@ type Check struct {
 	WorkflowName string `json:"workflowName"` // CheckRun
 	Context      string `json:"context"`      // StatusContext (no name)
 	DetailsUrl   string `json:"detailsUrl"`   // CheckRun: …/actions/runs/<run>/job/<job>
+	StartedAt    string `json:"startedAt"`    // CheckRun start time (RFC3339); newest run wins on dedup
 }
 
 // JobID extracts the Actions job ID from DetailsUrl so a single check can be
@@ -89,6 +90,29 @@ func ParsePRs(b []byte) ([]PR, error) {
 		return nil, err
 	}
 	return prs, nil
+}
+
+// Checks dedupes the rollup to one entry per named check, keeping the most
+// recently started run — GitHub lists every re-run, which otherwise shows the
+// same check (and inflates the failing count) twice. Unnamed StatusContext
+// entries are never merged.
+func (p PR) Checks() []Check {
+	idx := map[string]int{}
+	var out []Check
+	for _, c := range p.StatusCheckRollup {
+		l := c.Label()
+		if l != "" {
+			if i, ok := idx[l]; ok {
+				if c.StartedAt > out[i].StartedAt {
+					out[i] = c
+				}
+				continue
+			}
+			idx[l] = len(out)
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func (p PR) CIState() string {

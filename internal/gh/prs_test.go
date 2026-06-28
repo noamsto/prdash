@@ -64,8 +64,8 @@ func TestCIState(t *testing.T) {
 func TestCheckJobID(t *testing.T) {
 	cases := map[string]string{
 		"https://github.com/cli/cli/actions/runs/28238190155/job/83658069205": "83658069205",
-		"https://example.com/build/123": "", // external StatusContext-style target
-		"":                              "",
+		"https://example.com/build/123":                                       "", // external StatusContext-style target
+		"":                                                                    "",
 	}
 	for url, want := range cases {
 		if got := (Check{DetailsUrl: url}).JobID(); got != want {
@@ -81,6 +81,25 @@ func TestLabelColorParses(t *testing.T) {
 	}
 	if got := prs[0].Labels[0].Color; got != "d73a4a" {
 		t.Errorf("label color = %q, want d73a4a", got)
+	}
+}
+
+func TestChecksDedupesByName(t *testing.T) {
+	p := PR{StatusCheckRollup: []Check{
+		{Name: "ci", State: "SUCCESS", StartedAt: "2026-06-24T12:54:09Z"},
+		{Name: "ci", State: "FAILURE", StartedAt: "2026-06-24T12:54:12Z"}, // newer wins
+		{Name: "lint", State: "SUCCESS", StartedAt: "2026-06-24T12:00:00Z"},
+		{Context: "external/a", State: "PENDING"}, // unnamed: kept as-is
+		{Context: "external/b", State: "SUCCESS"},
+	}}
+	got := p.Checks()
+	if len(got) != 4 {
+		t.Fatalf("want 4 deduped checks, got %d: %+v", len(got), got)
+	}
+	for _, c := range got {
+		if c.Label() == "ci" && c.Result() != "fail" {
+			t.Errorf("ci should keep the newer (failing) run, got %q", c.Result())
+		}
 	}
 }
 

@@ -45,8 +45,8 @@ type Model struct {
 	checkCursor     int    // row cursor within the expanded Checks tab
 	notice          string // transient one-line hint in the expanded footer (rerun feedback)
 	loaded          bool   // first live fetch has returned; distinguishes empty from loading
-	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
-	previewMax      bool // z: preview takes full width, list hidden
+	presetIdx       int    // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax      bool   // z: preview takes full width, list hidden
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
@@ -545,7 +545,7 @@ func (m Model) header() string {
 
 // statusBar is the bottom key/context line.
 func (m Model) statusBar() string {
-	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · / find · a actions · space select · q quit"
+	keys := "↑↓ move · →/↵ expand · z max · f filter · F author · R reviewers · / find · a actions · space select · q quit"
 	if n := m.sel.count(); n > 0 {
 		keys = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · " + keys
 	}

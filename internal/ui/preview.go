@@ -150,12 +150,12 @@ func ciLine(pr gh.PR) string {
 	switch pr.CIState() {
 	case "fail":
 		var names []string
-		for _, c := range pr.StatusCheckRollup {
+		for _, c := range pr.Checks() {
 			if c.Result() == "fail" {
 				names = append(names, c.Label())
 			}
 		}
-		s := failStyle.Render(fmt.Sprintf("  ✗ %d checks failing", len(names)))
+		s := failStyle.Render("  ✗ " + triage.ChecksFailingHeadline(len(names)))
 		for _, n := range names {
 			s += "\n" + failStyle.Render("    ✗ ") + dimStyle.Render(n)
 		}
