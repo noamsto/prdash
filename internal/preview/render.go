@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/charmbracelet/glamour"
+import "charm.land/glamour/v2"
 
 // rendererByWidth memoizes term renderers per wrap width. NewTermRenderer parses
 // the chroma style on every call, so building one per render frame lags the UI.
