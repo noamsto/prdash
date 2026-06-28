@@ -164,6 +164,24 @@ func TestEnterExpandedDeepLinks(t *testing.T) {
 	}
 }
 
+func TestExpandedViewWideShowsRail(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 160, 40
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi", Author: struct {
+		Login string `json:"login"`
+	}{Login: "alice"}, HeadRefName: "feat/x", BaseRefName: "main"}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded()
+	out := ansi.Strip(m.expandedView())
+	if !strings.Contains(out, "author") || !strings.Contains(out, "alice") {
+		t.Fatalf("wide expanded view should show the metadata rail: %q", out)
+	}
+	if !strings.Contains(out, "Conversation") {
+		t.Fatalf("wide expanded view should still show the tab strip: %q", out)
+	}
+}
+
 func TestExpandOnEmptyListDoesNotEnterOrPanic(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("noamsto/prdash")

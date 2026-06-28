@@ -31,3 +31,26 @@ func TestLayoutContentHeight(t *testing.T) {
 		t.Fatalf("ContentHeight = %d, want 37", l.ContentHeight)
 	}
 }
+
+func TestExpandedLayoutNarrowSingleColumn(t *testing.T) {
+	g := ExpandedLayout(80, 40)
+	if g.TwoCol {
+		t.Fatal("narrow terminal should be single-column")
+	}
+	if g.ContentW != 80 {
+		t.Fatalf("content should be full width when single-column: %d", g.ContentW)
+	}
+}
+
+func TestExpandedLayoutWideTwoColumn(t *testing.T) {
+	g := ExpandedLayout(160, 40)
+	if !g.TwoCol {
+		t.Fatal("wide terminal should be two-column")
+	}
+	if g.RailW < 32 || g.RailW > 44 {
+		t.Fatalf("rail width %d out of [32,44]", g.RailW)
+	}
+	if g.RailW+g.ContentW+2 > 160 {
+		t.Fatalf("rail+content+gap exceeds width: %+v", g)
+	}
+}

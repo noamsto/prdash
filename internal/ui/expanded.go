@@ -153,12 +153,14 @@ func (m Model) expandedBody(w int) string {
 }
 
 // renderExpanded fills the viewport with the active tab's content, scroll reset.
+// The viewport width tracks the content pane (narrower in two-col mode) so
+// markdown and timelines wrap to the pane, not the whole screen.
 func (m *Model) renderExpanded() {
-	l := computeLayout(m.width, m.height)
-	m.vp.SetWidth(m.width)
-	m.vp.SetHeight(l.ContentHeight - 1) // tab strip takes one row
-	m.vp.SetHorizontalStep(8)           // < / > pan wide content (tables, diffs) instead of wrapping
-	m.vp.SetContent(m.expandedBody(m.width))
+	el := ExpandedLayout(m.width, m.height)
+	m.vp.SetWidth(el.ContentW)
+	m.vp.SetHeight(el.VPHeight)
+	m.vp.SetHorizontalStep(8) // < / > pan wide content (tables, diffs) instead of wrapping
+	m.vp.SetContent(m.expandedBody(el.ContentW))
 	m.vp.SetYOffset(0)
 }
 
@@ -310,22 +312,126 @@ func (m Model) rerunAllFailed() (tea.Model, tea.Cmd) {
 	}
 }
 
-// expandedView is the full-screen detail: header, tab strip, scrollable body, keys.
+// expandedView is the full-screen detail. Wide terminals get a metadata rail
+// beside the tab/content pane; narrow ones get a compact meta header above it.
 func (m Model) expandedView() string {
-	n := 0
-	if v, ok := m.cursorVars(); ok {
-		n = v.Number
-	}
-	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
+	el := ExpandedLayout(m.width, m.height)
+	var pr gh.PR
+	var d gh.PRDetail
 	if ps, ok := m.section.(*PRSection); ok {
-		if title := ps.prAt(m.cursor).Title; title != "" {
-			if avail := m.width - lipgloss.Width(head) - 4; avail > 12 {
-				head += dimStyle.Render("  " + truncate(title, avail))
-			}
+		pr = ps.prAt(m.cursor)
+		d = m.detail[pr.Number]
+	}
+	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, pr.Number))
+	if pr.Title != "" {
+		if avail := m.width - lipgloss.Width(head) - 4; avail > 12 {
+			head += dimStyle.Render("  " + truncate(pr.Title, avail))
 		}
 	}
 	foot := statusBarStyle.Render(m.expandedFooter())
-	return head + "\n" + tabStrip(m.expandedTab) + "\n" + m.vp.View() + "\n" + foot
+	content := tabStrip(m.expandedTab) + "\n" + m.vp.View()
+
+	if !el.TwoCol {
+		body := content
+		if meta := narrowMeta(pr, d, m.width); meta != "" {
+			body = meta + "\n" + content
+		}
+		return head + "\n" + body + "\n" + foot
+	}
+	rail := lipgloss.NewStyle().Width(el.RailW).Height(el.RailH).
+		MaxWidth(el.RailW).MaxHeight(el.RailH).Render(metaRail(pr, d, el.RailW))
+	body := lipgloss.JoinHorizontal(lipgloss.Top, rail, "  ", content)
+	return head + "\n" + body + "\n" + foot
+}
+
+// ciSummary renders a one-line CI state for the rail / narrow header.
+func ciSummary(pr gh.PR) string {
+	switch pr.CIState() {
+	case "pass":
+		return passStyle.Render("✓ passing")
+	case "fail":
+		n := 0
+		for _, c := range pr.StatusCheckRollup {
+			if c.Result() == "fail" {
+				n++
+			}
+		}
+		return failStyle.Render(fmt.Sprintf("✗ %d failing", n))
+	case "pending":
+		return pendStyle.Render("● running")
+	default:
+		return dimStyle.Render("— no checks")
+	}
+}
+
+// metaRail renders the wide-mode left column: identity + the at-a-glance fields
+// that otherwise force a tab switch (branch, labels, reviewers, CI, diffstat).
+func metaRail(pr gh.PR, d gh.PRDetail, w int) string {
+	var b strings.Builder
+	b.WriteString(accentStyle.Render(fmt.Sprintf("#%d", pr.Number)))
+	if g := reviewGlyph(pr.ReviewDecision); g != "" {
+		b.WriteString("  " + g)
+	}
+	b.WriteString("\n")
+	if pr.Title != "" {
+		b.WriteString(titleStyle.Bold(true).Render(truncate(pr.Title, w)) + "\n")
+	}
+	b.WriteString("\n")
+
+	field := func(label, val string) {
+		if val == "" {
+			return
+		}
+		b.WriteString(dimStyle.Render(fmt.Sprintf("%-9s ", label)) + val + "\n")
+	}
+	if pr.Author.Login != "" {
+		field("author", authorStyle(pr.Author.Login).Render(truncate(pr.Author.Login, w-10)))
+	}
+	if pr.HeadRefName != "" {
+		field("branch", dimStyle.Render(truncate(pr.HeadRefName+" → "+pr.BaseRefName, w-10)))
+	}
+	field("labels", renderChips(pr.Labels, w-10))
+	var revs []string
+	for _, r := range d.ReviewRequests {
+		if r.Login != "" {
+			revs = append(revs, r.Login)
+		}
+	}
+	field("reviewers", dimStyle.Render(truncate(strings.Join(revs, ", "), w-10)))
+	field("ci", ciSummary(pr))
+	if s := d.Diffstat(); s.Files > 0 {
+		field("changes", fmt.Sprintf("%s  %s %s",
+			accentStyle.Render(fmt.Sprintf("%d files", s.Files)),
+			passStyle.Render(fmt.Sprintf("+%d", s.Additions)),
+			failStyle.Render(fmt.Sprintf("-%d", s.Deletions))))
+	}
+	return b.String()
+}
+
+// narrowMeta is the single compact context line shown above the tabs when the
+// terminal is too narrow for a rail.
+func narrowMeta(pr gh.PR, d gh.PRDetail, w int) string {
+	var parts []string
+	if pr.Author.Login != "" {
+		parts = append(parts, authorStyle(pr.Author.Login).Render(pr.Author.Login))
+	}
+	if pr.HeadRefName != "" {
+		parts = append(parts, dimStyle.Render(truncate(pr.HeadRefName+"→"+pr.BaseRefName, w/2)))
+	}
+	parts = append(parts, ciSummary(pr))
+	var revs int
+	for _, r := range d.ReviewRequests {
+		if r.Login != "" {
+			revs++
+		}
+	}
+	if revs > 0 {
+		parts = append(parts, dimStyle.Render(fmt.Sprintf("%d reviewers", revs)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  " + strings.Join(parts, dimStyle.Render(" · "))
 }
 
 // expandedFooter is the bottom hint line: a transient notice wins, else the key

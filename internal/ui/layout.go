@@ -29,3 +29,35 @@ func computeLayout(w, h int) Layout {
 	list := w - side - gap
 	return Layout{ShowSide: true, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
 }
+
+// ExpandedGeom is the computed geometry for the expanded detail view.
+type ExpandedGeom struct {
+	TwoCol   bool
+	RailW    int // metadata rail width (two-col only)
+	RailH    int // metadata rail height (two-col only)
+	ContentW int // width of the tab/content pane (and viewport)
+	VPHeight int // scrollable viewport height
+}
+
+// ExpandedLayout splits the expanded view by terminal width: a metadata rail +
+// content pane when wide, a single column with a compact meta header when narrow.
+func ExpandedLayout(w, h int) ExpandedGeom {
+	body := h - 2 // header + footer rows
+	if body < 1 {
+		body = 1
+	}
+	if w < sideThreshold {
+		vp := body - 2 // compact meta line + tab strip
+		if vp < 1 {
+			vp = 1
+		}
+		return ExpandedGeom{TwoCol: false, ContentW: w, VPHeight: vp}
+	}
+	const gap = 2
+	rail := max(32, min(w*30/100, 44))
+	vp := body - 1 // tab strip
+	if vp < 1 {
+		vp = 1
+	}
+	return ExpandedGeom{TwoCol: true, RailW: rail, RailH: body, ContentW: w - rail - gap, VPHeight: vp}
+}
