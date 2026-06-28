@@ -190,7 +190,7 @@ func renderChips(labels []gh.Label, maxW int) string {
 	var b strings.Builder
 	used, shown := 0, 0
 	for _, l := range labels {
-		chip := chipStyle(l.Color).Render(" " + l.Name + " ")
+		chip := labelChip(l.Name, l.Color)
 		cw := lipgloss.Width(chip)
 		sep := 0
 		if shown > 0 {

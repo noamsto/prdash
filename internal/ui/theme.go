@@ -23,6 +23,8 @@ var (
 	focusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))            // cyan — cursor-row left bar
 	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true) // bright cyan — top header + active tab
 	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	errBarStyle    = lipgloss.NewStyle().Background(lipgloss.Color("203")).Foreground(lipgloss.Color("16")).Bold(true) // red toast bar
+	confirmBorder  = lipgloss.Color("214")                                                                             // yellow — confirm modal frame
 )
 
 // authorPalette: legible-on-dark hues that stay distinct from the state colors
@@ -97,17 +99,27 @@ func lightText(hex string) bool {
 	return lum < 150
 }
 
-// chipStyle renders a label pill: the label's background color with auto-picked
-// black/white text. Empty/invalid colors fall back to a neutral dim chip.
-func chipStyle(hex string) lipgloss.Style {
-	if len(hex) != 6 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238"))
+// Rounded chip end-caps: Powerline half-circles drawn in the chip's own color on
+// the pane background, so a label reads as a rounded pill. / are Nerd
+// Font glyphs (ple-left/right-half-circle-thick); swap if your font maps them out.
+const (
+	chipCapLeft  = "\ue0b6"
+	chipCapRight = "\ue0b4"
+)
+
+// labelChip renders one rounded label pill: GitHub hex as the fill with auto
+// black/white text by luminance; empty/invalid colors fall back to a dim chip.
+func labelChip(name, hex string) string {
+	fg, bg := lipgloss.Color("16"), lipgloss.Color("#"+hex)
+	switch {
+	case len(hex) != 6:
+		fg, bg = lipgloss.Color("252"), lipgloss.Color("238")
+	case lightText(hex):
+		fg = lipgloss.Color("231")
 	}
-	fg := lipgloss.Color("16") // near-black
-	if lightText(hex) {
-		fg = lipgloss.Color("231") // near-white
-	}
-	return lipgloss.NewStyle().Foreground(fg).Background(lipgloss.Color("#" + hex))
+	caps := lipgloss.NewStyle().Foreground(bg)
+	body := lipgloss.NewStyle().Foreground(fg).Background(bg)
+	return caps.Render(chipCapLeft) + body.Render(name) + caps.Render(chipCapRight)
 }
 
 // ciGlyph maps a CIState() value to a colored single-rune glyph.

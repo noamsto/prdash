@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -420,6 +421,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionCursor = 0
 			return m, cmd
 		}
+		m.err = nil // a keypress dismisses the error toast
 		switch msg.String() {
 		case "a":
 			m.showActions = true
@@ -494,12 +496,7 @@ func (m Model) render() string {
 		return m.expandedView()
 	}
 	if m.pending != nil {
-		n := 0
-		if v, ok := m.cursorVars(); ok {
-			n = v.Number
-		}
-		return m.header() + "\n" + accentStyle.Render(fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)) +
-			"\n" + m.renderMain()
+		return m.header() + "\n" + m.confirmModal() + "\n" + m.statusBar()
 	}
 	if m.showPicker {
 		return m.pickerView()
@@ -530,7 +527,32 @@ func (m Model) render() string {
 		}
 		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
-	return m.header() + "\n" + m.renderMain() + "\n" + m.statusBar()
+	return m.header() + "\n" + m.renderMain() + "\n" + m.bottomBar()
+}
+
+// bottomBar shows a prominent red error toast when something failed (an action
+// or fetch), else the normal key hints. Cleared on the next keypress.
+func (m Model) bottomBar() string {
+	if m.err != nil {
+		return errBarStyle.Width(m.width).Render(truncate("  ✗ "+m.err.Error(), m.width-1))
+	}
+	return m.statusBar()
+}
+
+// confirmModal centers a bordered y/N prompt in the content area so a destructive
+// action (merge, etc.) can't be confirmed blind.
+func (m Model) confirmModal() string {
+	n := 0
+	if v, ok := m.cursorVars(); ok {
+		n = v.Number
+	}
+	q := lipgloss.NewStyle().Bold(true).Foreground(confirmBorder).
+		Render(fmt.Sprintf("%s  #%d?", m.pending.Label, n))
+	hint := dimStyle.Render("y confirm · any other key cancels")
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(confirmBorder).
+		Padding(0, 3).Render(lipgloss.JoinVertical(lipgloss.Center, q, "", hint))
+	h := computeLayout(m.width, m.height).ContentHeight
+	return lipgloss.Place(m.width, h, lipgloss.Center, lipgloss.Center, box)
 }
 
 // header is the top line: repo · filter · open count.

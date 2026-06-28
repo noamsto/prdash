@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,40 @@ func TestFilterSwitchClearsStaleRows(t *testing.T) {
 	m = updated.(Model)
 	if m.section.Len() != 0 {
 		t.Fatalf("f should clear the previous filter's rows during refetch, got %d", m.section.Len())
+	}
+}
+
+func TestErrorToastSurfacedWithPRs(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.err = errors.New("merge failed: not mergeable")
+	if !strings.Contains(m.render(), "merge failed") {
+		t.Fatalf("action error must be visible even with a non-empty list: %q", m.render())
+	}
+}
+
+func TestErrorClearedOnKeypress(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRunner(nopRunner{})
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7}, {Number: 8}})
+	m.err = errors.New("boom")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if updated.(Model).err != nil {
+		t.Fatal("a keypress should dismiss the error toast")
+	}
+}
+
+func TestConfirmModalShown(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7}})
+	a := m.actions["m"]
+	m.pending = &a
+	out := m.render()
+	if !strings.Contains(out, "Merge") || !strings.Contains(out, "y confirm") {
+		t.Fatalf("confirm modal should prompt prominently: %q", out)
 	}
 }
 

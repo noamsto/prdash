@@ -62,11 +62,12 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		r := m.runner
 		dir := m.dir
+		fetch := m.fetchCmd(m.runner) // refresh the list so the action's effect shows
 		return func() tea.Msg {
 			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
 				return fetchFailedMsg{err}
 			}
-			return nil
+			return fetch()
 		}
 	}
 }
