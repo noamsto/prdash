@@ -250,7 +250,6 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// checksLen returns the rollup length for the cursor PR (0 for non-PR sections).
 func (m Model) checksLen() int {
 	if ps, ok := m.section.(*PRSection); ok {
 		return len(ps.prAt(m.cursor).Checks())
