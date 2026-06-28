@@ -2,6 +2,7 @@ package ui
 
 import (
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,36 @@ func reviewStateLabel(state string) string {
 	default:
 		return dimStyle.Render(state)
 	}
+}
+
+// lightText reports whether a label background (6-hex, no '#') is dark enough to
+// need light text. Uses perceptual luminance; unparseable colors default to
+// light text (safe on the dim fallback chip).
+func lightText(hex string) bool {
+	if len(hex) != 6 {
+		return true
+	}
+	r, e1 := strconv.ParseInt(hex[0:2], 16, 0)
+	g, e2 := strconv.ParseInt(hex[2:4], 16, 0)
+	b, e3 := strconv.ParseInt(hex[4:6], 16, 0)
+	if e1 != nil || e2 != nil || e3 != nil {
+		return true
+	}
+	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+	return lum < 150
+}
+
+// chipStyle renders a label pill: the label's background color with auto-picked
+// black/white text. Empty/invalid colors fall back to a neutral dim chip.
+func chipStyle(hex string) lipgloss.Style {
+	if len(hex) != 6 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238"))
+	}
+	fg := lipgloss.Color("16") // near-black
+	if lightText(hex) {
+		fg = lipgloss.Color("231") // near-white
+	}
+	return lipgloss.NewStyle().Foreground(fg).Background(lipgloss.Color("#" + hex))
 }
 
 // ciGlyph maps a CIState() value to a colored single-rune glyph.

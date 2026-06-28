@@ -49,7 +49,7 @@ func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
-		p.Author.Login, ageString(p.UpdatedAt), labelNames(p.Labels),
+		p.Author.Login, ageString(p.UpdatedAt), p.Labels,
 		reviewGlyph(p.ReviewDecision), ciGlyph(p.CIState()))
 }
 
@@ -83,7 +83,7 @@ func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), labelNames(is.Labels), "", "")
+		is.Author.Login, ageString(is.UpdatedAt), is.Labels, "", "")
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -128,8 +128,8 @@ const metaIndent = "         " // 9 cols — aligns the meta line under the titl
 // row is exactly two lines and never wraps past the pane width:
 //
 //	‹marker›‹num› ‹title›                         ‹ci›
-//	       ‹author · age · labels · review›
-func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string) string {
+//	       ‹author · age · review · label-chips›
+func renderItemRow(o RowOpts, num, title, author, age string, labels []gh.Label, review, ci string) string {
 	w := o.Width
 	if w < 10 {
 		w = 10 // floor keeps truncation sane before the first WindowSizeMsg
@@ -159,15 +159,60 @@ func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string
 		line1 = left + strings.Repeat(" ", gap) + ci
 	}
 	avail := w - len(metaIndent)
-	authorTxt := truncate(author, avail)
-	rest := strings.TrimRight(" · "+age+metaTail(labels, review), " ·")
-	restTxt := truncate(rest, avail-len([]rune(authorTxt)))
 	gutter := metaIndent
 	if o.Focused {
 		gutter = focusBarStyle.Render("▎") + metaIndent[1:]
 	}
-	line2 := gutter + authorStyle(author).Render(authorTxt) + dimStyle.Render(restTxt)
-	return line1 + "\n" + line2
+	authorTxt := truncate(author, avail)
+	meta := authorStyle(author).Render(authorTxt)
+	used := lipgloss.Width(authorTxt)
+	if age != "" && used+len(age)+3 <= avail {
+		meta += dimStyle.Render(" · " + age)
+		used += len(age) + 3
+	}
+	if review != "" && used+lipgloss.Width(review)+3 <= avail {
+		meta += dimStyle.Render(" · ") + review
+		used += lipgloss.Width(review) + 3
+	}
+	if chips := renderChips(labels, avail-used-1); chips != "" {
+		meta += " " + chips
+	}
+	return line1 + "\n" + gutter + meta
+}
+
+// renderChips renders label pills space-separated, fitting within maxW cells and
+// appending a dim "+N" marker for any that don't fit. Returns "" when no labels
+// fit at all.
+func renderChips(labels []gh.Label, maxW int) string {
+	if len(labels) == 0 || maxW < 3 {
+		return ""
+	}
+	var b strings.Builder
+	used, shown := 0, 0
+	for _, l := range labels {
+		chip := chipStyle(l.Color).Render(" " + l.Name + " ")
+		cw := lipgloss.Width(chip)
+		sep := 0
+		if shown > 0 {
+			sep = 1
+		}
+		if used+sep+cw > maxW {
+			break
+		}
+		if shown > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(chip)
+		used += sep + cw
+		shown++
+	}
+	if shown == 0 {
+		return ""
+	}
+	if shown < len(labels) {
+		b.WriteString(dimStyle.Render(fmt.Sprintf(" +%d", len(labels)-shown)))
+	}
+	return b.String()
 }
 
 // truncate shortens a plain (unstyled) string to at most w display cells, adding
@@ -184,17 +229,6 @@ func truncate(s string, w int) string {
 		return "…"
 	}
 	return string(r[:w-1]) + "…"
-}
-
-func metaTail(labels, review string) string {
-	out := ""
-	if labels != "" {
-		out += " · " + labels
-	}
-	if review != "" {
-		out += " · " + review
-	}
-	return out
 }
 
 func reviewGlyph(decision string) string {
