@@ -11,6 +11,24 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
+type nopRunner struct{}
+
+func (nopRunner) Run(string, ...string) ([]byte, error) { return nil, nil }
+
+func TestDetailCmdsPrefetchesNeighbors(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRunner(nopRunner{})
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
+	m.cursor = 1
+	if m.detailCmds() == nil {
+		t.Fatal("uncached neighbors should be fetched")
+	}
+	m.detail[1], m.detail[2], m.detail[3] = gh.PRDetail{}, gh.PRDetail{}, gh.PRDetail{}
+	if m.detailCmds() != nil {
+		t.Fatal("all cached → no fetch")
+	}
+}
+
 func TestHydrateLoadsCachedDetail(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	listRaw, _ := json.Marshal([]gh.PR{{Number: 7, Title: "hi"}})

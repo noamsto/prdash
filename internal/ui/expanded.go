@@ -228,14 +228,14 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
-		return m, m.detailCmdForCursor()
+		return m, m.detailCmds()
 	case "K":
 		if m.cursor > 0 {
 			m.cursor--
 		}
 		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
-		return m, m.detailCmdForCursor()
+		return m, m.detailCmds()
 	case "enter":
 		if a, ok := m.actions["enter"]; ok {
 			return m, m.runAction(a)

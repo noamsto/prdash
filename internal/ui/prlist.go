@@ -284,7 +284,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
 		}
-		return m, m.detailCmdForCursor()
+		return m, m.detailCmds()
 	case fetchFailedMsg:
 		m.err = msg.err
 		return m, nil
@@ -450,10 +450,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.detailCmdForCursor()
 		case "down", "j":
 			m.moveCursor(1)
-			return m, m.detailCmdForCursor()
+			return m, m.detailCmds()
 		case "up", "k":
 			m.moveCursor(-1)
-			return m, m.detailCmdForCursor()
+			return m, m.detailCmds()
 		case "enter", "right", "l":
 			m.enterExpanded()
 			return m, m.detailCmdForCursor()

@@ -44,6 +44,30 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 	return m.fetchDetailCmd(v.Number)
 }
 
+// detailCmds fetches detail for the cursor and its immediate neighbors so j/k
+// navigation lands on an already-loaded preview. Skips cached / out-of-range rows.
+func (m *Model) detailCmds() tea.Cmd {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.runner == nil {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, i := range []int{m.cursor, m.cursor - 1, m.cursor + 1} {
+		if i < 0 || i >= m.section.Len() {
+			continue
+		}
+		num := ps.prAt(i).Number
+		if _, cached := m.detail[num]; cached {
+			continue
+		}
+		cmds = append(cmds, m.fetchDetailCmd(num))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
 // renderTimeline renders the latest n items expanded, older collapsed.
 func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 	older, latest := preview.Fold(items, n)
