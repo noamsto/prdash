@@ -29,6 +29,21 @@ func TestDetailCmdsPrefetchesNeighbors(t *testing.T) {
 	}
 }
 
+func TestFilterSwitchClearsStaleRows(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRunner(nopRunner{})
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+	if m.section.Len() != 2 {
+		t.Fatalf("precondition: want 2 rows, got %d", m.section.Len())
+	}
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	m = updated.(Model)
+	if m.section.Len() != 0 {
+		t.Fatalf("f should clear the previous filter's rows during refetch, got %d", m.section.Len())
+	}
+}
+
 func TestHydrateLoadsCachedDetail(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	listRaw, _ := json.Marshal([]gh.PR{{Number: 7, Title: "hi"}})

@@ -179,6 +179,22 @@ func (m Model) detailKey(num int) string {
 
 func (m *Model) Hydrate() { m.hydrate() }
 
+// switchFilter changes the active filter and clears the shown rows so the
+// previous filter's PRs don't linger (with a stale count) during the refetch.
+// Cached rows for the new filter show instantly; otherwise the loading state does.
+func (m *Model) switchFilter(filter string) tea.Cmd {
+	m.filter = filter
+	m.cursor = 0
+	m.sel.clear()
+	if ps, ok := m.section.(*PRSection); ok {
+		ps.SetPRs(nil)
+	}
+	m.loaded = false
+	m.hydrate() // surface cached rows for the new filter at once, if any
+	m.renderList()
+	return m.fetchCmd(m.runner)
+}
+
 func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
 	dir, filter := m.dir, m.filter
 	return func() tea.Msg {
@@ -246,11 +262,8 @@ func (m *Model) confirmPicker() tea.Cmd {
 			return nil // empty selection: keep the current filter
 		}
 		slices.Sort(terms)
-		m.filter = "is:open " + strings.Join(terms, " ")
 		m.presetIdx = -1
-		m.cursor = 0
-		m.loaded = false
-		return m.fetchCmd(m.runner)
+		return m.switchFilter("is:open " + strings.Join(terms, " "))
 	case "reviewer":
 		v, ok := m.cursorVars()
 		if !ok {
@@ -414,10 +427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f":
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			m.presetIdx = nextPreset(max(m.presetIdx, 0))
-			m.filter = defaultPresets[m.presetIdx].search
-			m.cursor = 0
-			m.loaded = false
-			return m, m.fetchCmd(m.runner)
+			return m, m.switchFilter(defaultPresets[m.presetIdx].search)
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
