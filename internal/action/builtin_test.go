@@ -30,6 +30,23 @@ func (r *seqRunner) Run(_ string, args ...string) ([]byte, error) {
 	return o, nil
 }
 
+func TestRerunCheck(t *testing.T) {
+	r := &seqRunner{outs: [][]byte{[]byte(``)}}
+	if err := RerunCheck(r, "/repo", "83658069205"); err != nil {
+		t.Fatal(err)
+	}
+	got := r.calls[0]
+	want := []string{"run", "rerun", "--job", "83658069205"}
+	if len(got) != len(want) {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestRerunFailedResolvesRunID(t *testing.T) {
 	r := &seqRunner{outs: [][]byte{
 		[]byte(`[{"databaseId":555}]`), // gh run list

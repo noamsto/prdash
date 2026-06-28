@@ -15,6 +15,12 @@ func OSC52(s string) string {
 	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(s)) + "\x07"
 }
 
+// RerunCheck reruns a single Actions job (one check) by its job ID.
+func RerunCheck(r gh.Runner, dir, jobID string) error {
+	_, err := r.Run(dir, "run", "rerun", "--job", jobID)
+	return err
+}
+
 func RerunFailed(r gh.Runner, dir, branch string) error {
 	out, err := r.Run(dir, "run", "list", "--branch", branch, "-L", "1", "--json", "databaseId")
 	if err != nil {
