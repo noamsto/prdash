@@ -25,7 +25,7 @@ func computeLayout(w, h int) Layout {
 		return Layout{ShowSide: false, ListWidth: w, ContentHeight: ch}
 	}
 	const gap = 2
-	side := w * 45 / 100
+	side := w * 55 / 100
 	list := w - side - gap
 	return Layout{ShowSide: true, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
 }

@@ -147,6 +147,7 @@ func (m *Model) renderExpanded() {
 	l := computeLayout(m.width, m.height)
 	m.vp.Width = m.width
 	m.vp.Height = l.ContentHeight - 1 // tab strip takes one row
+	m.vp.SetHorizontalStep(8)         // < / > pan wide content (tables, diffs) instead of wrapping
 	m.vp.SetContent(m.expandedBody(m.width))
 	m.vp.SetYOffset(0)
 }
@@ -175,6 +176,12 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "k", "up":
 		m.vp.LineUp(1)
+		return m, nil
+	case ">", ".":
+		m.vp.ScrollRight(8)
+		return m, nil
+	case "<", ",":
+		m.vp.ScrollLeft(8)
 		return m, nil
 	case "J":
 		if m.cursor < m.section.Len()-1 {
@@ -215,6 +222,6 @@ func (m Model) expandedView() string {
 			}
 		}
 	}
-	foot := statusBarStyle.Render("  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back")
+	foot := statusBarStyle.Render("  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back")
 	return head + "\n" + tabStrip(m.expandedTab) + "\n" + m.vp.View() + "\n" + foot
 }

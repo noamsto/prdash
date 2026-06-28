@@ -43,6 +43,7 @@ type Model struct {
 	expandedTab     int
 	loaded          bool // first live fetch has returned; distinguishes empty from loading
 	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax      bool // z: preview takes full width, list hidden
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
@@ -393,6 +394,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.loaded = false
 			return m, m.fetchCmd(m.runner)
+		case "z":
+			m.previewMax = !m.previewMax
+			return m, nil
 		case "F":
 			return m, m.openPicker("author")
 		case "R":
@@ -501,7 +505,7 @@ func (m Model) header() string {
 
 // statusBar is the bottom key/context line.
 func (m Model) statusBar() string {
-	keys := "↑↓ move · → expand · f filter · F author · R reviewers · / find · a actions · space select · q quit"
+	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · / find · a actions · space select · q quit"
 	if n := m.sel.count(); n > 0 {
 		keys = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · " + keys
 	}

@@ -73,6 +73,9 @@ func (m Model) previewWidth() int {
 	if !l.ShowSide {
 		return 40
 	}
+	if m.previewMax {
+		return m.width - 2 // full width minus the pane's left padding
+	}
 	return l.SideWidth
 }
 
@@ -88,16 +91,43 @@ func (m Model) previewPane() string {
 		return "Loading preview…"
 	}
 	w := m.previewWidth()
-	var card string
+	var parts []string
 	if ps, ok := m.section.(*PRSection); ok {
-		card = renderCard(triage.Compute(ps.prAt(m.cursor), d), w)
+		pr := ps.prAt(m.cursor)
+		if card := renderCard(triage.Compute(pr, d), w); card != "" {
+			parts = append(parts, strings.TrimRight(card, "\n"))
+		}
+		if ci := ciLine(pr); ci != "" {
+			parts = append(parts, ci)
+		}
 	}
-	revs := reviewersLine(d.ReviewRequests)
+	parts = append(parts, reviewersLine(d.ReviewRequests))
 	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
-	if card == "" {
-		return revs + "\n\n" + timeline
+	return strings.Join(parts, "\n") + "\n\n" + timeline
+}
+
+// ciLine surfaces the check rollup in the quick view independent of the triage
+// card, which keys off mergeStateStatus and can mask failing CI behind a
+// review/conflict headline.
+func ciLine(pr gh.PR) string {
+	switch pr.CIState() {
+	case "fail":
+		var names []string
+		for _, c := range pr.StatusCheckRollup {
+			if c.Result() == "fail" {
+				names = append(names, c.Label())
+			}
+		}
+		s := failStyle.Render("  ✗ checks failing")
+		if len(names) > 0 {
+			s += dimStyle.Render(": " + strings.Join(names, ", "))
+		}
+		return s
+	case "pending":
+		return pendStyle.Render("  ● checks running")
+	default: // pass / none — the row glyph carries it; keep the quick view calm
+		return ""
 	}
-	return card + "\n" + revs + "\n\n" + timeline
 }
 
 // reviewersLine summarises requested reviewers for the quick window. Team
@@ -120,6 +150,12 @@ func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	if !l.ShowSide {
 		return m.vp.View()
+	}
+	// z maximizes the preview to full width, hiding the list for deep reading.
+	if m.previewMax {
+		return lipgloss.NewStyle().Width(m.width).Height(l.ContentHeight).
+			MaxWidth(m.width).MaxHeight(l.ContentHeight).
+			PaddingLeft(2).Render(m.previewPane())
 	}
 	// MaxWidth/MaxHeight hard-clip the pane: Width/Height only pad up, so a long
 	// timeline or wide glamour line would otherwise overflow and scroll the list

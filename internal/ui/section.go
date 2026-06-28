@@ -134,14 +134,22 @@ func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string
 	if w < 10 {
 		w = 10 // floor keeps truncation sane before the first WindowSizeMsg
 	}
-	marker := "  "
-	if o.Selected {
-		marker = selMarkStyle.Render("● ")
+	// gutter: col 0 = focus bar (cursor row), col 1 = multi-select mark.
+	bar, mark := " ", " "
+	if o.Focused {
+		bar = focusBarStyle.Render("▎")
 	}
-	prefix := marker + accentStyle.Render(num) + "  "
+	if o.Selected {
+		mark = selMarkStyle.Render("●")
+	}
+	prefix := bar + mark + accentStyle.Render(num) + "  "
 	ciW := lipgloss.Width(ci)
 	titleRoom := w - lipgloss.Width(prefix) - ciW - 1 // 1 = min gap before ci
-	left := prefix + truncate(title, titleRoom)
+	titleSt := titleStyle
+	if o.Focused {
+		titleSt = titleSt.Bold(true)
+	}
+	left := prefix + titleSt.Render(truncate(title, titleRoom))
 	line1 := left
 	if ci != "" {
 		gap := w - lipgloss.Width(left) - ciW
@@ -150,13 +158,16 @@ func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string
 		}
 		line1 = left + strings.Repeat(" ", gap) + ci
 	}
-	metaRaw := strings.TrimRight(author+" · "+age+metaTail(labels, review), " ·")
-	line2 := metaIndent + dimStyle.Render(truncate(metaRaw, w-len(metaIndent)))
-	body := line1 + "\n" + line2
+	avail := w - len(metaIndent)
+	authorTxt := truncate(author, avail)
+	rest := strings.TrimRight(" · "+age+metaTail(labels, review), " ·")
+	restTxt := truncate(rest, avail-len([]rune(authorTxt)))
+	gutter := metaIndent
 	if o.Focused {
-		body = cursorRowStyle.Width(w).Render(body)
+		gutter = focusBarStyle.Render("▎") + metaIndent[1:]
 	}
-	return body
+	line2 := gutter + authorStyle(author).Render(authorTxt) + dimStyle.Render(restTxt)
+	return line1 + "\n" + line2
 }
 
 // truncate shortens a plain (unstyled) string to at most w display cells, adding
