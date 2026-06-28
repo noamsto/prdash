@@ -30,6 +30,30 @@ func TestDetailCmdsPrefetchesNeighbors(t *testing.T) {
 	}
 }
 
+func TestWarmPresetsRunsOnce(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", defaultPresets[0].search, c)
+	m.SetRunner(nopRunner{})
+	if m.warmPresetsCmd() == nil {
+		t.Fatal("first warm should return prefetch commands")
+	}
+	if !m.warmed {
+		t.Fatal("warmed flag should be set after the first warm")
+	}
+	if m.warmPresetsCmd() != nil {
+		t.Fatal("warming must run only once per session")
+	}
+}
+
+func TestPrefetchedMsgCachesUnderFilterKey(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.Update(prefetchedMsg{filter: "is:open author:@me", raw: []byte(`[{"number":5}]`)})
+	if _, ok := c.Get(cache.Key("pr", "is:open author:@me", defaultLimit, schemaVer)); !ok {
+		t.Fatal("a prefetched preset should be cached under its own filter key")
+	}
+}
+
 func TestFilterDebounceCoalesces(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRunner(nopRunner{})

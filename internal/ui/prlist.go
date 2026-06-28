@@ -47,6 +47,7 @@ type Model struct {
 	checkCursor     int    // row cursor within the expanded Checks tab
 	notice          string // transient one-line hint in the expanded footer (rerun feedback)
 	filterGen       int    // generation counter so a debounced f-fetch ignores stale timers
+	warmed          bool   // other presets have been background-prefetched this session
 	loaded          bool   // first live fetch has returned; distinguishes empty from loading
 	presetIdx       int    // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool   // z: preview takes full width, list hidden
@@ -231,6 +232,38 @@ func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
 	}
 }
 
+// warmPresetsCmd background-fetches the built-in presets the user isn't on yet,
+// once per session, so cycling with f lands on fresh cached rows. Best-effort:
+// results go straight to the cache and errors are ignored.
+func (m *Model) warmPresetsCmd() tea.Cmd {
+	if m.cache == nil || m.runner == nil || m.warmed {
+		return nil
+	}
+	m.warmed = true
+	var cmds []tea.Cmd
+	for _, p := range defaultPresets {
+		if p.search == m.filter {
+			continue // already the displayed (and just-cached) filter
+		}
+		cmds = append(cmds, m.prefetchListCmd(p.search))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) prefetchListCmd(filter string) tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
+		if err != nil {
+			return nil
+		}
+		if _, err := gh.ParsePRs(raw); err != nil { // don't cache an error page
+			return nil
+		}
+		return prefetchedMsg{filter: filter, raw: raw}
+	}
+}
+
 // openPicker shows the member picker in the given mode, pre-checking the right
 // set, and fetches the member list if it isn't cached yet.
 func (m *Model) openPicker(mode string) tea.Cmd {
@@ -318,7 +351,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
 		}
-		return m, m.detailCmds()
+		return m, tea.Batch(m.detailCmds(), m.warmPresetsCmd())
+	case prefetchedMsg:
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(cache.Key("pr", msg.filter, defaultLimit, schemaVer), msg.raw)
+		}
+		return m, nil
 	case fetchFailedMsg:
 		m.err = msg.err
 		return m, nil
