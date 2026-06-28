@@ -1,8 +1,8 @@
 package preview
 
 import (
-	"github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/glamour/styles"
+	"charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
 )
 
 // darkStyle is glamour's built-in dark chroma style. We deliberately do NOT

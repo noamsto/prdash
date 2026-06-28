@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
@@ -39,7 +39,7 @@ func main() {
 	m.SetRepo(repo)
 	m.Hydrate()
 
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
