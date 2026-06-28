@@ -7,9 +7,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -57,7 +57,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	af.Prompt = "› "
 	return Model{
 		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
-		vp: viewport.New(0, 0), filterInput: ti, actionFilter: af,
+		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 3,
 		presetIdx: presetIndexFor(filter),
 	}
@@ -104,8 +104,8 @@ func (m *Model) renderList() {
 		}))
 		b.WriteString("\n\n")
 	}
-	m.vp.Width = listW
-	m.vp.Height = l.ContentHeight
+	m.vp.SetWidth(listW)
+	m.vp.SetHeight(l.ContentHeight)
 	m.vp.SetContent(b.String())
 	m.scrollToCursor()
 }
@@ -118,12 +118,12 @@ const rowLines = 3
 func (m *Model) scrollToCursor() {
 	top := m.cursor * rowLines
 	bottom := top + rowLines - 1
-	off := m.vp.YOffset
+	off := m.vp.YOffset()
 	switch {
 	case top < off:
 		off = top
-	case bottom >= off+m.vp.Height:
-		off = bottom - m.vp.Height + 1
+	case bottom >= off+m.vp.Height():
+		off = bottom - m.vp.Height() + 1
 	}
 	if off < 0 {
 		off = 0
@@ -449,7 +449,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+func (m Model) render() string {
 	if m.expanded {
 		return m.expandedView()
 	}

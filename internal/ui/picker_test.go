@@ -47,8 +47,8 @@ func TestOpenPickerFetchesAndPopulates(t *testing.T) {
 	if len(m.pick.cands) != 1 || m.pick.cands[0].Login != "alice" {
 		t.Fatalf("members msg should populate candidates: %+v", m.pick.cands)
 	}
-	if !strings.Contains(m.View(), "alice") {
-		t.Fatalf("picker view should list candidates: %q", m.View())
+	if !strings.Contains(m.render(), "alice") {
+		t.Fatalf("picker view should list candidates: %q", m.render())
 	}
 }
 

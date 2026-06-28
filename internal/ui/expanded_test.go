@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/triage"
 )
@@ -33,7 +35,7 @@ func TestRenderDiffstatTotals(t *testing.T) {
 		{Path: "a.go", Additions: 10, Deletions: 2},
 		{Path: "b.go", Additions: 1, Deletions: 1},
 	}}
-	out := renderDiffstat(d, 60)
+	out := ansi.Strip(renderDiffstat(d, 60))
 	if !strings.Contains(out, "2 files") || !strings.Contains(out, "a.go") {
 		t.Fatalf("diffstat missing totals/files: %q", out)
 	}

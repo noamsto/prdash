@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
@@ -145,9 +145,9 @@ func (m Model) expandedBody(w int) string {
 // renderExpanded fills the viewport with the active tab's content, scroll reset.
 func (m *Model) renderExpanded() {
 	l := computeLayout(m.width, m.height)
-	m.vp.Width = m.width
-	m.vp.Height = l.ContentHeight - 1 // tab strip takes one row
-	m.vp.SetHorizontalStep(8)         // < / > pan wide content (tables, diffs) instead of wrapping
+	m.vp.SetWidth(m.width)
+	m.vp.SetHeight(l.ContentHeight - 1) // tab strip takes one row
+	m.vp.SetHorizontalStep(8)           // < / > pan wide content (tables, diffs) instead of wrapping
 	m.vp.SetContent(m.expandedBody(m.width))
 	m.vp.SetYOffset(0)
 }
@@ -172,10 +172,10 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renderExpanded()
 		return m, nil
 	case "j", "down":
-		m.vp.LineDown(1)
+		m.vp.ScrollDown(1)
 		return m, nil
 	case "k", "up":
-		m.vp.LineUp(1)
+		m.vp.ScrollUp(1)
 		return m, nil
 	case ">", ".":
 		m.vp.ScrollRight(8)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -47,14 +47,14 @@ func TestEmptyResultShowsEmptyStateNotLoading(t *testing.T) {
 	m.width, m.height = 100, 30
 
 	m.renderList()
-	if !strings.Contains(m.View(), "Loading…") {
-		t.Fatalf("pre-fetch view should show Loading…: %q", m.View())
+	if !strings.Contains(m.render(), "Loading…") {
+		t.Fatalf("pre-fetch view should show Loading…: %q", m.render())
 	}
 
 	updated, _ := m.Update(prsFetchedMsg{prs: []gh.PR{}})
 	m = updated.(Model)
 	m.renderList()
-	out := m.View()
+	out := m.render()
 	if strings.Contains(out, "Loading…") {
 		t.Fatalf("loaded-but-empty view should not show Loading…: %q", out)
 	}
@@ -69,7 +69,7 @@ func TestViewShowsHeaderAndStatus(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
 	m.width, m.height = 100, 30
 	m.renderList()
-	out := m.View()
+	out := m.render()
 	if !strings.Contains(out, "noamsto/prdash") {
 		t.Fatalf("header should show the repo: %q", out)
 	}
@@ -85,12 +85,12 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 	if m.presetIdx != 0 {
 		t.Fatalf("initial presetIdx = %d, want 0 (mine)", m.presetIdx)
 	}
-	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	m2, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	m = m2.(Model)
 	if m.filter != "is:open review-requested:@me" {
 		t.Fatalf("after f, filter = %q", m.filter)
 	}
-	if !strings.Contains(m.View(), "review-requested") {
-		t.Fatalf("header should show the active preset name: %q", m.View())
+	if !strings.Contains(m.render(), "review-requested") {
+		t.Fatalf("header should show the active preset name: %q", m.render())
 	}
 }
