@@ -11,6 +11,21 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
+func TestHydrateLoadsCachedDetail(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	listRaw, _ := json.Marshal([]gh.PR{{Number: 7, Title: "hi"}})
+	c.Set(cache.Key("pr", "is:open", defaultLimit, schemaVer), listRaw)
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("o/r")
+	detRaw, _ := json.Marshal(gh.PRDetail{MergeStateStatus: "CLEAN"})
+	c.Set(m.detailKey(7), detRaw)
+
+	m.Hydrate()
+	if d, ok := m.detail[7]; !ok || d.MergeStateStatus != "CLEAN" {
+		t.Fatalf("hydrate should load cached detail, got %+v ok=%v", d, ok)
+	}
+}
+
 func TestSetPRsBuildsRows(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.setPRs([]gh.PR{

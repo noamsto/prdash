@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -158,6 +159,22 @@ func (m *Model) hydrate() {
 		return
 	}
 	m.setPRs(prs)
+	for _, p := range prs { // stale-while-revalidate: show cached detail at once
+		de, ok := m.cache.Get(m.detailKey(p.Number))
+		if !ok {
+			continue
+		}
+		var d gh.PRDetail
+		if err := json.Unmarshal(de.Rows, &d); err == nil {
+			m.detail[p.Number] = d
+		}
+	}
+}
+
+// detailKey is the on-disk cache key for one PR's detail, scoped by repo so two
+// repos sharing the binary don't collide.
+func (m Model) detailKey(num int) string {
+	return cache.Key("detail", m.repo+"#"+strconv.Itoa(num), 0, schemaVer)
 }
 
 func (m *Model) Hydrate() { m.hydrate() }
@@ -279,6 +296,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
+		if m.cache != nil {
+			if raw, err := json.Marshal(msg.detail); err == nil {
+				m.cache.Set(m.detailKey(msg.number), raw)
+			}
+		}
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -521,7 +543,7 @@ func (m Model) statusBar() string {
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
-const schemaVer = "v2"
+const schemaVer = "v3"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.
