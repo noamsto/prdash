@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
 	"github.com/noamsto/prdash/internal/triage"
@@ -63,13 +64,20 @@ func renderReviews(d gh.PRDetail, w int) string {
 	return b.String()
 }
 
-func renderChecks(pr gh.PR, w int) string {
+func renderChecks(pr gh.PR, w, cursor int) string {
 	if len(pr.StatusCheckRollup) == 0 {
 		return dimStyle.Render("  No checks.")
 	}
 	var b strings.Builder
-	for _, c := range pr.StatusCheckRollup {
-		b.WriteString("  " + ciGlyph(c.Result()) + " " + truncate(c.Label(), w-4) + "\n")
+	for i, c := range pr.StatusCheckRollup {
+		label := truncate(c.Label(), w-4)
+		gutter := "  "
+		st := titleStyle
+		if i == cursor {
+			gutter = focusBarStyle.Render("▎") + " "
+			st = st.Bold(true)
+		}
+		b.WriteString(gutter + ciGlyph(c.Result()) + " " + st.Render(label) + "\n")
 	}
 	return b.String()
 }
@@ -106,6 +114,8 @@ func (m *Model) enterExpanded() {
 	}
 	m.expanded = true
 	m.expandedTab = 0
+	m.checkCursor = 0
+	m.notice = ""
 	if v, ok := m.cursorVars(); ok {
 		if d, cached := m.detail[v.Number]; cached {
 			if ps, ok := m.section.(*PRSection); ok {
@@ -131,7 +141,7 @@ func (m Model) expandedBody(w int) string {
 		return renderReviews(d, w)
 	case 2:
 		if ps, ok := m.section.(*PRSection); ok {
-			return renderChecks(ps.prAt(m.cursor), w)
+			return renderChecks(ps.prAt(m.cursor), w, m.checkCursor)
 		}
 		return ""
 	case 3:
@@ -161,6 +171,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "tab", "right", "l":
 		m.expandedTab = (m.expandedTab + 1) % len(expandedTabs)
+		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
 		return m, nil
 	case "shift+tab", "left", "h":
@@ -171,18 +182,38 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.expandedTab--
+		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
 		return m, nil
 	case "1", "2", "3", "4":
 		m.expandedTab = int(msg.String()[0] - '1')
+		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
 		return m, nil
 	case "j", "down":
+		if m.expandedTab == 2 { // Checks tab: j/k move the check cursor
+			m.moveCheckCursor(1)
+			return m, nil
+		}
 		m.vp.ScrollDown(1)
 		return m, nil
 	case "k", "up":
+		if m.expandedTab == 2 {
+			m.moveCheckCursor(-1)
+			return m, nil
+		}
 		m.vp.ScrollUp(1)
 		return m, nil
+	case "r": // rerun the hovered check (Checks tab only)
+		if m.expandedTab != 2 {
+			return m, nil
+		}
+		return m.rerunHovered()
+	case "R": // rerun all failed checks (Checks tab only)
+		if m.expandedTab != 2 {
+			return m, nil
+		}
+		return m.rerunAllFailed()
 	case ">", ".":
 		m.vp.ScrollRight(8)
 		return m, nil
@@ -193,12 +224,14 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < m.section.Len()-1 {
 			m.cursor++
 		}
+		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
 	case "K":
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.checkCursor, m.notice = 0, ""
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
 	case "enter":
@@ -212,6 +245,69 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg) // up/down/pgup/pgdn scroll the content
 	return m, cmd
+}
+
+// checksLen returns the rollup length for the cursor PR (0 for non-PR sections).
+func (m Model) checksLen() int {
+	if ps, ok := m.section.(*PRSection); ok {
+		return len(ps.prAt(m.cursor).StatusCheckRollup)
+	}
+	return 0
+}
+
+// moveCheckCursor moves the Checks-tab cursor within bounds and re-renders.
+func (m *Model) moveCheckCursor(d int) {
+	n := m.checksLen()
+	if n == 0 {
+		m.checkCursor = 0
+		return
+	}
+	m.checkCursor = max(0, min(m.checkCursor+d, n-1))
+	m.notice = ""
+	m.renderExpanded()
+}
+
+// rerunHovered reruns the single check under the Checks-tab cursor. External
+// (non-Actions) checks have no job to rerun and only set a hint.
+func (m Model) rerunHovered() (tea.Model, tea.Cmd) {
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return m, nil
+	}
+	pr := ps.prAt(m.cursor)
+	if m.checkCursor < 0 || m.checkCursor >= len(pr.StatusCheckRollup) {
+		return m, nil
+	}
+	c := pr.StatusCheckRollup[m.checkCursor]
+	job := c.JobID()
+	if job == "" {
+		m.notice = "⚠ no rerun for external check: " + c.Label()
+		return m, nil
+	}
+	m.notice = "↻ rerun queued: " + c.Label()
+	r, dir := m.runner, m.dir
+	return m, func() tea.Msg {
+		if err := action.RerunCheck(r, dir, job); err != nil {
+			return fetchFailedMsg{err}
+		}
+		return nil
+	}
+}
+
+// rerunAllFailed reruns every failed check on the PR's latest run.
+func (m Model) rerunAllFailed() (tea.Model, tea.Cmd) {
+	v, ok := m.cursorVars()
+	if !ok {
+		return m, nil
+	}
+	m.notice = "↻ rerun-all-failed queued"
+	r, dir, branch := m.runner, m.dir, v.HeadRefName
+	return m, func() tea.Msg {
+		if err := action.RerunFailed(r, dir, branch); err != nil {
+			return fetchFailedMsg{err}
+		}
+		return nil
+	}
 }
 
 // expandedView is the full-screen detail: header, tab strip, scrollable body, keys.
@@ -228,6 +324,18 @@ func (m Model) expandedView() string {
 			}
 		}
 	}
-	foot := statusBarStyle.Render("  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back")
+	foot := statusBarStyle.Render(m.expandedFooter())
 	return head + "\n" + tabStrip(m.expandedTab) + "\n" + m.vp.View() + "\n" + foot
+}
+
+// expandedFooter is the bottom hint line: a transient notice wins, else the key
+// legend, which swaps to rerun keys on the Checks tab.
+func (m Model) expandedFooter() string {
+	if m.notice != "" {
+		return "  " + m.notice
+	}
+	if m.expandedTab == 2 {
+		return "  j/k move · r rerun · R rerun all · h/l tabs · J/K PR · esc back"
+	}
+	return "  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back"
 }

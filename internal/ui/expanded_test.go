@@ -61,9 +61,60 @@ func TestRenderChecksListsByName(t *testing.T) {
 		{State: "FAILURE", Name: "lint"},
 		{State: "SUCCESS", Name: "build"},
 	}}
-	out := renderChecks(pr, 60)
+	out := renderChecks(pr, 60, 0)
 	if !strings.Contains(out, "lint") || !strings.Contains(out, "build") {
 		t.Fatalf("checks not listed by name: %q", out)
+	}
+}
+
+func TestChecksTabCursorMoves(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "a"}, {State: "SUCCESS", Name: "b"},
+	}}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded()
+	m.expandedTab = 2
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if got := updated.(Model).checkCursor; got != 1 {
+		t.Fatalf("j on Checks tab should advance checkCursor to 1, got %d", got)
+	}
+}
+
+func TestRerunHoveredJobIssuesCmd(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "a", DetailsUrl: "https://github.com/o/r/actions/runs/1/job/99"},
+	}}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded()
+	m.expandedTab = 2
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd == nil {
+		t.Fatal("r on a job-bearing check should issue a rerun cmd")
+	}
+	if !strings.Contains(updated.(Model).notice, "rerun queued") {
+		t.Errorf("expected a queued notice, got %q", updated.(Model).notice)
+	}
+}
+
+func TestRerunHoveredExternalNoCmd(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Context: "ci/external"}, // StatusContext: no detailsUrl
+	}}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded()
+	m.expandedTab = 2
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd != nil {
+		t.Fatal("external check has no job to rerun")
+	}
+	if !strings.Contains(updated.(Model).notice, "no rerun") {
+		t.Errorf("expected an external-check hint, got %q", updated.(Model).notice)
 	}
 }
 
