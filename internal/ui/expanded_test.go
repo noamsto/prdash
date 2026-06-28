@@ -4,11 +4,48 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/triage"
 )
+
+func TestListEnterExpands(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !updated.(Model).expanded {
+		t.Fatal("enter should expand from the list")
+	}
+}
+
+func TestExpandedBackExitsOnFirstTab(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded() // tab 0
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	if updated.(Model).expanded {
+		t.Fatal("h on tab 0 should exit the expanded view, not wrap")
+	}
+}
+
+func TestExpandedBackDecrementsTab(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{}
+	m.enterExpanded()
+	m.expandedTab = 2
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m2 := updated.(Model)
+	if !m2.expanded || m2.expandedTab != 1 {
+		t.Fatalf("h on tab 2 should go to tab 1, got expanded=%v tab=%d", m2.expanded, m2.expandedTab)
+	}
+}
 
 func TestJumpTabIndex(t *testing.T) {
 	cases := map[string]int{"reviews": 1, "checks": 2, "diff": 3, "conversation": 0, "": 0}

@@ -430,7 +430,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.moveCursor(-1)
 			return m, m.detailCmdForCursor()
-		case "right", "l":
+		case "enter", "right", "l":
 			m.enterExpanded()
 			return m, m.detailCmdForCursor()
 		default:

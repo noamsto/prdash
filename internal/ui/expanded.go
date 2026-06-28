@@ -164,7 +164,13 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renderExpanded()
 		return m, nil
 	case "shift+tab", "left", "h":
-		m.expandedTab = (m.expandedTab + len(expandedTabs) - 1) % len(expandedTabs)
+		// Off the left edge of the tab strip returns to the list — never wrap.
+		if m.expandedTab == 0 {
+			m.expanded = false
+			m.renderList()
+			return m, nil
+		}
+		m.expandedTab--
 		m.renderExpanded()
 		return m, nil
 	case "1", "2", "3", "4":
