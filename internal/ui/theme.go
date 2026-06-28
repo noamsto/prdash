@@ -81,7 +81,7 @@ func reviewStateLabel(state string) string {
 }
 
 // lightText reports whether a label background (6-hex, no '#') is dark enough to
-// need light text. Uses perceptual luminance; unparseable colors default to
+// need light text. Uses perceptual luminance; unparsable colors default to
 // light text (safe on the dim fallback chip).
 func lightText(hex string) bool {
 	if len(hex) != 6 {
