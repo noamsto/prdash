@@ -18,6 +18,18 @@ type Check struct {
 	Name         string `json:"name"`         // CheckRun
 	WorkflowName string `json:"workflowName"` // CheckRun
 	Context      string `json:"context"`      // StatusContext (no name)
+	DetailsUrl   string `json:"detailsUrl"`   // CheckRun: …/actions/runs/<run>/job/<job>
+}
+
+// JobID extracts the Actions job ID from DetailsUrl so a single check can be
+// rerun (gh run rerun --job). Empty for external StatusContext checks, which
+// carry a targetUrl with no /job/ segment and aren't job-rerunnable.
+func (c Check) JobID() string {
+	_, after, ok := strings.Cut(c.DetailsUrl, "/job/")
+	if !ok {
+		return ""
+	}
+	return after
 }
 
 // Label is the display name for a check, handling the CheckRun/StatusContext union.
@@ -33,7 +45,8 @@ func (c Check) Label() string {
 }
 
 type Label struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Color string `json:"color"` // 6-hex, no leading '#'
 }
 
 type PR struct {

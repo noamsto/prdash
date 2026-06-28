@@ -61,6 +61,29 @@ func TestCIState(t *testing.T) {
 	}
 }
 
+func TestCheckJobID(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/cli/cli/actions/runs/28238190155/job/83658069205": "83658069205",
+		"https://example.com/build/123": "", // external StatusContext-style target
+		"":                              "",
+	}
+	for url, want := range cases {
+		if got := (Check{DetailsUrl: url}).JobID(); got != want {
+			t.Errorf("JobID(%q) = %q, want %q", url, got, want)
+		}
+	}
+}
+
+func TestLabelColorParses(t *testing.T) {
+	prs, err := ParsePRs([]byte(`[{"number":1,"labels":[{"name":"bug","color":"d73a4a"}]}]`))
+	if err != nil {
+		t.Fatalf("ParsePRs: %v", err)
+	}
+	if got := prs[0].Labels[0].Color; got != "d73a4a" {
+		t.Errorf("label color = %q, want d73a4a", got)
+	}
+}
+
 func TestCheckResult(t *testing.T) {
 	cases := map[string]string{"SUCCESS": "pass", "FAILURE": "fail", "PENDING": "pending", "": "pending"}
 	for state, want := range cases {
