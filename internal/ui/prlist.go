@@ -100,6 +100,7 @@ func (m *Model) moveCursor(delta int) {
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
 	listW := l.ListWidth
+	numW := columnWidths(m.section)
 	ps, isPR := m.section.(*PRSection)
 	var b strings.Builder
 	for i := 0; i < m.section.Len(); i++ {
@@ -110,7 +111,7 @@ func (m *Model) renderList() {
 			flag = flagGlyph(d, cached)
 		}
 		b.WriteString(m.section.RenderRow(i, RowOpts{
-			Width: listW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
+			Width: listW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
 		}))
 		b.WriteString("\n")
 	}

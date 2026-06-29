@@ -92,3 +92,20 @@ func TestPRSectionMarksDraftRow(t *testing.T) {
 		t.Fatal("PRSection.RenderRow should style a draft PR distinctly")
 	}
 }
+
+func TestPadNumRightAligns(t *testing.T) {
+	if got := padNum("#7", 5); got != "   #7" {
+		t.Fatalf("padNum(#7,5) = %q, want %q", got, "   #7")
+	}
+	if got := padNum("#1234", 3); got != "#1234" { // never truncates below content
+		t.Fatalf("padNum(#1234,3) = %q, want %q", got, "#1234")
+	}
+}
+
+func TestColumnWidthsUsesWidestNumber(t *testing.T) {
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{{Number: 7}, {Number: 1234}})
+	if got := columnWidths(s); got != len("#1234") {
+		t.Fatalf("columnWidths = %d, want %d", got, len("#1234"))
+	}
+}

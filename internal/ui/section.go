@@ -16,6 +16,7 @@ import (
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
 	Width    int
+	NumWidth int // cell width for the right-aligned number column (0 = natural)
 	Focused  bool
 	Selected bool
 	Draft    bool   // dim the title; drafts sort last (see prRank)
@@ -192,8 +193,12 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 	if review == "" {
 		review = dimStyle.Render("·")
 	}
-	left := bar + mark + " " + ci + " " + review + " " + flag + " " + accentStyle.Render(num) + " "
-	right := authorStyle(author).Render(author) + dimStyle.Render("  "+age)
+	numCell := num
+	if o.NumWidth > 0 {
+		numCell = padNum(num, o.NumWidth)
+	}
+	left := bar + mark + " " + ci + " " + review + " " + flag + " " + accentStyle.Render(numCell) + " "
+	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2
@@ -214,6 +219,31 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 		gap = 1
 	}
 	return left + titleTxt + strings.Repeat(" ", gap) + right
+}
+
+// padNum right-aligns a plain "#123" string to w cells; never truncates.
+func padNum(num string, w int) string {
+	if len(num) >= w {
+		return num
+	}
+	return strings.Repeat(" ", w-len(num)) + num
+}
+
+// columnWidths returns the cell width for the number column: the widest "#N"
+// across the shown set, floored at 3 ("#9").
+func columnWidths(s Section) int {
+	w := 3
+	switch x := s.(type) {
+	case *PRSection:
+		for _, i := range x.shown {
+			w = max(w, len(fmt.Sprintf("#%d", x.prs[i].Number)))
+		}
+	case *IssueSection:
+		for _, i := range x.shown {
+			w = max(w, len(fmt.Sprintf("#%d", x.issues[i].Number)))
+		}
+	}
+	return w
 }
 
 // truncate shortens a plain (unstyled) string to at most w display cells, adding
