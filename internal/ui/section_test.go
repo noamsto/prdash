@@ -71,3 +71,24 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 		t.Fatalf("sort order = %v, want %v", got, want)
 	}
 }
+
+func TestDraftRowIsStyledDistinctly(t *testing.T) {
+	args := func(o RowOpts) string {
+		return renderItemRow(o, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+	}
+	plain := args(RowOpts{Width: 80})
+	draft := args(RowOpts{Width: 80, Draft: true})
+	if plain == draft {
+		t.Fatal("a draft row must render distinctly (dimmed) from a normal row")
+	}
+}
+
+func TestPRSectionMarksDraftRow(t *testing.T) {
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{{Number: 1, Title: "wip", IsDraft: true}})
+	normal := NewPRSection("")
+	normal.SetPRs([]gh.PR{{Number: 1, Title: "wip"}})
+	if s.RenderRow(0, RowOpts{Width: 80}) == normal.RenderRow(0, RowOpts{Width: 80}) {
+		t.Fatal("PRSection.RenderRow should style a draft PR distinctly")
+	}
+}

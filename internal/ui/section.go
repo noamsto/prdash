@@ -18,6 +18,7 @@ type RowOpts struct {
 	Width    int
 	Focused  bool
 	Selected bool
+	Draft    bool   // dim the title; drafts sort last (see prRank)
 	Flag     string // pre-rendered ! column glyph (conflict/behind), "" when unknown
 }
 
@@ -50,6 +51,7 @@ func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
+	o.Draft = p.IsDraft
 	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
 		p.Author.Login, ageString(p.UpdatedAt),
 		ciGlyph(p.CIState()), reviewDot(p.ReviewDecision))
@@ -199,7 +201,10 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 		titleRoom = 1
 	}
 	titleSt := titleStyle
-	if o.Focused {
+	switch {
+	case o.Draft:
+		titleSt = dimStyle
+	case o.Focused:
 		titleSt = titleSt.Bold(true)
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom))
