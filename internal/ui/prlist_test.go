@@ -116,3 +116,19 @@ func TestDebounceSeqGuardsStaleTicks(t *testing.T) {
 		t.Fatal("stale debounce tick should yield no command")
 	}
 }
+
+func TestStatusBarSurfacesRecommendedFix(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 130, 40
+	m.setPRs([]gh.PR{{
+		Number: 7, Title: "x",
+		StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}},
+	}})
+	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.renderList()
+	out := m.statusBar()
+	if !strings.Contains(out, "rerun failed") {
+		t.Fatalf("failing-checks PR should surface the rerun fix: %q", out)
+	}
+}

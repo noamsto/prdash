@@ -15,6 +15,7 @@ import (
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/triage"
 )
 
 type Model struct {
@@ -537,13 +538,30 @@ func (m Model) header() string {
 		fmt.Sprintf("   %s · %d open", label, m.section.Len()))
 }
 
+// cursorCard is the triage card for the focused PR, when its detail is cached.
+func (m Model) cursorCard() (triage.Card, bool) {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.section.Len() == 0 {
+		return triage.Card{}, false
+	}
+	d, cached := m.detail[ps.prAt(m.cursor).Number]
+	if !cached {
+		return triage.Card{}, false
+	}
+	return triage.Compute(ps.prAt(m.cursor), d), true
+}
+
 // statusBar is the bottom key/context line.
 func (m Model) statusBar() string {
 	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · / find · a actions · space select · q quit"
+	prefix := ""
 	if n := m.sel.count(); n > 0 {
-		keys = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · " + keys
+		prefix = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · "
 	}
-	return statusBarStyle.Render("  " + keys)
+	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
+		prefix += accentStyle.Render(card.ActionKey) + " " + card.ActionLabel + " · "
+	}
+	return statusBarStyle.Render("  " + prefix + keys)
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
