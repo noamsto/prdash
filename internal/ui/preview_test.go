@@ -20,6 +20,17 @@ func TestRenderPreviewBodyShowsOlderMarker(t *testing.T) {
 	}
 }
 
+func TestIdentityHeader(t *testing.T) {
+	pr := gh.PR{Number: 309, Title: "Add retry logic", HeadRefName: "feat/309-retry"}
+	pr.Author.Login = "bob"
+	out := identityHeader(pr)
+	for _, want := range []string{"#309", "Add retry logic", "bob", "feat/309-retry"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("identity header missing %q: %q", want, out)
+		}
+	}
+}
+
 func TestReviewersLine(t *testing.T) {
 	got := reviewersLine(nil)
 	if !strings.Contains(got, "no reviewers") {

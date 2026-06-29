@@ -79,6 +79,15 @@ func (m Model) previewWidth() int {
 	return l.SideWidth
 }
 
+// identityHeader is the side card's top block: number + title, then a dim
+// author · branch · age line. The branch anchors the copy/worktree actions.
+func identityHeader(pr gh.PR) string {
+	line1 := accentStyle.Render(fmt.Sprintf("#%d", pr.Number)) + " " + headerStyle.Render(pr.Title)
+	line2 := authorStyle(pr.Author.Login).Render(pr.Author.Login) +
+		dimStyle.Render(" · "+pr.HeadRefName+" · "+ageString(pr.UpdatedAt))
+	return line1 + "\n" + line2
+}
+
 // previewPane renders the triage card (if available) followed by the timeline,
 // or a loading/empty hint.
 func (m Model) previewPane() string {
@@ -94,6 +103,7 @@ func (m Model) previewPane() string {
 	var parts []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
+		parts = append(parts, identityHeader(pr))
 		if card := renderCard(triage.Compute(pr, d), w); card != "" {
 			parts = append(parts, strings.TrimRight(card, "\n"))
 		}

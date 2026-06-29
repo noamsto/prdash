@@ -58,7 +58,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	return Model{
 		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
-		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 3,
+		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 2,
 		presetIdx: presetIndexFor(filter),
 	}
 }
