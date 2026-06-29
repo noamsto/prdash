@@ -19,7 +19,7 @@ type Vars struct {
 
 type Command struct {
 	Argv    []string // templated, exec'd directly (no shell) — injection-safe
-	Builtin string   // e.g. "rerun-failed", "copy"
+	Builtin string   // e.g. "rerun-failed", "copy-url", "copy-branch"
 	Shell   string   // opt-in: run through `sh -c` (user actions only)
 }
 

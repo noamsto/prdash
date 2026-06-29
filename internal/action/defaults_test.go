@@ -25,6 +25,19 @@ func TestDefaultsHaveBulkW(t *testing.T) {
 	}
 }
 
+func TestCopyActionsRebound(t *testing.T) {
+	a := DefaultPRActions()
+	if a["y"].Label != "Copy URL" {
+		t.Fatalf(`y label = %q, want "Copy URL"`, a["y"].Label)
+	}
+	if a["y"].Command.Builtin != "copy-url" {
+		t.Fatalf(`y builtin = %q, want "copy-url"`, a["y"].Command.Builtin)
+	}
+	if a["Y"].Command.Builtin != "copy-branch" {
+		t.Fatalf(`Y builtin = %q, want "copy-branch"`, a["Y"].Command.Builtin)
+	}
+}
+
 func TestDefaultsHaveUpdateAndReady(t *testing.T) {
 	d := DefaultPRActions()
 	u := d["u"]

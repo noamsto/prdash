@@ -22,6 +22,18 @@ func (m *Model) cursorVars() (action.Vars, bool) {
 	return v, true
 }
 
+// clipboardText is the payload an OSC52 copy action writes for the focused PR.
+func clipboardText(builtin string, v action.Vars) string {
+	switch builtin {
+	case "copy-url":
+		return v.URL
+	case "copy-branch":
+		return v.Branch
+	default:
+		return ""
+	}
+}
+
 // runAction executes a single-scope action against the cursor row. exits-tui
 // actions write the handoff file and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
@@ -43,8 +55,9 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	}
 
 	switch a.Command.Builtin {
-	case "copy":
-		return func() tea.Msg { print(action.OSC52(v.Branch)); return nil }
+	case "copy-url", "copy-branch":
+		text := clipboardText(a.Command.Builtin, v)
+		return func() tea.Msg { print(action.OSC52(text)); return nil }
 	case "rerun-failed":
 		r := m.runner
 		dir, branch := m.dir, v.HeadRefName

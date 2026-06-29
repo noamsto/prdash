@@ -57,6 +57,16 @@ func TestBulkWritesPerItem(t *testing.T) {
 	}
 }
 
+func TestClipboardText(t *testing.T) {
+	v := action.Vars{URL: "https://x/pr/7", Branch: "feat/x"}
+	if got := clipboardText("copy-url", v); got != v.URL {
+		t.Fatalf("copy-url = %q, want %q", got, v.URL)
+	}
+	if got := clipboardText("copy-branch", v); got != v.Branch {
+		t.Fatalf("copy-branch = %q, want %q", got, v.Branch)
+	}
+}
+
 func TestReviewerDiff(t *testing.T) {
 	add, rm := reviewerDiff([]string{"a", "c"}, map[string]bool{"b": true, "c": true})
 	if len(add) != 1 || add[0] != "b" {
