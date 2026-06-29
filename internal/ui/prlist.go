@@ -102,7 +102,7 @@ func (m *Model) renderList() {
 		b.WriteString(m.section.RenderRow(i, RowOpts{
 			Width: listW, Focused: i == m.cursor, Selected: m.sel.has(i),
 		}))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
 	m.vp.SetWidth(listW)
 	m.vp.SetHeight(l.ContentHeight)
@@ -110,8 +110,8 @@ func (m *Model) renderList() {
 	m.scrollToCursor()
 }
 
-// rowLines is the visual height of one rendered row: a 2-line body + 1 spacer.
-const rowLines = 3
+// rowLines is the visual height of one rendered row: a single dense line.
+const rowLines = 1
 
 // scrollToCursor nudges the viewport offset only when the cursor row would fall
 // outside the visible window, so surrounding rows stay in view (no jump-to-top).

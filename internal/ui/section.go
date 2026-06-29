@@ -17,12 +17,13 @@ type RowOpts struct {
 	Width    int
 	Focused  bool
 	Selected bool
+	Flag     string // pre-rendered ! column glyph (conflict/behind), "" when unknown
 }
 
 type Section interface {
 	Kind() string
 	Filter() string
-	RenderRow(i int, o RowOpts) string // render shown-row i as an airy 2-line block
+	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single line
 	Len() int
 	VarsAt(i int) action.Vars
 	Haystacks() []string
@@ -49,8 +50,8 @@ func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
-		p.Author.Login, ageString(p.UpdatedAt), labelNames(p.Labels),
-		reviewGlyph(p.ReviewDecision), ciGlyph(p.CIState()))
+		p.Author.Login, ageString(p.UpdatedAt),
+		ciGlyph(p.CIState()), reviewDot(p.ReviewDecision))
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -83,7 +84,7 @@ func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), labelNames(is.Labels), "", "")
+		is.Author.Login, ageString(is.UpdatedAt), "", "")
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -122,19 +123,14 @@ func labelSlice(ls []gh.Label) []string {
 }
 func joinSpace(s []string) string { return strings.Join(s, " ") }
 
-const metaIndent = "         " // 9 cols — aligns the meta line under the title
-
-// renderItemRow renders the airy 2-line form, truncating title + meta so each
-// row is exactly two lines and never wraps past the pane width:
+// renderItemRow renders one dense board line:
 //
-//	‹marker›‹num› ‹title›                         ‹ci›
-//	       ‹author · age · labels · review›
-func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string) string {
+//	‹bar›‹mark› ‹ci› ‹rv› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string {
 	w := o.Width
-	if w < 10 {
-		w = 10 // floor keeps truncation sane before the first WindowSizeMsg
+	if w < 24 {
+		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
 	}
-	// gutter: col 0 = focus bar (cursor row), col 1 = multi-select mark.
 	bar, mark := " ", " "
 	if o.Focused {
 		bar = focusBarStyle.Render("▎")
@@ -142,32 +138,35 @@ func renderItemRow(o RowOpts, num, title, author, age, labels, review, ci string
 	if o.Selected {
 		mark = selMarkStyle.Render("●")
 	}
-	prefix := bar + mark + accentStyle.Render(num) + "  "
-	ciW := lipgloss.Width(ci)
-	titleRoom := w - lipgloss.Width(prefix) - ciW - 1 // 1 = min gap before ci
+	flag := o.Flag
+	if flag == "" {
+		flag = " "
+	}
+	if ci == "" {
+		ci = dimStyle.Render("·")
+	}
+	if review == "" {
+		review = dimStyle.Render("·")
+	}
+	left := bar + mark + " " + ci + " " + review + " " + flag + " " + accentStyle.Render(num) + " "
+	right := authorStyle(author).Render(author) + dimStyle.Render("  "+age)
+	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
+
+	titleRoom := w - leftW - rightW - 2
+	if titleRoom < 1 {
+		titleRoom = 1
+	}
 	titleSt := titleStyle
 	if o.Focused {
 		titleSt = titleSt.Bold(true)
 	}
-	left := prefix + titleSt.Render(truncate(title, titleRoom))
-	line1 := left
-	if ci != "" {
-		gap := w - lipgloss.Width(left) - ciW
-		if gap < 1 {
-			gap = 1
-		}
-		line1 = left + strings.Repeat(" ", gap) + ci
+	titleTxt := titleSt.Render(truncate(title, titleRoom))
+
+	gap := w - leftW - lipgloss.Width(titleTxt) - rightW
+	if gap < 1 {
+		gap = 1
 	}
-	avail := w - len(metaIndent)
-	authorTxt := truncate(author, avail)
-	rest := strings.TrimRight(" · "+age+metaTail(labels, review), " ·")
-	restTxt := truncate(rest, avail-len([]rune(authorTxt)))
-	gutter := metaIndent
-	if o.Focused {
-		gutter = focusBarStyle.Render("▎") + metaIndent[1:]
-	}
-	line2 := gutter + authorStyle(author).Render(authorTxt) + dimStyle.Render(restTxt)
-	return line1 + "\n" + line2
+	return left + titleTxt + strings.Repeat(" ", gap) + right
 }
 
 // truncate shortens a plain (unstyled) string to at most w display cells, adding
@@ -186,15 +185,18 @@ func truncate(s string, w int) string {
 	return string(r[:w-1]) + "…"
 }
 
-func metaTail(labels, review string) string {
-	out := ""
-	if labels != "" {
-		out += " · " + labels
+// reviewDot is the single-rune review-decision glyph for the dense board row.
+func reviewDot(decision string) string {
+	switch decision {
+	case "APPROVED":
+		return passStyle.Render("✓")
+	case "CHANGES_REQUESTED":
+		return failStyle.Render("✗")
+	case "REVIEW_REQUIRED":
+		return pendStyle.Render("●")
+	default:
+		return dimStyle.Render("·")
 	}
-	if review != "" {
-		out += " · " + review
-	}
-	return out
 }
 
 func reviewGlyph(decision string) string {
