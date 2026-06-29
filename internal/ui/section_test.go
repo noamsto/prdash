@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,5 +48,26 @@ func TestPRSectionRenderRow(t *testing.T) {
 	sel := s.RenderRow(0, RowOpts{Width: 80, Selected: true})
 	if !strings.Contains(sel, "●") {
 		t.Fatalf("selected row should carry the ● marker: %q", sel)
+	}
+}
+
+func TestSetPRsSortsByActionability(t *testing.T) {
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{
+		{Number: 1, IsDraft: true},
+		{Number: 2, ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}},
+		{Number: 3, ReviewDecision: "CHANGES_REQUESTED"},
+		{Number: 4, StatusCheckRollup: []gh.Check{{Conclusion: "FAILURE"}}},
+		{Number: 5, StatusCheckRollup: []gh.Check{{Conclusion: "IN_PROGRESS"}}},
+		{Number: 6, ReviewDecision: "REVIEW_REQUIRED"},
+	})
+	var got []int
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	// ready(2) → changes(3) → fail(4) → running(5) → waiting(6) → draft(1)
+	want := []int{2, 3, 4, 5, 6, 1}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sort order = %v, want %v", got, want)
 	}
 }

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ type PRSection struct {
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
 func (s *PRSection) Kind() string           { return "pr" }
 func (s *PRSection) Filter() string         { return s.filter }
-func (s *PRSection) SetPRs(p []gh.PR)       { s.prs = p; s.shown = allIdx(len(p)) }
+func (s *PRSection) SetPRs(p []gh.PR)       { sortPRs(p); s.prs = p; s.shown = allIdx(len(p)) }
 func (s *PRSection) Len() int               { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int)     { s.shown = idx }
 
@@ -65,6 +66,47 @@ func (s *PRSection) Haystacks() []string {
 		h[i] = haystack(p)
 	}
 	return h
+}
+
+// Actionability ranks (lower sorts higher). Drafts always last.
+const (
+	rankReady = iota
+	rankChanges
+	rankFail
+	rankRunning
+	rankWaiting
+	rankDraft
+)
+
+// prRank scores a PR by how much it needs the author, using only signals that
+// are reliable from the bulk `gh pr list` (CI rollup, reviewDecision, isDraft).
+// It deliberately ignores mergeStateStatus/conflict — those are detail-derived
+// and would reshuffle the board as background prefetch lands.
+func prRank(p gh.PR) int {
+	switch {
+	case p.IsDraft:
+		return rankDraft
+	case p.ReviewDecision == "CHANGES_REQUESTED":
+		return rankChanges
+	case p.CIState() == "fail":
+		return rankFail
+	case p.CIState() == "pending":
+		return rankRunning
+	case p.ReviewDecision == "APPROVED":
+		return rankReady
+	default:
+		return rankWaiting
+	}
+}
+
+// sortPRs orders by actionability rank, ties broken most-recently-updated first.
+func sortPRs(prs []gh.PR) {
+	slices.SortStableFunc(prs, func(a, b gh.PR) int {
+		if d := prRank(a) - prRank(b); d != 0 {
+			return d
+		}
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
 }
 
 // --- Issue section ---
