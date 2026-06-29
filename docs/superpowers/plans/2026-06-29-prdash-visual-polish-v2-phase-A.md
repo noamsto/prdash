@@ -19,7 +19,7 @@
 
 ---
 
-### Task A1: Owned Catppuccin Mocha theme
+### Task 1: Owned Catppuccin Mocha theme
 
 **Files:**
 - Modify: `internal/ui/theme.go:11-40` (replace the palette var block + `authorPalette`)
@@ -151,7 +151,7 @@ git commit -m "feat(ui): own Catppuccin Mocha palette, mauve-led"
 
 ---
 
-### Task A2: Actionability sort (drafts last)
+### Task 2: Actionability sort (drafts last)
 
 **Files:**
 - Modify: `internal/ui/section.go` (add `import "slices"`; add `prRank`, `sortPRs`, rank consts; sort inside `PRSection.SetPRs`)
@@ -262,7 +262,7 @@ git commit -m "feat(ui): sort board by actionability, drafts last"
 
 ---
 
-### Task A3: Draft rows render dimmed
+### Task 3: Draft rows render dimmed
 
 **Files:**
 - Modify: `internal/ui/section.go` (`RowOpts` gains `Draft bool`; `renderItemRow` dims the title; `PRSection.RenderRow` sets it)
@@ -357,7 +357,7 @@ git commit -m "feat(ui): dim draft PR rows"
 
 ---
 
-### Task A4: Fixed-width number + age columns
+### Task 4: Fixed-width number + age columns
 
 **Files:**
 - Modify: `internal/ui/section.go` (`RowOpts.NumWidth`; `padNum` helper; `renderItemRow` uses them; `columnWidths` helper)
@@ -493,7 +493,7 @@ git commit -m "feat(ui): right-align number + age columns"
 
 ---
 
-### Task A5: Full build + visual smoke check
+### Task 5: Full build + visual smoke check
 
 **Files:** none (verification task)
 
