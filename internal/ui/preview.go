@@ -155,6 +155,23 @@ func reviewersLine(reqs []gh.ReviewRequest) string {
 	return dimStyle.Render("  reviewers: " + strings.Join(logins, ", "))
 }
 
+// flagGlyph is the board's ! column: a conflict (red) or behind-base (yellow)
+// marker. It is detail-derived — blank unless the PR's detail is cached, so the
+// board never guesses a blocker from the unreliable bulk list.
+func flagGlyph(d gh.PRDetail, cached bool) string {
+	if !cached {
+		return ""
+	}
+	switch {
+	case d.MergeStateStatus == "DIRTY" || d.Mergeable == "CONFLICTING":
+		return failStyle.Render("⚠")
+	case d.MergeStateStatus == "BEHIND":
+		return pendStyle.Render("⚠")
+	default:
+		return ""
+	}
+}
+
 // renderMain lays the list and (when wide) the contained side preview together.
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)

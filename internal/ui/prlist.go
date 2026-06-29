@@ -97,10 +97,17 @@ func (m *Model) moveCursor(delta int) {
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
 	listW := l.ListWidth
+	ps, isPR := m.section.(*PRSection)
 	var b strings.Builder
 	for i := 0; i < m.section.Len(); i++ {
+		flag := ""
+		if isPR {
+			num := ps.prAt(i).Number
+			d, cached := m.detail[num]
+			flag = flagGlyph(d, cached)
+		}
 		b.WriteString(m.section.RenderRow(i, RowOpts{
-			Width: listW, Focused: i == m.cursor, Selected: m.sel.has(i),
+			Width: listW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
 		}))
 		b.WriteString("\n")
 	}
@@ -277,6 +284,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
+		m.renderList()
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
