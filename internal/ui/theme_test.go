@@ -19,3 +19,25 @@ func TestCIGlyphUnknownIsNone(t *testing.T) {
 		t.Errorf("unknown CI state should fall back to the none glyph")
 	}
 }
+
+func TestMochaPaletteIsMauveLed(t *testing.T) {
+	th := Mocha()
+	if th.Accent != "#cba6f7" {
+		t.Errorf("accent = %q, want mauve #cba6f7", th.Accent)
+	}
+	if th.Header != th.Accent {
+		t.Errorf("header should be mauve-led like accent: header=%q accent=%q", th.Header, th.Accent)
+	}
+	if th.Focus == th.Accent || th.Select == th.Accent || th.Focus == th.Select {
+		t.Errorf("focus, select, accent must all be distinct: accent=%q focus=%q select=%q",
+			th.Accent, th.Focus, th.Select)
+	}
+}
+
+func TestAuthorPaletteExcludesAccent(t *testing.T) {
+	for _, c := range Mocha().Author {
+		if c == Mocha().Accent {
+			t.Fatalf("author hue %q collides with the accent mauve", c)
+		}
+	}
+}
