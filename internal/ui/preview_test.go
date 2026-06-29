@@ -56,3 +56,25 @@ func TestFlagGlyph(t *testing.T) {
 		t.Fatal("CLEAN should show no flag")
 	}
 }
+
+func TestPrefetchNumbers(t *testing.T) {
+	ps := NewPRSection("is:open")
+	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}, {Number: 5}})
+	detail := map[int]gh.PRDetail{2: {}} // #2 already cached
+
+	got := prefetchNumbers(ps, 0, detail, 3)
+	want := []int{1, 3, 4} // skips cached #2, capped at window=3
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+
+	all := map[int]gh.PRDetail{1: {}, 2: {}, 3: {}, 4: {}, 5: {}}
+	if n := prefetchNumbers(ps, 0, all, 3); n != nil {
+		t.Fatalf("all cached should yield nil, got %v", n)
+	}
+}

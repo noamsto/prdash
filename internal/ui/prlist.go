@@ -272,7 +272,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
 		}
-		return m, m.detailCmdForCursor()
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case fetchFailedMsg:
 		m.err = msg.err
 		return m, nil

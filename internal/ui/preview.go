@@ -44,6 +44,40 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 	return m.fetchDetailCmd(v.Number)
 }
 
+// prefetchWindow bounds how many uncached PR details we fan out per settle.
+const prefetchWindow = 5
+
+// prefetchNumbers returns up to window uncached PR numbers from cursor downward.
+func prefetchNumbers(ps *PRSection, cursor int, detail map[int]gh.PRDetail, window int) []int {
+	var out []int
+	for i := cursor; i < ps.Len() && len(out) < window; i++ {
+		num := ps.prAt(i).Number
+		if _, cached := detail[num]; cached {
+			continue
+		}
+		out = append(out, num)
+	}
+	return out
+}
+
+// prefetchCmd warms detail for a bounded window of visible PRs so the ! column
+// and the side card fill in without a fetch per keystroke.
+func (m Model) prefetchCmd() tea.Cmd {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.runner == nil {
+		return nil
+	}
+	nums := prefetchNumbers(ps, m.cursor, m.detail, prefetchWindow)
+	if len(nums) == 0 {
+		return nil
+	}
+	cmds := make([]tea.Cmd, 0, len(nums))
+	for _, n := range nums {
+		cmds = append(cmds, m.fetchDetailCmd(n))
+	}
+	return tea.Batch(cmds...)
+}
+
 // renderTimeline renders the latest n items expanded, older collapsed.
 func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 	older, latest := preview.Fold(items, n)
