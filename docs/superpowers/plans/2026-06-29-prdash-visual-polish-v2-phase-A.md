@@ -410,9 +410,9 @@ func padNum(num string, w int) string {
 }
 
 // columnWidths returns the cell width for the number column: the widest "#N"
-// across the shown set, floored at 3 ("#9").
+// across the shown set, floored at 4 ("#999") per design §2 ("min 4").
 func columnWidths(s Section) int {
-	w := 3
+	w := 4
 	switch x := s.(type) {
 	case *PRSection:
 		for _, i := range x.shown {
