@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -37,6 +38,7 @@ type Model struct {
 	actionCursor    int
 	sel             selection
 	detail          map[int]gh.PRDetail
+	detailSeq       int // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded bool
 	previewN        int
 	expanded        bool
@@ -260,6 +262,15 @@ func (m *Model) confirmPicker() tea.Cmd {
 
 func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
 
+// debounceDetailCmd schedules a detail fetch ~150ms out, tagged with the current
+// seq so a later move cancels it (the stale tick is ignored on arrival).
+func (m Model) debounceDetailCmd() tea.Cmd {
+	seq := m.detailSeq
+	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg {
+		return detailDebounceMsg{seq: seq}
+	})
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
@@ -286,6 +297,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail[msg.number] = msg.detail
 		m.renderList()
 		return m, nil
+	case detailDebounceMsg:
+		if msg.seq != m.detailSeq {
+			return m, nil
+		}
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.renderList()
@@ -431,16 +447,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "tab":
 			m.previewExpanded = !m.previewExpanded
-			return m, m.detailCmdForCursor()
+			m.detailSeq++
+			return m, m.debounceDetailCmd()
 		case "down", "j":
 			m.moveCursor(1)
-			return m, m.detailCmdForCursor()
+			m.detailSeq++
+			return m, m.debounceDetailCmd()
 		case "up", "k":
 			m.moveCursor(-1)
-			return m, m.detailCmdForCursor()
+			m.detailSeq++
+			return m, m.debounceDetailCmd()
 		case "right", "l":
 			m.enterExpanded()
-			return m, m.detailCmdForCursor()
+			m.detailSeq++
+			return m, m.debounceDetailCmd()
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {

@@ -94,3 +94,25 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 		t.Fatalf("header should show the active preset name: %q", m.render())
 	}
 }
+
+func TestDebounceSeqGuardsStaleTicks(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
+	m.width, m.height = 130, 40
+	m.renderList()
+
+	// two quick moves bump the seq to 2
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = u.(Model)
+	u, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = u.(Model)
+	if m.detailSeq != 2 {
+		t.Fatalf("detailSeq = %d, want 2", m.detailSeq)
+	}
+
+	// a stale tick (seq 1) must do nothing
+	_, cmd := m.Update(detailDebounceMsg{seq: 1})
+	if cmd != nil {
+		t.Fatal("stale debounce tick should yield no command")
+	}
+}
