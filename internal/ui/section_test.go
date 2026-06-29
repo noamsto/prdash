@@ -109,3 +109,14 @@ func TestColumnWidthsUsesWidestNumber(t *testing.T) {
 		t.Fatalf("columnWidths = %d, want %d", got, len("#1234"))
 	}
 }
+
+func TestPRRankApprovedFailingIsNotReady(t *testing.T) {
+	approvedFailing := gh.PR{ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "FAILURE"}}}
+	approvedPassing := gh.PR{ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	if got := prRank(approvedFailing); got != rankFail {
+		t.Errorf("approved+failing should rank as failing (%d), got %d", rankFail, got)
+	}
+	if got := prRank(approvedPassing); got != rankReady {
+		t.Errorf("approved+passing should rank as ready (%d), got %d", rankReady, got)
+	}
+}

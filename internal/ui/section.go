@@ -86,14 +86,15 @@ const (
 // It deliberately ignores mergeStateStatus/conflict — those are detail-derived
 // and would reshuffle the board as background prefetch lands.
 func prRank(p gh.PR) int {
+	ci := p.CIState()
 	switch {
 	case p.IsDraft:
 		return rankDraft
 	case p.ReviewDecision == "CHANGES_REQUESTED":
 		return rankChanges
-	case p.CIState() == "fail":
+	case ci == "fail":
 		return rankFail
-	case p.CIState() == "pending":
+	case ci == "pending":
 		return rankRunning
 	case p.ReviewDecision == "APPROVED":
 		return rankReady
@@ -230,9 +231,9 @@ func padNum(num string, w int) string {
 }
 
 // columnWidths returns the cell width for the number column: the widest "#N"
-// across the shown set, floored at 3 ("#9").
+// across the shown set, floored at 4 ("#999").
 func columnWidths(s Section) int {
-	w := 3
+	w := 4
 	switch x := s.(type) {
 	case *PRSection:
 		for _, i := range x.shown {

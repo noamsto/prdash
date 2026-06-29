@@ -13,7 +13,7 @@ import (
 // (Latte/Frappé/Macchiato) or a dark/light toggle later is a second constructor.
 type Theme struct {
 	Accent  string // mauve — #, keys, links, headline, header/active tab
-	Header  string
+	Header  string // mauve — top header + active tab
 	Focus   string // sky — cursor-row bar
 	Select  string // pink — multi-select ●
 	Text    string // row titles, body
