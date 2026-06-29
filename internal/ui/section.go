@@ -199,19 +199,6 @@ func reviewDot(decision string) string {
 	}
 }
 
-func reviewGlyph(decision string) string {
-	switch decision {
-	case "APPROVED":
-		return passStyle.Render("✓ appr")
-	case "CHANGES_REQUESTED":
-		return failStyle.Render("✎ changes")
-	case "REVIEW_REQUIRED":
-		return dimStyle.Render("◌ review")
-	default:
-		return ""
-	}
-}
-
 func ageString(t time.Time) string {
 	if t.IsZero() {
 		return ""

@@ -55,6 +55,9 @@ func TestFlagGlyph(t *testing.T) {
 	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, true) != "" {
 		t.Fatal("CLEAN should show no flag")
 	}
+	if !strings.Contains(flagGlyph(gh.PRDetail{Mergeable: "CONFLICTING"}, true), "⚠") {
+		t.Fatal("CONFLICTING should show the conflict flag")
+	}
 }
 
 func TestPrefetchNumbers(t *testing.T) {
