@@ -144,21 +144,23 @@ The single-glyph CI / RV / `!` columns are cryptic. Two additions:
 - A **`?` floating help overlay** (same chrome as the action menu, §10) with the
   full glyph legend **and** the keybinding reference.
 
-## 7. Keybindings — context-aware bar, bordered, no dead keys
+## 7. Keybindings — context-aware bar, bordered, audited
 
 - The bottom bar gets the rounded border (§5) and is restored to
   **context-aware** (it drifted to a static string that omits live verbs like
   `y`/`o`/`↵`/`m`): always-present core verbs + the one state-specific key for
   the focused PR, exactly as the base spec's §"Context-aware action bar"
-  specified.
-- **Dead-key fix.** The triage card advertises `ready` as a keystroke, but
-  `"ready"` is a multi-character action-map key — **no single keypress can ever
-  fire it**. Apply the "no phantom keys" rule: single-character actions get a
-  key; multi-character actions (Mark-ready) are reachable through the `a` menu
-  only, and the card/bar phrase them as `a → Mark ready`, never as a fake direct
-  key. Audit every card `ActionKey` (`r`, `u`, `m` are real single keys; `ready`
-  is the sole offender). *(If Mark-ready should instead be first-class, bind a
-  free single key — e.g. `p` "publish". Default: menu-only.)*
+  specified. This directly addresses "keys hard to discover / some seem to do
+  nothing" — every applicable verb is shown for the focused PR's state.
+- **Audit, not a known bug.** The draft card already routes Mark-ready through
+  `a` (`triage.go` sets `ActionKey:"a"`), so there is *no* confirmed phantom
+  keystroke today; the multi-character `ready` action is reachable via the `a`
+  menu and works. The task is therefore a **guard + audit**: a test asserting no
+  card/bar `ActionKey` is a multi-character string (so a future regression can't
+  advertise an unpressable key), plus an audit that every key the bar shows maps
+  to a live handler. *(If Mark-ready should become first-class rather than
+  menu-only, bind a free single key — e.g. `p` "publish". Default: menu-only,
+  unchanged.)*
 
 ## 8. Expanded view — `h` on the first tab zooms out
 
@@ -233,8 +235,9 @@ Follow the existing table-driven style:
   structured for future flavors + a deferred dark/light toggle.
 - **Sort stability** — list-reliable signals only; conflict/behind never
   reorders rows (revisit if the reshuffle is preferred).
-- **Mark-ready** — reachable via the `a` menu; card/bar never advertise it as a
-  direct key (revisit: promote to single key `p`).
+- **Mark-ready** — stays menu-only via `a` (already how the card behaves); a
+  regression guard forbids multi-char `ActionKey`s (revisit: promote to single
+  key `p`).
 - **Legend** — both a persistent column-header row and a `?` overlay.
 - **Preview scroll** — `Ctrl+j`/`Ctrl+k`, with `Ctrl+d`/`Ctrl+u` fallback if the
   terminal conflates `ctrl+j` with Enter.
