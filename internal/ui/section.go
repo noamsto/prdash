@@ -35,17 +35,18 @@ type Section interface {
 
 // --- PR section ---
 type PRSection struct {
-	filter string
-	prs    []gh.PR
-	shown  []int
+	filter  string
+	prs     []gh.PR
+	shown   []int
+	grouped bool // true when the shown set spans ≥2 authors → render author headers
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
 func (s *PRSection) Kind() string           { return "pr" }
 func (s *PRSection) Filter() string         { return s.filter }
-func (s *PRSection) SetPRs(p []gh.PR)       { sortPRs(p); s.prs = p; s.shown = allIdx(len(p)) }
+func (s *PRSection) SetPRs(p []gh.PR)       { sortPRs(p); s.prs = p; s.setShownOrdered(allIdx(len(p))) }
 func (s *PRSection) Len() int               { return len(s.shown) }
-func (s *PRSection) SetShown(idx []int)     { s.shown = idx }
+func (s *PRSection) SetShown(idx []int)     { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
@@ -111,6 +112,59 @@ func sortPRs(prs []gh.PR) {
 		}
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
+}
+
+// setShownOrdered records the shown subset in display order and decides grouping.
+// idx arrives in actionability order (prs is rank-sorted; idx preserves it). With
+// ≥2 distinct authors the rows are regrouped contiguously by author so the cursor
+// still walks them top-to-bottom; with one author the flat rank order stands.
+func (s *PRSection) setShownOrdered(idx []int) {
+	if distinctAuthors(s.prs, idx) >= 2 {
+		s.grouped = true
+		s.shown = groupByAuthor(s.prs, idx)
+		return
+	}
+	s.grouped = false
+	s.shown = idx
+}
+
+func distinctAuthors(prs []gh.PR, idx []int) int {
+	seen := map[string]struct{}{}
+	for _, i := range idx {
+		seen[prs[i].Author.Login] = struct{}{}
+	}
+	return len(seen)
+}
+
+// groupByAuthor reorders idx so each author's rows are contiguous. Groups are
+// ordered by their best (lowest) member rank, ties by login; within a group the
+// incoming (rank) order is preserved.
+func groupByAuthor(prs []gh.PR, idx []int) []int {
+	groups := map[string][]int{}
+	best := map[string]int{}
+	for _, i := range idx {
+		a := prs[i].Author.Login
+		r := prRank(prs[i])
+		if _, ok := groups[a]; !ok || r < best[a] {
+			best[a] = r
+		}
+		groups[a] = append(groups[a], i)
+	}
+	authors := make([]string, 0, len(groups))
+	for a := range groups {
+		authors = append(authors, a)
+	}
+	slices.SortStableFunc(authors, func(x, y string) int {
+		if best[x] != best[y] {
+			return best[x] - best[y]
+		}
+		return strings.Compare(x, y)
+	})
+	out := make([]int, 0, len(idx))
+	for _, a := range authors {
+		out = append(out, groups[a]...)
+	}
+	return out
 }
 
 // --- Issue section ---

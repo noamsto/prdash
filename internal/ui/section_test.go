@@ -132,3 +132,49 @@ func TestPRRankApprovedFailingIsNotReady(t *testing.T) {
 		t.Errorf("approved+passing should rank as ready (%d), got %d", rankReady, got)
 	}
 }
+
+func TestSetShownOrderedGroupsByAuthorWhenMultiple(t *testing.T) {
+	a := gh.PR{Number: 1, ReviewDecision: "REVIEW_REQUIRED"} // alice, rank waiting
+	a.Author.Login = "alice"
+	b := gh.PR{Number: 2, ReviewDecision: "APPROVED",          // bob, rank ready
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	b.Author.Login = "bob"
+	a2 := gh.PR{Number: 3, ReviewDecision: "CHANGES_REQUESTED"} // alice, rank changes
+	a2.Author.Login = "alice"
+
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{a, b, a2})
+
+	if !s.grouped {
+		t.Fatal("two distinct authors should switch the section to grouped mode")
+	}
+	// bob's group leads (its best rank, ready=0, beats alice's best, changes=1).
+	// within alice's group, changes(#3) precedes waiting(#1).
+	var got []int
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	want := []int{2, 3, 1}
+	if !slices.Equal(got, want) {
+		t.Fatalf("grouped display order = %v, want %v", got, want)
+	}
+}
+
+func TestSetShownOrderedFlatWhenSingleAuthor(t *testing.T) {
+	p1 := gh.PR{Number: 1, ReviewDecision: "APPROVED",
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	p1.Author.Login = "alice"
+	p2 := gh.PR{Number: 2, ReviewDecision: "REVIEW_REQUIRED"}
+	p2.Author.Login = "alice"
+
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{p2, p1}) // unsorted input
+
+	if s.grouped {
+		t.Fatal("a single distinct author must stay flat (not grouped)")
+	}
+	// flat actionability order: ready(#1) before waiting(#2)
+	if s.prAt(0).Number != 1 || s.prAt(1).Number != 2 {
+		t.Fatalf("flat order = [%d %d], want [1 2]", s.prAt(0).Number, s.prAt(1).Number)
+	}
+}
