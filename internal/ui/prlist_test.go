@@ -202,3 +202,29 @@ func TestToggleHideDrafts(t *testing.T) {
 		t.Fatalf("D again should restore the draft, got %d", m.section.Len())
 	}
 }
+
+func TestStatusTextLivesInHeaderNotKeybindingBar(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 130, 40
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "alice"
+	m.setPRs([]gh.PR{p})
+	m.hideDrafts = true
+	m.sel.toggle(0)
+
+	bar := m.statusBar()
+	if strings.Contains(bar, "selected") || strings.Contains(bar, "drafts hidden") {
+		t.Fatalf("keybinding bar must not carry status text: %q", bar)
+	}
+	if !strings.Contains(bar, "q quit") {
+		t.Fatalf("keybinding bar should still list core keys: %q", bar)
+	}
+	head := m.header()
+	if !strings.Contains(head, "selected") {
+		t.Fatalf("header should carry the selection count: %q", head)
+	}
+	if !strings.Contains(head, "drafts hidden") {
+		t.Fatalf("header should carry the drafts-hidden state: %q", head)
+	}
+}

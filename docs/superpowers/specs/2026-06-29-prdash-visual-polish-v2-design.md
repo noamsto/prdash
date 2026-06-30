@@ -163,6 +163,13 @@ The single-glyph CI / RV / `!` columns are cryptic. Two additions:
 
 ## 7. Keybindings — context-aware bar, bordered, audited
 
+> **Landed early (feedback):** the bottom bar is now **pure keybindings** — the
+> status text (`N selected`, `drafts hidden`) moved up to the header, and the bar
+> **leads with the focused PR's recommended action** (`r rerun failed`,
+> `m merge`, …) as a real, pressable key that changes with the cursor. The
+> remaining Phase D work is the rounded border (§5) and the full state-specific
+> key set.
+
 - The bottom bar gets the rounded border (§5) and is restored to
   **context-aware** (it drifted to a static string that omits live verbs like
   `y`/`o`/`↵`/`m`): always-present core verbs + the one state-specific key for

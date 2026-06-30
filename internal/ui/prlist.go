@@ -556,8 +556,15 @@ func (m Model) header() string {
 	if m.presetIdx >= 0 {
 		label = defaultPresets[m.presetIdx].name
 	}
-	return headerStyle.Render("  "+m.repo) + dimStyle.Render(
-		fmt.Sprintf("   %s · %d open", label, m.section.Len()))
+	meta := fmt.Sprintf("   %s · %d open", label, m.section.Len())
+	if m.hideDrafts {
+		meta += " · drafts hidden"
+	}
+	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(meta)
+	if n := m.sel.count(); n > 0 {
+		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
+	}
+	return h
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.
@@ -573,20 +580,18 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	return triage.Compute(ps.prAt(m.cursor), d), true
 }
 
-// statusBar is the bottom key/context line.
+// statusBar is the bottom keybinding line: core verbs, led by the focused PR's
+// recommended action when one applies. Pure keys — selection count and the
+// drafts-hidden state live in the header, not here.
 func (m Model) statusBar() string {
-	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · D drafts · / find · a actions · space select · q quit"
-	prefix := ""
-	if m.hideDrafts {
-		prefix += dimStyle.Render("drafts hidden") + " · "
-	}
-	if n := m.sel.count(); n > 0 {
-		prefix += selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · "
-	}
+	sep := statusBarStyle.Render(" · ")
+	parts := []string{}
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
-		prefix += accentStyle.Render(card.ActionKey) + " " + card.ActionLabel + " · "
+		parts = append(parts, accentStyle.Render(card.ActionKey)+statusBarStyle.Render(" "+card.ActionLabel))
 	}
-	return statusBarStyle.Render("  " + prefix + keys)
+	parts = append(parts, statusBarStyle.Render(
+		"↵ worktree · a actions · → expand · f filter · / find · space select · D drafts · q quit"))
+	return "  " + strings.Join(parts, sep)
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
