@@ -560,9 +560,6 @@ func (m Model) header() string {
 		label = defaultPresets[m.presetIdx].name
 	}
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
-	if m.hideDrafts {
-		h += "  " + draftTagStyle.Render("[drafts hidden]")
-	}
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
@@ -588,18 +585,29 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	return triage.Compute(ps.prAt(m.cursor), d), true
 }
 
-// statusBar is the bottom keybinding line: core verbs, led by the focused PR's
-// recommended action when one applies. Pure keys — selection count and the
-// drafts-hidden state live in the header, not here.
+// statusBar is the bottom keybinding line, in the lazytmux picker style:
+// accent key + dim ":label", space-separated. It leads with the focused PR's
+// recommended action, and a live toggle (drafts) highlights its label when
+// active — the indication lives on the key itself, not as floating status text.
 func (m Model) statusBar() string {
-	sep := statusBarStyle.Render(" · ")
+	hint := func(k, desc string) string {
+		return accentStyle.Render(k) + statusBarStyle.Render(":"+desc)
+	}
 	parts := []string{}
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
-		parts = append(parts, accentStyle.Render(card.ActionKey)+statusBarStyle.Render(" "+card.ActionLabel))
+		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
 	}
-	parts = append(parts, statusBarStyle.Render(
-		"↵ worktree · a actions · → expand · f filter · / find · space select · D drafts · q quit"))
-	return "  " + strings.Join(parts, sep)
+	drafts := statusBarStyle.Render("drafts")
+	if m.hideDrafts {
+		drafts = draftTagStyle.Render("drafts") // peach = filter active
+	}
+	parts = append(parts,
+		hint("↵", "worktree"), hint("a", "actions"), hint("→", "expand"),
+		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
+		accentStyle.Render("D")+statusBarStyle.Render(":")+drafts,
+		hint("q", "quit"),
+	)
+	return "  " + strings.Join(parts, "  ")
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.

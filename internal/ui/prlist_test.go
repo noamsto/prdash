@@ -73,7 +73,7 @@ func TestViewShowsHeaderAndStatus(t *testing.T) {
 	if !strings.Contains(out, "noamsto/prdash") {
 		t.Fatalf("header should show the repo: %q", out)
 	}
-	if !strings.Contains(out, "q quit") {
+	if !strings.Contains(out, "quit") {
 		t.Fatalf("status bar should show key hints: %q", out)
 	}
 }
@@ -230,17 +230,34 @@ func TestStatusTextLivesInHeaderNotKeybindingBar(t *testing.T) {
 	m.sel.toggle(0)
 
 	bar := m.statusBar()
-	if strings.Contains(bar, "selected") || strings.Contains(bar, "drafts hidden") {
-		t.Fatalf("keybinding bar must not carry status text: %q", bar)
+	if strings.Contains(bar, "selected") {
+		t.Fatalf("keybinding bar must not carry selection status text: %q", bar)
 	}
-	if !strings.Contains(bar, "q quit") {
+	if !strings.Contains(bar, "quit") {
 		t.Fatalf("keybinding bar should still list core keys: %q", bar)
 	}
 	head := m.header()
 	if !strings.Contains(head, "selected") {
 		t.Fatalf("header should carry the selection count: %q", head)
 	}
-	if !strings.Contains(head, "drafts hidden") {
-		t.Fatalf("header should carry the drafts-hidden state: %q", head)
+}
+
+func TestDraftsToggleHighlightedInBar(t *testing.T) {
+	mk := func(hide bool) string {
+		m := NewModel("/repo", "", nil)
+		m.SetRepo("r")
+		m.width, m.height = 130, 40
+		p := gh.PR{Number: 1, Title: "x"}
+		p.Author.Login = "alice"
+		m.setPRs([]gh.PR{p})
+		m.hideDrafts = hide
+		return m.statusBar()
+	}
+	off, on := mk(false), mk(true)
+	if !strings.Contains(off, "drafts") {
+		t.Fatalf("bar should always list the drafts toggle: %q", off)
+	}
+	if off == on {
+		t.Fatal("the drafts toggle label should change appearance in the bar when active")
 	}
 }
