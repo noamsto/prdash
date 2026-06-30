@@ -174,10 +174,10 @@ The single-glyph CI / RV / `!` columns are cryptic. Two additions:
 > **leads with the focused PR's recommended action** (`r:rerun failed`,
 > `m:merge`, …) as a real, pressable key that changes with the cursor. Live
 > toggles show their state **on the key itself** — `D:drafts` paints its label
-> peach when hiding is active (mirroring lazytmux's peach `^a:claude` /
-> `^s:scratch`), rather than as floating status text. The selection count stays
-> in the header. Remaining Phase D work: the rounded border (§5) and the fuller
-> state-specific key set.
+> peach **while drafts are on the board** (matching the peach `[draft]` tags in
+> the list) and dims it once they're hidden, rather than floating status text.
+> The selection count stays in the header. Remaining Phase D work: the rounded
+> border (§5) and the fuller state-specific key set.
 
 - The bottom bar gets the rounded border (§5) and is restored to
   **context-aware** (it drifted to a static string that omits live verbs like

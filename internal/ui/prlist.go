@@ -597,9 +597,9 @@ func (m Model) statusBar() string {
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
 		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
 	}
-	drafts := statusBarStyle.Render("drafts")
+	drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
 	if m.hideDrafts {
-		drafts = draftTagStyle.Render("drafts") // peach = filter active
+		drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
 	}
 	parts = append(parts,
 		hint("↵", "worktree"), hint("a", "actions"), hint("→", "expand"),
