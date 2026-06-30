@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,28 @@ func TestRenderMainBordersListPane(t *testing.T) {
 	}
 	if !strings.Contains(out, "PRs · 1") {
 		t.Fatalf("list pane should be titled: %q", out)
+	}
+}
+
+func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
+	ansi := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	render := func(d gh.PRDetail) string {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 150, 40
+		p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
+		p.Author.Login = "a"
+		m.setPRs([]gh.PR{p})
+		m.detail[1] = d
+		m.renderList()
+		return ansi.ReplaceAllString(m.previewPane(), "")
+	}
+	// Blocker IS checks-failing → no redundant standalone "checks" section.
+	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, "\nchecks ─") {
+		t.Fatalf("checks section should be suppressed when the blocker is CI:\n%s", got)
+	}
+	// Blocker is a conflict that masks failing CI → checks section surfaces it.
+	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, "\nchecks ─") {
+		t.Fatalf("checks section should show when a conflict masks failing CI:\n%s", got)
 	}
 }
 

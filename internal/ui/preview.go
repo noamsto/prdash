@@ -143,20 +143,31 @@ func (m Model) previewPane() string {
 		return "Loading preview…"
 	}
 	w := m.previewWidth()
-	var parts []string
+	// A section's label sits directly on its body; the blank line between blocks
+	// (the join below) is what separates sections, so they breathe.
+	section := func(label, body string) string {
+		return sectionRule(label, w) + "\n" + body
+	}
+	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
-		parts = append(parts, identityHeader(pr))
-		if card := renderCard(triage.Compute(pr, d), w); card != "" {
-			parts = append(parts, sectionRule("blocker", w), strings.TrimRight(card, "\n"))
+		blocks = append(blocks, identityHeader(pr))
+		tc := triage.Compute(pr, d)
+		if card := renderCard(tc, w); card != "" {
+			blocks = append(blocks, section("blocker", strings.TrimRight(card, "\n")))
 		}
-		if ci := ciLine(pr); ci != "" {
-			parts = append(parts, sectionRule("checks", w), ci)
+		// The checks section is redundant when the blocker card is already about
+		// CI; show it only when the blocker is something else (review/conflict)
+		// that would otherwise mask failing checks.
+		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
+			if ci := ciLine(pr); ci != "" {
+				blocks = append(blocks, section("checks", ci))
+			}
 		}
 	}
-	parts = append(parts, sectionRule("review", w), reviewersLine(d.ReviewRequests))
-	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
-	return strings.Join(parts, "\n") + "\n" + sectionRule("latest", w) + "\n\n" + timeline
+	blocks = append(blocks, section("review", reviewersLine(d.ReviewRequests)))
+	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)))
+	return strings.Join(blocks, "\n\n")
 }
 
 // previewTitle is the side pane's border title.
