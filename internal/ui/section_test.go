@@ -178,3 +178,23 @@ func TestSetShownOrderedFlatWhenSingleAuthor(t *testing.T) {
 		t.Fatalf("flat order = [%d %d], want [1 2]", s.prAt(0).Number, s.prAt(1).Number)
 	}
 }
+
+func TestPRRowOmitsInlineAuthor(t *testing.T) {
+	p := gh.PR{Number: 1, Title: "do the thing"}
+	p.Author.Login = "alice"
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{p})
+	if row := s.RenderRow(0, RowOpts{Width: 80}); strings.Contains(row, "alice") {
+		t.Fatalf("PR row must not render the author inline (it lives in the header): %q", row)
+	}
+}
+
+func TestIssueRowKeepsInlineAuthor(t *testing.T) {
+	is := gh.Issue{Number: 1, Title: "bug"}
+	is.Author.Login = "carol"
+	s := NewIssueSection("")
+	s.SetIssues([]gh.Issue{is})
+	if row := s.RenderRow(0, RowOpts{Width: 80}); !strings.Contains(row, "carol") {
+		t.Fatalf("issue row should still show its author: %q", row)
+	}
+}

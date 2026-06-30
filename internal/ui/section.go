@@ -54,8 +54,10 @@ func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	o.Draft = p.IsDraft
+	// Author is dropped from the row: it's redundant in a single-author (flat)
+	// view and hoisted into the group header when grouped.
 	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
-		p.Author.Login, ageString(p.UpdatedAt),
+		"", ageString(p.UpdatedAt),
 		ciGlyph(p.CIState()), reviewDot(p.ReviewDecision))
 }
 
