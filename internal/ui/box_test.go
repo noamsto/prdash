@@ -38,6 +38,16 @@ func TestTitledBoxClipsOverflow(t *testing.T) {
 	}
 }
 
+func TestTitledBoxLongTitleStaysWidthW(t *testing.T) {
+	const w, h = 16, 4
+	box := titledBox("body", w, h, strings.Repeat("A", 40)) // title far wider than the box
+	for i, ln := range strings.Split(box, "\n") {
+		if got := lipgloss.Width(ln); got != w {
+			t.Fatalf("line %d width = %d, want %d (a saturating title must not overflow): %q", i, got, w, ln)
+		}
+	}
+}
+
 func TestClipLines(t *testing.T) {
 	if got := clipLines("a\nb\nc\nd", 2); got != "a\nb" {
 		t.Fatalf("clipLines = %q, want %q", got, "a\nb")

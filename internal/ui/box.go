@@ -37,10 +37,10 @@ func titledBox(content string, w, h int, title string) string {
 		Width(w).Height(h - 1).MaxWidth(w).MaxHeight(h - 1).
 		Render(clipLines(content, h-2))
 	label := " " + truncate(title, w-4) + " "
-	rest := w - 3 - lipgloss.Width(label)
-	if rest < 0 {
-		rest = 0
+	if lipgloss.Width(label) > w-3 { // cap the label so the top line stays exactly w wide
+		label = truncate(label, w-3)
 	}
+	rest := w - 3 - lipgloss.Width(label)
 	top := rule.Render(rb.TopLeft+rb.Top) +
 		accentStyle.Render(label) +
 		rule.Render(strings.Repeat(rb.Top, rest)+rb.TopRight)
