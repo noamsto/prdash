@@ -6,6 +6,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// indentLines prefixes every line of s with n spaces.
+func indentLines(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
+}
+
 // clipLines keeps at most the first n lines of s.
 func clipLines(s string, n int) string {
 	if n < 0 {

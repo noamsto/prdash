@@ -45,6 +45,24 @@ func TestReviewersLine(t *testing.T) {
 	}
 }
 
+func TestReviewLineNamesWho(t *testing.T) {
+	mk := func(state string) gh.PRDetail {
+		var r gh.Review
+		r.Author.Login = "alice"
+		r.State = state
+		return gh.PRDetail{LatestReviews: []gh.Review{r}}
+	}
+	if got := reviewLine(mk("CHANGES_REQUESTED")); !strings.Contains(got, "changes requested by @alice") {
+		t.Fatalf("should name who requested changes: %q", got)
+	}
+	if got := reviewLine(mk("APPROVED")); !strings.Contains(got, "approved by @alice") {
+		t.Fatalf("should name who approved: %q", got)
+	}
+	if got := reviewLine(gh.PRDetail{ReviewRequests: []gh.ReviewRequest{{Login: "bob"}}}); !strings.Contains(got, "bob") {
+		t.Fatalf("with no reviews, should fall back to pending reviewers: %q", got)
+	}
+}
+
 func TestFlagGlyph(t *testing.T) {
 	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, false) != "" {
 		t.Fatal("uncached detail must render no flag")

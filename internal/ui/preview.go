@@ -148,18 +148,19 @@ func (m Model) previewPane() string {
 		return "Loading preview…"
 	}
 	w := m.previewWidth()
-	// A section's label sits directly on its body; the blank line between blocks
-	// (the join below) is what separates sections, so they breathe.
+	bw := w - 2 // body width: leave room for the 2-col section indent below
+	// A section is its label (flush) + body indented one level under it; the blank
+	// line between blocks (the join below) separates sections so they breathe.
 	section := func(label, body string) string {
-		return sectionRule(label, w) + "\n" + body
+		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
 	}
 	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
 		blocks = append(blocks, identityHeader(pr))
 		tc := triage.Compute(pr, d)
-		if card := renderCard(tc, w); card != "" {
-			blocks = append(blocks, section("blocker", strings.TrimRight(card, "\n")))
+		if card := renderCard(tc, bw); card != "" {
+			blocks = append(blocks, section("blocker", card))
 		}
 		// The checks section is redundant when the blocker card is already about
 		// CI; show it only when the blocker is something else (review/conflict)
@@ -170,8 +171,8 @@ func (m Model) previewPane() string {
 			}
 		}
 	}
-	blocks = append(blocks, section("review", reviewersLine(d.ReviewRequests)))
-	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)))
+	blocks = append(blocks, section("review", reviewLine(d)))
+	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
 	return strings.Join(blocks, "\n\n")
 }
 
@@ -204,6 +205,28 @@ func ciLine(pr gh.PR) string {
 		return pendStyle.Render("● checks running")
 	default: // pass / none — the row glyph carries it; keep the quick view calm
 		return ""
+	}
+}
+
+// reviewLine summarises the review state: who requested changes (the actionable
+// case), else who approved, else the pending requested reviewers.
+func reviewLine(d gh.PRDetail) string {
+	var changed, approved []string
+	for _, r := range d.LatestReviews {
+		switch r.State {
+		case "CHANGES_REQUESTED":
+			changed = append(changed, "@"+r.Author.Login)
+		case "APPROVED":
+			approved = append(approved, "@"+r.Author.Login)
+		}
+	}
+	switch {
+	case len(changed) > 0:
+		return failStyle.Render("✗ changes requested by " + strings.Join(changed, ", "))
+	case len(approved) > 0:
+		return passStyle.Render("✓ approved by " + strings.Join(approved, ", "))
+	default:
+		return reviewersLine(d.ReviewRequests)
 	}
 }
 
