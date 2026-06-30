@@ -93,6 +93,18 @@ func TestPRSectionMarksDraftRow(t *testing.T) {
 	}
 }
 
+func TestDraftRowShowsDraftTag(t *testing.T) {
+	row := func(o RowOpts) string {
+		return renderItemRow(o, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+	}
+	if got := row(RowOpts{Width: 80, Draft: true}); !strings.Contains(got, "[draft]") {
+		t.Fatalf("draft row should carry a [draft] tag: %q", got)
+	}
+	if got := row(RowOpts{Width: 80}); strings.Contains(got, "[draft]") {
+		t.Fatalf("non-draft row must not carry a [draft] tag: %q", got)
+	}
+}
+
 func TestPadNumRightAligns(t *testing.T) {
 	if got := padNum("#7", 5); got != "   #7" {
 		t.Fatalf("padNum(#7,5) = %q, want %q", got, "   #7")
