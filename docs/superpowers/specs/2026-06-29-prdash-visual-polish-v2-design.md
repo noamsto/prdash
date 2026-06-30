@@ -123,20 +123,26 @@ tag still marks it).
 composes with the author filter and grouping). The status bar shows
 `drafts hidden` while active.
 
-## 4. Grouping — driven by author cardinality
+## 4. Grouping — view-driven, with a cardinality fallback
 
-The author asked to group by assignee and to hide their own handle on "my" PRs.
-Rather than couple to which preset is active, **drive grouping off the data**:
+The author asked to group by assignee and to hide their own handle on "my" PRs —
+**and (feedback) to group even when a non-"mine" view currently has a single
+author**, so you always see whose PRs you're looking at. So grouping is driven
+by the *view*, not just the data:
 
-- **All shown PRs share one author → flat list, no author column.** Covers the
-  "mine" filter and any single-author view; the redundant handle disappears.
-- **≥2 distinct authors → group under dim author-rule headers** (`alice ─────`),
-  with the handle in the header, not repeated per row. Within each group, the §3
-  actionability ladder. Groups ordered by their most-actionable member, ties by
-  recency.
+- **"mine" view → flat list, no author column.** Every PR is the author's own;
+  the handle is redundant, so it's dropped.
+- **Any other view → group under dim author-rule headers** (`alice ─────`), with
+  the handle in the header, not repeated per row — **even with a single author**.
+  Within each group, the §3 actionability ladder; groups ordered by their
+  most-actionable member, ties by login.
 
-Self-adjusting, no preset plumbing. The existing PRs/Issues split is preserved;
-grouping is *within* the PR section. Issues keep their current flat rendering.
+Mechanism: the Model sets `PRSection.forceGroup = !mineView` on each fetch
+(`mineView` = the "mine" preset is active). `setShownOrdered` groups when
+`forceGroup || ≥2 distinct authors` — so a multi-author board still groups even
+in an unexpected view (the cardinality fallback). The existing PRs/Issues split
+is preserved; grouping is *within* the PR section. Issues keep their flat
+rendering.
 
 ## 5. Borders — rounded panes + preview sectioning
 

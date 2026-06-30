@@ -73,6 +73,9 @@ func (m *Model) SetRepo(repo string)   { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
+		// Outside the "mine" view, group by author even with a single author, so
+		// you always see whose PRs you're looking at.
+		s.SetForceGroup(!m.isMineView())
 		s.SetPRs(prs)
 	}
 	m.applyFilter()
@@ -556,15 +559,20 @@ func (m Model) header() string {
 	if m.presetIdx >= 0 {
 		label = defaultPresets[m.presetIdx].name
 	}
-	meta := fmt.Sprintf("   %s · %d open", label, m.section.Len())
+	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
 	if m.hideDrafts {
-		meta += " · drafts hidden"
+		h += "  " + draftTagStyle.Render("[drafts hidden]")
 	}
-	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(meta)
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
 	return h
+}
+
+// isMineView reports whether the active view is the "mine" preset, where every
+// PR is the author's own — so grouping by author would be noise.
+func (m Model) isMineView() bool {
+	return m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.

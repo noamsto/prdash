@@ -161,8 +161,8 @@ func TestGroupedRenderEmitsHeadersAndTracksCursorLine(t *testing.T) {
 	}
 }
 
-func TestFlatRenderHasNoHeaders(t *testing.T) {
-	m := NewModel("/repo", "", nil)
+func TestMineViewRendersFlatNoHeaders(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil) // the "mine" preset
 	m.SetRepo("r")
 	m.width, m.height = 100, 30
 	p1 := gh.PR{Number: 1, Title: "one"}
@@ -172,10 +172,26 @@ func TestFlatRenderHasNoHeaders(t *testing.T) {
 	m.setPRs([]gh.PR{p1, p2})
 	m.renderList()
 	if strings.Contains(m.vp.View(), "─") {
-		t.Fatalf("single-author board should render flat with no header rules: %q", m.vp.View())
+		t.Fatalf("mine view should render flat with no header rules: %q", m.vp.View())
 	}
 	if m.cursorLine != 0 {
 		t.Fatalf("flat board cursor at row 0 should map to line 0, got %d", m.cursorLine)
+	}
+}
+
+func TestNonMineSingleAuthorStillGroups(t *testing.T) {
+	m := NewModel("/repo", "is:open review-requested:@me", nil) // a non-"mine" preset
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+	p1 := gh.PR{Number: 1, Title: "one"}
+	p1.Author.Login = "alice"
+	p2 := gh.PR{Number: 2, Title: "two"}
+	p2.Author.Login = "alice"
+	m.setPRs([]gh.PR{p1, p2})
+	m.renderList()
+	out := m.vp.View()
+	if !strings.Contains(out, "alice") || !strings.Contains(out, "─") {
+		t.Fatalf("non-mine single-author board should group under an author header: %q", out)
 	}
 }
 

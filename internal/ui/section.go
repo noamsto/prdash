@@ -38,8 +38,9 @@ type PRSection struct {
 	filter     string
 	prs        []gh.PR
 	shown      []int
-	grouped    bool // true when the shown set spans ≥2 authors → render author headers
+	grouped    bool // true when the board renders author headers (see setShownOrdered)
 	hideDrafts bool // when true, draft PRs are excluded from the shown set
+	forceGroup bool // group even with a single author (non-"mine" views)
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
@@ -122,12 +123,13 @@ func sortPRs(prs []gh.PR) {
 // ≥2 distinct authors the rows are regrouped contiguously by author so the cursor
 // still walks them top-to-bottom; with one author the flat rank order stands.
 func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
+func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
 
 func (s *PRSection) setShownOrdered(idx []int) {
 	if s.hideDrafts {
 		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool { return s.prs[i].IsDraft })
 	}
-	if distinctAuthors(s.prs, idx) >= 2 {
+	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
 		s.grouped = true
 		s.shown = groupByAuthor(s.prs, idx)
 		return
