@@ -122,13 +122,18 @@ func identityHeader(pr gh.PR) string {
 	return line1 + "\n" + line2
 }
 
-// sectionRule is a dim labeled divider inside the preview: "label ─────".
+// sectionRule is a section divider: an UPPERCASE sapphire label (distinct from
+// the body text) followed by a short rule — not the full pane width.
 func sectionRule(label string, w int) string {
-	rest := w - lipgloss.Width(label) - 1
-	if rest < 0 {
-		rest = 0
+	name := sectionLabelStyle.Render(strings.ToUpper(label))
+	ruleLen := 6
+	if max := w - lipgloss.Width(name) - 1; ruleLen > max {
+		ruleLen = max
 	}
-	return dimStyle.Render(label) + " " + sepStyle.Render(strings.Repeat("─", rest))
+	if ruleLen < 0 {
+		ruleLen = 0
+	}
+	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
 // previewPane renders the triage card (if available) followed by the timeline,

@@ -155,9 +155,10 @@ func TestGroupedRenderEmitsHeadersAndTracksCursorLine(t *testing.T) {
 	if m.cursorLine != 1 {
 		t.Fatalf("cursor on first row should map to line 1 (after its header), got %d", m.cursorLine)
 	}
-	m.moveCursor(1) // to shown row 1 (alice's PR), which sits below a second header
-	if m.cursorLine != 3 {
-		t.Fatalf("cursor on second group's row should map to line 3, got %d", m.cursorLine)
+	m.moveCursor(1) // to shown row 1 (alice's PR), below a blank line + second header
+	// lines: 0=bob hdr, 1=bob row, 2=blank, 3=alice hdr, 4=alice row
+	if m.cursorLine != 4 {
+		t.Fatalf("cursor on second group's row should map to line 4, got %d", m.cursorLine)
 	}
 }
 

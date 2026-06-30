@@ -24,6 +24,7 @@ type Theme struct {
 	Fail    string // red
 	Pending string // yellow
 	Draft   string // peach — the [draft] tag; kept out of the author rotation
+	Section string // sapphire — section/group divider labels
 	Author  []string
 }
 
@@ -33,11 +34,13 @@ func Mocha() Theme {
 		Accent: "#cba6f7", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
 		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
+		Section: "#74c7ec",
 		// Distinct author hues — deliberately excludes mauve (accent), sky (focus),
-		// pink (select), peach (draft tag), and the green/red/yellow state colors.
+		// pink (select), peach (draft tag), sapphire (section labels), and the
+		// green/red/yellow state colors.
 		Author: []string{
-			"#b4befe", "#94e2d5", "#74c7ec",
-			"#eba0ac", "#f5e0dc", "#f2cdcd", "#89b4fa",
+			"#b4befe", "#94e2d5", "#eba0ac",
+			"#f5e0dc", "#f2cdcd", "#89b4fa",
 		},
 	}
 }
@@ -46,18 +49,19 @@ func Mocha() Theme {
 var theme = Mocha()
 
 var (
-	titleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
-	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
-	sepStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
-	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))
-	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Fail))
-	pendStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pending))
-	selMarkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Select))
-	focusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
-	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
-	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
-	draftTagStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
+	titleStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
+	accentStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
+	dimStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	sepStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
+	passStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))
+	failStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Fail))
+	pendStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pending))
+	selMarkStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Select))
+	focusBarStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
+	headerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
+	statusBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
+	draftTagStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
 )
 
 // authorStyle gives each login a stable color so the same person reads the same

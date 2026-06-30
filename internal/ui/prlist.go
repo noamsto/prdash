@@ -120,6 +120,10 @@ func (m *Model) renderList() {
 	for i := 0; i < m.section.Len(); i++ {
 		if grouped {
 			if a := ps.prAt(i).Author.Login; a != prevAuthor {
+				if prevAuthor != "" { // blank line between groups, not above the first
+					b.WriteString("\n")
+					line++
+				}
 				b.WriteString(groupHeader(a, innerW) + "\n")
 				line++
 				prevAuthor = a

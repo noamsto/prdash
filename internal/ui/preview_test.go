@@ -65,8 +65,8 @@ func TestFlagGlyph(t *testing.T) {
 
 func TestSectionRule(t *testing.T) {
 	r := sectionRule("blocker", 30)
-	if !strings.Contains(r, "blocker") || !strings.Contains(r, "─") {
-		t.Fatalf("section rule should show the label and a rule: %q", r)
+	if !strings.Contains(r, "BLOCKER") || !strings.Contains(r, "─") {
+		t.Fatalf("section rule should show the uppercased label and a rule: %q", r)
 	}
 	if strings.Contains(r, "\n") {
 		t.Fatalf("section rule is one line: %q", r)
@@ -123,11 +123,11 @@ func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
 		return ansi.ReplaceAllString(m.previewPane(), "")
 	}
 	// Blocker IS checks-failing → no redundant standalone "checks" section.
-	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, "\nchecks ─") {
+	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, "\nCHECKS ─") {
 		t.Fatalf("checks section should be suppressed when the blocker is CI:\n%s", got)
 	}
 	// Blocker is a conflict that masks failing CI → checks section surfaces it.
-	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, "\nchecks ─") {
+	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, "\nCHECKS ─") {
 		t.Fatalf("checks section should show when a conflict masks failing CI:\n%s", got)
 	}
 }
