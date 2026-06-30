@@ -108,9 +108,9 @@ func (m Model) previewWidth() int {
 		return 40
 	}
 	if m.previewMax {
-		return m.width - 2 // full width minus the pane's left padding
+		return m.width - 2 // interior of the full-width box
 	}
-	return l.SideWidth
+	return l.SideWidth - 2
 }
 
 // identityHeader is the side card's top block: number + title, then a dim
@@ -148,6 +148,14 @@ func (m Model) previewPane() string {
 	parts = append(parts, reviewersLine(d.ReviewRequests))
 	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
 	return strings.Join(parts, "\n") + "\n\n" + timeline
+}
+
+// previewTitle is the side pane's border title.
+func (m Model) previewTitle() string {
+	if v, ok := m.cursorVars(); ok && v.Number > 0 {
+		return fmt.Sprintf("#%d", v.Number)
+	}
+	return "Preview"
 }
 
 // ciLine surfaces the check rollup in the quick view independent of the triage
@@ -206,23 +214,17 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 	}
 }
 
-// renderMain lays the list and (when wide) the contained side preview together.
+// renderMain lays the bordered list and (when wide) the bordered side preview.
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
+	if m.previewMax && l.ShowSide {
+		return titledBox(m.previewPane(), m.width, l.ContentHeight, m.previewTitle())
+	}
+	list := titledBox(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle())
 	if !l.ShowSide {
-		return m.vp.View()
+		return list
 	}
-	// z maximizes the preview to full width, hiding the list for deep reading.
-	if m.previewMax {
-		return lipgloss.NewStyle().Width(m.width).Height(l.ContentHeight).
-			MaxWidth(m.width).MaxHeight(l.ContentHeight).
-			PaddingLeft(2).Render(m.previewPane())
-	}
-	// MaxWidth/MaxHeight hard-clip the pane: Width/Height only pad up, so a long
-	// timeline or wide glamour line would otherwise overflow and scroll the list
-	// out of view. The card + reviewers line lead, so only the timeline tail clips.
-	side := lipgloss.NewStyle().Width(l.SideWidth).Height(l.ContentHeight).
-		MaxWidth(l.SideWidth).MaxHeight(l.ContentHeight).
-		PaddingLeft(2).Render(m.previewPane())
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.vp.View(), side)
+	side := titledBox(m.previewPane(), l.SideWidth, l.ContentHeight, m.previewTitle())
+	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
+	return lipgloss.JoinHorizontal(lipgloss.Top, list, side)
 }

@@ -81,3 +81,27 @@ func TestPrefetchNumbers(t *testing.T) {
 		t.Fatalf("all cached should yield nil, got %v", n)
 	}
 }
+
+func TestRenderMainBordersListPane(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30 // narrow: single bordered list pane
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.renderList()
+	out := m.renderMain()
+	if !strings.Contains(out, "╭") || !strings.Contains(out, "╯") {
+		t.Fatalf("renderMain should wrap the list in a rounded border: %q", out)
+	}
+	if !strings.Contains(out, "PRs · 1") {
+		t.Fatalf("list pane should be titled: %q", out)
+	}
+}
+
+func TestPreviewWidthSubtractsBorder(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40 // wide: side pane shows
+	l := computeLayout(150, 40)
+	if got := m.previewWidth(); got != l.SideWidth-2 {
+		t.Fatalf("previewWidth = %d, want SideWidth-2 = %d", got, l.SideWidth-2)
+	}
+}
