@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
 )
@@ -103,5 +105,25 @@ func TestPreviewWidthSubtractsBorder(t *testing.T) {
 	l := computeLayout(150, 40)
 	if got := m.previewWidth(); got != l.SideWidth-2 {
 		t.Fatalf("previewWidth = %d, want SideWidth-2 = %d", got, l.SideWidth-2)
+	}
+}
+
+func TestRenderMainWideLayoutFitsAndBordersBoth(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 140, 30 // wide: list + side pane
+	p := gh.PR{Number: 1, Title: "hello"}
+	p.Author.Login = "al"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+	out := m.renderMain()
+	if n := strings.Count(out, "╭"); n < 2 {
+		t.Fatalf("wide layout should border both panes (got %d top-left corners)", n)
+	}
+	for i, ln := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(ln); w > m.width {
+			t.Fatalf("line %d width %d exceeds terminal width %d", i, w, m.width)
+		}
 	}
 }
