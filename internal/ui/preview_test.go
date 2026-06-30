@@ -62,6 +62,16 @@ func TestFlagGlyph(t *testing.T) {
 	}
 }
 
+func TestSectionRule(t *testing.T) {
+	r := sectionRule("blocker", 30)
+	if !strings.Contains(r, "blocker") || !strings.Contains(r, "─") {
+		t.Fatalf("section rule should show the label and a rule: %q", r)
+	}
+	if strings.Contains(r, "\n") {
+		t.Fatalf("section rule is one line: %q", r)
+	}
+}
+
 func TestPrefetchNumbers(t *testing.T) {
 	ps := NewPRSection("is:open")
 	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}, {Number: 5}})

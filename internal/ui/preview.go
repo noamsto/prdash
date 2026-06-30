@@ -122,6 +122,15 @@ func identityHeader(pr gh.PR) string {
 	return line1 + "\n" + line2
 }
 
+// sectionRule is a dim labeled divider inside the preview: "label ─────".
+func sectionRule(label string, w int) string {
+	rest := w - lipgloss.Width(label) - 1
+	if rest < 0 {
+		rest = 0
+	}
+	return dimStyle.Render(label) + " " + sepStyle.Render(strings.Repeat("─", rest))
+}
+
 // previewPane renders the triage card (if available) followed by the timeline,
 // or a loading/empty hint.
 func (m Model) previewPane() string {
@@ -139,15 +148,15 @@ func (m Model) previewPane() string {
 		pr := ps.prAt(m.cursor)
 		parts = append(parts, identityHeader(pr))
 		if card := renderCard(triage.Compute(pr, d), w); card != "" {
-			parts = append(parts, strings.TrimRight(card, "\n"))
+			parts = append(parts, sectionRule("blocker", w), strings.TrimRight(card, "\n"))
 		}
 		if ci := ciLine(pr); ci != "" {
-			parts = append(parts, ci)
+			parts = append(parts, sectionRule("checks", w), ci)
 		}
 	}
-	parts = append(parts, reviewersLine(d.ReviewRequests))
+	parts = append(parts, sectionRule("review", w), reviewersLine(d.ReviewRequests))
 	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
-	return strings.Join(parts, "\n") + "\n\n" + timeline
+	return strings.Join(parts, "\n") + "\n" + sectionRule("latest", w) + "\n\n" + timeline
 }
 
 // previewTitle is the side pane's border title.
