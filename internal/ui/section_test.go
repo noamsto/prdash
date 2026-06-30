@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -209,5 +211,40 @@ func TestGroupHeaderShowsAuthorAndRule(t *testing.T) {
 	}
 	if strings.Contains(h, "\n") {
 		t.Fatalf("group header must be a single line: %q", h)
+	}
+}
+
+func TestFocusedRowGetsBackground(t *testing.T) {
+	// the exact bg-open sequence lipgloss emits for RowBg under the active profile
+	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
+	set := probe[:strings.Index(probe, "X")]
+	row := func(o RowOpts) string {
+		return renderItemRow(o, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""))
+	}
+	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
+		t.Fatalf("focused row should carry the cursor background: %q", got)
+	}
+	if got := row(RowOpts{Width: 80}); strings.Contains(got, set) {
+		t.Fatalf("unfocused row must not carry a background: %q", got)
+	}
+}
+
+func TestSetHideDraftsExcludesDrafts(t *testing.T) {
+	d := gh.PR{Number: 1, IsDraft: true}
+	d.Author.Login = "alice"
+	r := gh.PR{Number: 2}
+	r.Author.Login = "alice"
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{d, r})
+	if s.Len() != 2 {
+		t.Fatalf("both PRs shown before hiding drafts, got %d", s.Len())
+	}
+	s.SetHideDrafts(true)
+	s.SetShown([]int{0, 1}) // re-evaluate the shown set with the flag on
+	if s.Len() != 1 {
+		t.Fatalf("draft should be excluded, got %d", s.Len())
+	}
+	if s.prAt(0).Number != 2 {
+		t.Fatalf("remaining row should be the non-draft #2, got #%d", s.prAt(0).Number)
 	}
 }

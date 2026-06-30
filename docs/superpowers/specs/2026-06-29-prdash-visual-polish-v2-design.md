@@ -110,6 +110,19 @@ miss, a draft also carries a `[draft]` tag painted in a dedicated peach role
 otherwise-receded row the one thing that stands out is what it is. A text tag
 (not a glyph) keeps it legible without depending on the §6 legend.
 
+**Focus highlight.** The cursor row gets a full-width `Theme.RowBg` (surface0)
+background — the prominence cue the base spec called for, now implemented. Since
+lipgloss resets the background after each styled segment, the row renderer
+re-applies the background's opening sequence after every reset to fill the whole
+line. Focus also **overrides draft dimming for the title**: the hovered row is
+always bright/bold so the cursor never gets lost on a dim draft (the `[draft]`
+tag still marks it).
+
+**Hide-drafts toggle.** `D` toggles excluding draft PRs from the board entirely
+(a `PRSection.hideDrafts` filter applied as the shown set is built, so it
+composes with the author filter and grouping). The status bar shows
+`drafts hidden` while active.
+
 ## 4. Grouping — driven by author cardinality
 
 The author asked to group by assignee and to hide their own handle on "my" PRs.

@@ -35,10 +35,11 @@ type Section interface {
 
 // --- PR section ---
 type PRSection struct {
-	filter  string
-	prs     []gh.PR
-	shown   []int
-	grouped bool // true when the shown set spans ≥2 authors → render author headers
+	filter     string
+	prs        []gh.PR
+	shown      []int
+	grouped    bool // true when the shown set spans ≥2 authors → render author headers
+	hideDrafts bool // when true, draft PRs are excluded from the shown set
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
@@ -120,7 +121,12 @@ func sortPRs(prs []gh.PR) {
 // idx arrives in actionability order (prs is rank-sorted; idx preserves it). With
 // ≥2 distinct authors the rows are regrouped contiguously by author so the cursor
 // still walks them top-to-bottom; with one author the flat rank order stands.
+func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
+
 func (s *PRSection) setShownOrdered(idx []int) {
+	if s.hideDrafts {
+		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool { return s.prs[i].IsDraft })
+	}
 	if distinctAuthors(s.prs, idx) >= 2 {
 		s.grouped = true
 		s.shown = groupByAuthor(s.prs, idx)
@@ -264,10 +270,10 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 	}
 	titleSt := titleStyle
 	switch {
+	case o.Focused:
+		titleSt = titleSt.Bold(true) // the hovered row is always readable, even if draft
 	case o.Draft:
 		titleSt = dimStyle
-	case o.Focused:
-		titleSt = titleSt.Bold(true)
 	}
 	// A draft dims the whole row but paints its tag in the draft accent (peach),
 	// so the one thing that stands out on a receded row is what it is.
@@ -285,7 +291,23 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 	if gap < 1 {
 		gap = 1
 	}
-	return left + titleTxt + strings.Repeat(" ", gap) + right
+	line := left + titleTxt + strings.Repeat(" ", gap) + right
+	if o.Focused {
+		line = rowBgWrap(line, theme.RowBg)
+	}
+	return line
+}
+
+// rowBgWrap fills a composed row with a background. lipgloss ends each styled
+// segment with a full SGR reset, which also clears the background, so a single
+// outer Background paints only the first token and the trailing pad. We instead
+// re-apply the background's opening sequence (taken from lipgloss, so it honors
+// the active color profile) after every reset, filling the whole line.
+func rowBgWrap(line, bg string) string {
+	probe := lipgloss.NewStyle().Background(lipgloss.Color(bg)).Render("X")
+	set := probe[:strings.Index(probe, "X")]
+	const reset = "\x1b[m"
+	return set + strings.ReplaceAll(line, reset, reset+set) + reset
 }
 
 // padNum right-aligns a plain "#123" string to w cells; never truncates.

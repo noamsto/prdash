@@ -48,6 +48,7 @@ type Model struct {
 	loaded          bool // first live fetch has returned; distinguishes empty from loading
 	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool // z: preview takes full width, list hidden
+	hideDrafts      bool // D: exclude draft PRs from the board
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
@@ -435,6 +436,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
+		case "D":
+			m.hideDrafts = !m.hideDrafts
+			if ps, ok := m.section.(*PRSection); ok {
+				ps.SetHideDrafts(m.hideDrafts)
+			}
+			m.sel.clear() // the shown set changes; stale indexes would point elsewhere
+			m.applyFilter()
+			return m, nil
 		case "F":
 			return m, m.openPicker("author")
 		case "R":
@@ -566,10 +575,13 @@ func (m Model) cursorCard() (triage.Card, bool) {
 
 // statusBar is the bottom key/context line.
 func (m Model) statusBar() string {
-	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · / find · a actions · space select · q quit"
+	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · D drafts · / find · a actions · space select · q quit"
 	prefix := ""
+	if m.hideDrafts {
+		prefix += dimStyle.Render("drafts hidden") + " · "
+	}
 	if n := m.sel.count(); n > 0 {
-		prefix = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · "
+		prefix += selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · "
 	}
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
 		prefix += accentStyle.Render(card.ActionKey) + " " + card.ActionLabel + " · "

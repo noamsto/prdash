@@ -178,3 +178,27 @@ func TestFlatRenderHasNoHeaders(t *testing.T) {
 		t.Fatalf("flat board cursor at row 0 should map to line 0, got %d", m.cursorLine)
 	}
 }
+
+func TestToggleHideDrafts(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+	d := gh.PR{Number: 1, IsDraft: true}
+	d.Author.Login = "alice"
+	r := gh.PR{Number: 2}
+	r.Author.Login = "alice"
+	m.setPRs([]gh.PR{d, r})
+	if m.section.Len() != 2 {
+		t.Fatalf("both PRs shown before toggle, got %d", m.section.Len())
+	}
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'D', Text: "D"})
+	m = u.(Model)
+	if m.section.Len() != 1 {
+		t.Fatalf("D should hide the draft, leaving 1, got %d", m.section.Len())
+	}
+	u, _ = m.Update(tea.KeyPressMsg{Code: 'D', Text: "D"})
+	m = u.(Model)
+	if m.section.Len() != 2 {
+		t.Fatalf("D again should restore the draft, got %d", m.section.Len())
+	}
+}
