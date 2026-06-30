@@ -41,3 +41,12 @@ func TestAuthorPaletteExcludesAccent(t *testing.T) {
 		}
 	}
 }
+
+func TestDraftColorStaysOutOfAuthorPalette(t *testing.T) {
+	th := Mocha()
+	for _, c := range th.Author {
+		if c == th.Draft {
+			t.Fatalf("draft tag color %q must stay out of the author rotation", th.Draft)
+		}
+	}
+}

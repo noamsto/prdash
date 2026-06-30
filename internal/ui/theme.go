@@ -23,6 +23,7 @@ type Theme struct {
 	Pass    string // green
 	Fail    string // red
 	Pending string // yellow
+	Draft   string // peach — the [draft] tag; kept out of the author rotation
 	Author  []string
 }
 
@@ -31,11 +32,11 @@ func Mocha() Theme {
 	return Theme{
 		Accent: "#cba6f7", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
-		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af",
+		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
 		// Distinct author hues — deliberately excludes mauve (accent), sky (focus),
-		// pink (select), and the green/red/yellow state colors.
+		// pink (select), peach (draft tag), and the green/red/yellow state colors.
 		Author: []string{
-			"#b4befe", "#94e2d5", "#fab387", "#74c7ec",
+			"#b4befe", "#94e2d5", "#74c7ec",
 			"#eba0ac", "#f5e0dc", "#f2cdcd", "#89b4fa",
 		},
 	}
@@ -56,6 +57,7 @@ var (
 	focusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
 	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
 	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	draftTagStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
 )
 
 // authorStyle gives each login a stable color so the same person reads the same

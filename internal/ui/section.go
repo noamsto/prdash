@@ -213,12 +213,12 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 	case o.Focused:
 		titleSt = titleSt.Bold(true)
 	}
-	// A draft dims the whole row but keeps its tag at full title brightness, so
-	// the one thing that stands out on a receded row is what it is.
+	// A draft dims the whole row but paints its tag in the draft accent (peach),
+	// so the one thing that stands out on a receded row is what it is.
 	draftTag := ""
 	if o.Draft {
 		const tag = " [draft]"
-		draftTag = titleStyle.Render(tag)
+		draftTag = draftTagStyle.Render(tag)
 		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
 			titleRoom = 1
 		}

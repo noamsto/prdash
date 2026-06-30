@@ -105,9 +105,10 @@ beats a perfectly-ranked one.
 
 Draft rows render **dimmed** (title + glyphs in the meta/subtext color) in
 addition to sinking to the bottom. Because pure dimming makes them too easy to
-miss, a draft also carries a `[draft]` tag rendered at full title brightness —
-so on an otherwise-receded row the one thing that stands out is what it is. A
-text tag (not a glyph) keeps it legible without depending on the §6 legend.
+miss, a draft also carries a `[draft]` tag painted in a dedicated peach role
+(`Theme.Draft`, kept out of the author rotation so it can't clash) — so on an
+otherwise-receded row the one thing that stands out is what it is. A text tag
+(not a glyph) keeps it legible without depending on the §6 legend.
 
 ## 4. Grouping — driven by author cardinality
 
