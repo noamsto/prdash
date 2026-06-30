@@ -195,13 +195,13 @@ func ciLine(pr gh.PR) string {
 				names = append(names, c.Label())
 			}
 		}
-		s := failStyle.Render("  ✗ checks failing")
+		s := failStyle.Render("✗ checks failing")
 		if len(names) > 0 {
 			s += dimStyle.Render(": " + strings.Join(names, ", "))
 		}
 		return s
 	case "pending":
-		return pendStyle.Render("  ● checks running")
+		return pendStyle.Render("● checks running")
 	default: // pass / none — the row glyph carries it; keep the quick view calm
 		return ""
 	}
@@ -217,9 +217,9 @@ func reviewersLine(reqs []gh.ReviewRequest) string {
 		}
 	}
 	if len(logins) == 0 {
-		return pendStyle.Render("  ⚠ no reviewers")
+		return pendStyle.Render("⚠ no reviewers")
 	}
-	return dimStyle.Render("  reviewers: " + strings.Join(logins, ", "))
+	return dimStyle.Render("reviewers: " + strings.Join(logins, ", "))
 }
 
 // flagGlyph is the board's ! column: a conflict (red) or behind-base (yellow)
