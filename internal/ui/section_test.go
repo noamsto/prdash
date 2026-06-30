@@ -198,3 +198,16 @@ func TestIssueRowKeepsInlineAuthor(t *testing.T) {
 		t.Fatalf("issue row should still show its author: %q", row)
 	}
 }
+
+func TestGroupHeaderShowsAuthorAndRule(t *testing.T) {
+	h := groupHeader("alice", 40)
+	if !strings.Contains(h, "alice") {
+		t.Fatalf("group header should name the author: %q", h)
+	}
+	if !strings.Contains(h, "─") {
+		t.Fatalf("group header should draw a rule: %q", h)
+	}
+	if strings.Contains(h, "\n") {
+		t.Fatalf("group header must be a single line: %q", h)
+	}
+}

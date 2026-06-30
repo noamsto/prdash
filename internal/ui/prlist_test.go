@@ -132,3 +132,49 @@ func TestStatusBarSurfacesRecommendedFix(t *testing.T) {
 		t.Fatalf("failing-checks PR should surface the rerun fix: %q", out)
 	}
 }
+
+func TestGroupedRenderEmitsHeadersAndTracksCursorLine(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+
+	ready := gh.PR{Number: 2, Title: "ready", ReviewDecision: "APPROVED",
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	ready.Author.Login = "bob"
+	waiting := gh.PR{Number: 1, Title: "waiting", ReviewDecision: "REVIEW_REQUIRED"}
+	waiting.Author.Login = "alice"
+	m.setPRs([]gh.PR{waiting, ready})
+	m.renderList()
+
+	out := m.vp.View()
+	if !strings.Contains(out, "bob") || !strings.Contains(out, "alice") {
+		t.Fatalf("grouped board should show both author headers: %q", out)
+	}
+	// display lines: 0=bob header, 1=bob's #2, 2=alice header, 3=alice's #1.
+	// cursor starts at shown row 0 (bob's PR) → line 1.
+	if m.cursorLine != 1 {
+		t.Fatalf("cursor on first row should map to line 1 (after its header), got %d", m.cursorLine)
+	}
+	m.moveCursor(1) // to shown row 1 (alice's PR), which sits below a second header
+	if m.cursorLine != 3 {
+		t.Fatalf("cursor on second group's row should map to line 3, got %d", m.cursorLine)
+	}
+}
+
+func TestFlatRenderHasNoHeaders(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+	p1 := gh.PR{Number: 1, Title: "one"}
+	p1.Author.Login = "alice"
+	p2 := gh.PR{Number: 2, Title: "two"}
+	p2.Author.Login = "alice"
+	m.setPRs([]gh.PR{p1, p2})
+	m.renderList()
+	if strings.Contains(m.vp.View(), "─") {
+		t.Fatalf("single-author board should render flat with no header rules: %q", m.vp.View())
+	}
+	if m.cursorLine != 0 {
+		t.Fatalf("flat board cursor at row 0 should map to line 0, got %d", m.cursorLine)
+	}
+}

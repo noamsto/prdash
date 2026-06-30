@@ -343,6 +343,17 @@ func reviewDot(decision string) string {
 	}
 }
 
+// groupHeader is a dim author-rule line: the login followed by a rule filling
+// the row width. It is visual-only — never a selectable cursor target.
+func groupHeader(author string, width int) string {
+	name := authorStyle(author).Render(author)
+	rule := width - lipgloss.Width(name) - 1
+	if rule < 0 {
+		rule = 0
+	}
+	return name + " " + sepStyle.Render(strings.Repeat("─", rule))
+}
+
 func ageString(t time.Time) string {
 	if t.IsZero() {
 		return ""

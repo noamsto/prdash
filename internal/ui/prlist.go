@@ -25,6 +25,7 @@ type Model struct {
 	runner          gh.Runner
 	vp              viewport.Model
 	cursor          int // indexes the section's shown set
+	cursorLine      int // display-line offset of the cursor row (headers shift it)
 	width           int
 	height          int
 	section         Section
@@ -102,18 +103,33 @@ func (m *Model) renderList() {
 	listW := l.ListWidth
 	numW := columnWidths(m.section)
 	ps, isPR := m.section.(*PRSection)
+	grouped := isPR && ps.grouped
 	var b strings.Builder
+	line, prevAuthor := 0, ""
 	for i := 0; i < m.section.Len(); i++ {
+		if grouped {
+			if a := ps.prAt(i).Author.Login; a != prevAuthor {
+				b.WriteString(groupHeader(a, listW) + "\n")
+				line++
+				prevAuthor = a
+			}
+		}
+		if i == m.cursor {
+			m.cursorLine = line
+		}
 		flag := ""
 		if isPR {
-			num := ps.prAt(i).Number
-			d, cached := m.detail[num]
+			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}
 		b.WriteString(m.section.RenderRow(i, RowOpts{
 			Width: listW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
 		}))
 		b.WriteString("\n")
+		line++
+	}
+	if m.section.Len() == 0 {
+		m.cursorLine = 0
 	}
 	m.vp.SetWidth(listW)
 	m.vp.SetHeight(l.ContentHeight)
@@ -121,20 +137,16 @@ func (m *Model) renderList() {
 	m.scrollToCursor()
 }
 
-// rowLines is the visual height of one rendered row: a single dense line.
-const rowLines = 1
-
-// scrollToCursor nudges the viewport offset only when the cursor row would fall
-// outside the visible window, so surrounding rows stay in view (no jump-to-top).
+// scrollToCursor nudges the viewport offset only when the cursor row (at its
+// display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
-	top := m.cursor * rowLines
-	bottom := top + rowLines - 1
+	top := m.cursorLine
 	off := m.vp.YOffset()
 	switch {
 	case top < off:
 		off = top
-	case bottom >= off+m.vp.Height():
-		off = bottom - m.vp.Height() + 1
+	case top >= off+m.vp.Height():
+		off = top - m.vp.Height() + 1
 	}
 	if off < 0 {
 		off = 0
