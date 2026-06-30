@@ -104,7 +104,14 @@ func (m *Model) moveCursor(delta int) {
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
-	listW := l.ListWidth
+	innerW := l.ListWidth - 2  // inside the pane's left/right border
+	innerH := l.ContentHeight - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+	if innerH < 1 {
+		innerH = 1
+	}
 	numW := columnWidths(m.section)
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
@@ -113,7 +120,7 @@ func (m *Model) renderList() {
 	for i := 0; i < m.section.Len(); i++ {
 		if grouped {
 			if a := ps.prAt(i).Author.Login; a != prevAuthor {
-				b.WriteString(groupHeader(a, listW) + "\n")
+				b.WriteString(groupHeader(a, innerW) + "\n")
 				line++
 				prevAuthor = a
 			}
@@ -127,7 +134,7 @@ func (m *Model) renderList() {
 			flag = flagGlyph(d, cached)
 		}
 		b.WriteString(m.section.RenderRow(i, RowOpts{
-			Width: listW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
+			Width: innerW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
 		}))
 		b.WriteString("\n")
 		line++
@@ -135,8 +142,8 @@ func (m *Model) renderList() {
 	if m.section.Len() == 0 {
 		m.cursorLine = 0
 	}
-	m.vp.SetWidth(listW)
-	m.vp.SetHeight(l.ContentHeight)
+	m.vp.SetWidth(innerW)
+	m.vp.SetHeight(innerH)
 	m.vp.SetContent(b.String())
 	m.scrollToCursor()
 }
@@ -564,6 +571,14 @@ func (m Model) header() string {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
 	return h
+}
+
+// listTitle is the list pane's border title: the section kind + shown count.
+func (m Model) listTitle() string {
+	if m.section.Kind() == "issue" {
+		return fmt.Sprintf("Issues · %d", m.section.Len())
+	}
+	return fmt.Sprintf("PRs · %d", m.section.Len())
 }
 
 // isMineView reports whether the active view is the "mine" preset, where every

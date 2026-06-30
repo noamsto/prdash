@@ -261,3 +261,27 @@ func TestDraftsToggleHighlightedInBar(t *testing.T) {
 		t.Fatal("the drafts toggle label should change appearance in the bar when active")
 	}
 }
+
+func TestListTitleReflectsSection(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+	if got := m.listTitle(); got != "PRs · 2" {
+		t.Fatalf("listTitle = %q, want %q", got, "PRs · 2")
+	}
+}
+
+func TestListViewportSizedForBorder(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30 // narrow (<120): single list pane, width 100
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.renderList()
+	l := computeLayout(100, 30)
+	if got := m.vp.Width(); got != l.ListWidth-2 {
+		t.Fatalf("viewport width = %d, want ListWidth-2 = %d", got, l.ListWidth-2)
+	}
+	if got := m.vp.Height(); got != l.ContentHeight-2 {
+		t.Fatalf("viewport height = %d, want ContentHeight-2 = %d", got, l.ContentHeight-2)
+	}
+}
