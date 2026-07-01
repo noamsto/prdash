@@ -2,11 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
 	"github.com/noamsto/prdash/internal/triage"
@@ -15,21 +17,37 @@ import (
 type prDetailMsg struct {
 	number int
 	detail gh.PRDetail
+	raw    []byte // cached to disk so the preview paints instantly next launch
+}
+
+// detailSchemaVer is bumped whenever PRViewArgs' --json field set changes, so a
+// stale-shaped cached detail is a clean miss.
+const detailSchemaVer = "v1"
+
+// detailKey scopes a cached PR detail by repo so #7 in one repo can't paint #7
+// in another (the shared cache file is keyed by content, not cwd).
+func detailKey(repo string, number int) string {
+	return cache.Key("prdetail", repo+"#"+strconv.Itoa(number), 0, detailSchemaVer)
 }
 
 // fetchDetailCmd lazily loads the selected PR's comments/reviews.
 func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	r, dir := m.runner, m.dir
 	return func() tea.Msg {
-		d, err := gh.FetchPRDetail(r, dir, number)
+		raw, err := r.Run(dir, gh.PRViewArgs(number)...)
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
-		return prDetailMsg{number: number, detail: d}
+		d, err := gh.ParsePRDetail(raw)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return prDetailMsg{number: number, detail: d, raw: raw}
 	}
 }
 
-// detailCmdForCursor fetches the cursor PR's detail if it isn't cached yet.
+// detailCmdForCursor refetches the cursor PR's detail unless it was already
+// refreshed this session; disk-cached (stale) detail still triggers a refetch.
 func (m *Model) detailCmdForCursor() tea.Cmd {
 	if m.runner == nil || m.section.Kind() != "pr" {
 		return nil
@@ -38,7 +56,7 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if _, cached := m.detail[v.Number]; cached {
+	if m.fresh[v.Number] {
 		return nil
 	}
 	return m.fetchDetailCmd(v.Number)
@@ -47,12 +65,13 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 // prefetchWindow bounds how many uncached PR details we fan out per settle.
 const prefetchWindow = 5
 
-// prefetchNumbers returns up to window uncached PR numbers from cursor downward.
-func prefetchNumbers(ps *PRSection, cursor int, detail map[int]gh.PRDetail, window int) []int {
+// prefetchNumbers returns up to window PR numbers from cursor downward whose
+// detail hasn't been refreshed this session yet.
+func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) []int {
 	var out []int
 	for i := cursor; i < ps.Len() && len(out) < window; i++ {
 		num := ps.prAt(i).Number
-		if _, cached := detail[num]; cached {
+		if fresh[num] {
 			continue
 		}
 		out = append(out, num)
@@ -67,7 +86,7 @@ func (m Model) prefetchCmd() tea.Cmd {
 	if !ok || m.runner == nil {
 		return nil
 	}
-	nums := prefetchNumbers(ps, m.cursor, m.detail, prefetchWindow)
+	nums := prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow)
 	if len(nums) == 0 {
 		return nil
 	}

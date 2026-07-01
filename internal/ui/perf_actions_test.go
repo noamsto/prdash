@@ -89,6 +89,37 @@ func TestWarmFiltersCoversAllPresetsCurrentFirst(t *testing.T) {
 	}
 }
 
+type stubRunner struct{}
+
+func (stubRunner) Run(string, ...string) ([]byte, error) { return []byte("[]"), nil }
+
+func TestDetailHydratesFromCacheOnLaunch(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	raw := []byte(`{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","reviewRequests":[],"comments":[],"reviews":[],"latestReviews":[],"files":[]}`)
+	c.Set(detailKey("noamsto/prdash", 7), raw)
+
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("noamsto/prdash")
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.hydrateDetail()
+
+	if _, ok := m.detail[7]; !ok {
+		t.Fatal("launch hydrate did not paint cached detail — preview would show Loading…")
+	}
+}
+
+func TestCachedDetailStillTriggersRefetch(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.SetRunner(stubRunner{})
+	m.setPRs([]gh.PR{{Number: 7}})
+	m.detail[7] = gh.PRDetail{} // painted from disk cache, but not refreshed this session
+
+	if cmd := m.detailCmdForCursor(); cmd == nil {
+		t.Fatal("stale (non-fresh) cursor detail must still refetch to revalidate")
+	}
+}
+
 func containsStr(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {

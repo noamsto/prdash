@@ -42,8 +42,9 @@ type Model struct {
 	actionFilter    textinput.Model
 	actionCursor    int
 	sel             selection
-	detail          map[int]gh.PRDetail
-	detailSeq       int // bumped on cursor move; gates the debounced detail fetch
+	detail          map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	fresh           map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	detailSeq       int                 // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded bool
 	previewN        int
 	expanded        bool
@@ -68,7 +69,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	return Model{
 		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
-		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 2,
+		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, fresh: map[int]bool{}, previewN: 2,
 		presetIdx: presetIndexFor(filter), refreshing: true,
 	}
 }
@@ -219,7 +220,37 @@ func (m *Model) hydrate() bool {
 		return false
 	}
 	m.setPRs(prs)
+	m.hydrateDetail()
 	return true
+}
+
+// hydrateDetail paints each shown PR's detail from the disk cache (leaving it
+// non-fresh, so the live prefetch still revalidates). Without this the side
+// preview and ! column show Loading… until the first gh pr view returns.
+func (m *Model) hydrateDetail() {
+	if m.cache == nil {
+		return
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return
+	}
+	for i := 0; i < ps.Len(); i++ {
+		num := ps.prAt(i).Number
+		if _, ok := m.detail[num]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(detailKey(m.repo, num))
+		if !hit {
+			continue
+		}
+		var d gh.PRDetail
+		if err := json.Unmarshal(e.Rows, &d); err != nil {
+			slog.Debug("detail cache unmarshal failed", "err", err)
+			continue
+		}
+		m.detail[num] = d
+	}
 }
 
 func (m *Model) Hydrate() { m.hydrate() }
@@ -392,6 +423,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
+		m.fresh[msg.number] = true
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+		}
 		m.renderList()
 		return m, nil
 	case detailDebounceMsg:
