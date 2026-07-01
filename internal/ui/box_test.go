@@ -65,3 +65,20 @@ func TestDropLines(t *testing.T) {
 		t.Fatalf("dropping more than present should empty: %q", got)
 	}
 }
+
+func TestModalCentersPanel(t *testing.T) {
+	panel := titledBox("body", 12, 3, "Actions")
+	out := modal(panel, 40, 11)
+	lines := strings.Split(out, "\n")
+	if len(lines) != 11 {
+		t.Fatalf("modal height = %d, want 11", len(lines))
+	}
+	for i, ln := range lines {
+		if lipgloss.Width(ln) != 40 {
+			t.Fatalf("line %d width = %d, want 40", i, lipgloss.Width(ln))
+		}
+	}
+	if !strings.Contains(out, "Actions") {
+		t.Fatalf("modal should contain the panel: %q", out)
+	}
+}

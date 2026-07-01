@@ -567,13 +567,18 @@ func (m Model) render() string {
 		var b strings.Builder
 		b.WriteString(m.actionFilter.View() + "\n")
 		for i, a := range acts {
-			cur := "  "
+			cursor := "  "
+			line := fmt.Sprintf("%-6s %s", a.Key, a.Label)
 			if i == m.actionCursor {
-				cur = "> "
+				cursor = accentStyle.Render("▸ ")
+				line = accentStyle.Render(line)
+			} else {
+				line = statusBarStyle.Render(line)
 			}
-			b.WriteString(fmt.Sprintf("%s%-6s %s\n", cur, a.Key, a.Label))
+			b.WriteString(cursor + line + "\n")
 		}
-		return b.String()
+		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(acts)+3, "Actions")
+		return modal(panel, m.width, m.height)
 	}
 	if m.filtering {
 		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()

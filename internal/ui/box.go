@@ -64,3 +64,8 @@ func titledBox(content string, w, h int, title string) string {
 		rule.Render(strings.Repeat(rb.Top, rest)+rb.TopRight)
 	return top + "\n" + body
 }
+
+// modal centers panel on a cleared w×h frame — a floating dialog.
+func modal(panel string, w, h int) string {
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, panel)
+}

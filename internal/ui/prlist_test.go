@@ -286,3 +286,16 @@ func TestListViewportSizedForBorder(t *testing.T) {
 		t.Fatalf("viewport height = %d, want ContentHeight-2 = %d", got, l.ContentHeight-2)
 	}
 }
+
+func TestActionMenuRendersAsFloatingModal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = u.(Model)
+	out := m.render()
+	if !strings.Contains(out, "Actions") || !strings.Contains(out, "╭") {
+		t.Fatalf("action menu should be a bordered floating panel titled Actions: %q", out)
+	}
+}
