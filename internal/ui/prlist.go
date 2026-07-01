@@ -685,7 +685,8 @@ func (m Model) statusBar() string {
 		accentStyle.Render("D")+statusBarStyle.Render(":")+drafts,
 		hint("q", "quit"),
 	)
-	return "  " + strings.Join(parts, "  ")
+	rule := sepStyle.Render(strings.Repeat("─", max(m.width, 1)))
+	return rule + "\n  " + strings.Join(parts, "  ")
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.

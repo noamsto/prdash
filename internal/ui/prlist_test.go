@@ -321,3 +321,13 @@ func TestLegendToggle(t *testing.T) {
 		t.Fatal("a key should close the legend")
 	}
 }
+
+func TestStatusBarHasTopRule(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	if !strings.Contains(m.statusBar(), "─") {
+		t.Fatalf("status bar should have a top rule separating it: %q", m.statusBar())
+	}
+}

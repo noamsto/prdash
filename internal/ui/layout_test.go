@@ -27,7 +27,7 @@ func TestLayoutNarrowHidesSide(t *testing.T) {
 
 func TestLayoutContentHeight(t *testing.T) {
 	l := computeLayout(160, 40)
-	if l.ContentHeight != 37 {
-		t.Fatalf("ContentHeight = %d, want 37", l.ContentHeight)
+	if l.ContentHeight != 36 {
+		t.Fatalf("ContentHeight = %d, want 36", l.ContentHeight)
 	}
 }
