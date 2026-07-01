@@ -745,8 +745,12 @@ func (m Model) render() string {
 		}
 		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
+	l := computeLayout(m.width, m.height)
+	if l.ShowSide && l.ShowPanel && !m.previewMax {
+		return m.header() + "\n" + m.renderDocked(l)
+	}
 	foot := m.statusBar()
-	if computeLayout(m.width, m.height).ShowPanel {
+	if l.ShowPanel {
 		foot = m.keysActionsPanel(m.width)
 	}
 	return m.header() + "\n" + m.renderMain() + "\n" + foot
@@ -816,25 +820,87 @@ func (m Model) legendView() string {
 // it doesn't jump around with Go's random map iteration.
 var actionOrder = []string{"enter", "m", "r", "u", "ready", "y", "Y", "o", "W"}
 
-// keysActionsPanel is the docked footer for tall terminals: a bordered box with
-// a keybinding cheatsheet and the focused PR's actions, replacing the status bar.
-func (m Model) keysActionsPanel(w int) string {
-	hint := func(k, desc string) string { return accentStyle.Render(k) + statusBarStyle.Render(" "+desc) }
-	keys := []string{
-		strings.Join([]string{hint("↑↓", "move"), hint("→", "expand"), hint("z", "max"), hint("ctrl+j/k", "scroll preview")}, "   "),
-		strings.Join([]string{hint("f", "filter"), hint("F", "author"), hint("R", "reviewers"), hint("/", "find")}, "   "),
-		strings.Join([]string{hint("space", "select"), hint("V", "all"), hint("D", "drafts"), hint("q", "quit")}, "   "),
-	}
-	var acts []string
-	for _, k := range actionOrder {
-		if a, ok := m.actions[k]; ok {
-			acts = append(acts, hint(a.Key, a.Label))
+type keyHint struct{ key, label string }
+
+// navHints is the keybinding cheatsheet shown in the docked panel's top section.
+var navHints = []keyHint{
+	{"↑↓", "move"}, {"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+	{"f", "filter"}, {"F", "author"}, {"R", "reviewers"}, {"/", "find"},
+	{"space", "select"}, {"V", "all"}, {"D", "drafts"}, {"q", "quit"},
+}
+
+func renderHint(h keyHint) string {
+	return accentStyle.Render(h.key) + statusBarStyle.Render(" "+h.label)
+}
+
+// packHints greedily lays hints across as few lines as fit within width, so the
+// panel reflows to whatever column it's docked in instead of clipping.
+func packHints(hints []keyHint, width int) []string {
+	const sep = "   "
+	var lines []string
+	cur := ""
+	for _, h := range hints {
+		s := renderHint(h)
+		switch {
+		case cur == "":
+			cur = s
+		case lipgloss.Width(cur)+lipgloss.Width(sep)+lipgloss.Width(s) > width:
+			lines = append(lines, cur)
+			cur = s
+		default:
+			cur += sep + s
 		}
 	}
-	half := (len(acts) + 1) / 2 // two stable rows so the box never changes height
-	actLines := []string{strings.Join(acts[:half], "   "), strings.Join(acts[half:], "   ")}
-	body := strings.Join(keys, "\n") + "\n" + sectionRule("actions", w-4) + "\n" + strings.Join(actLines, "\n")
-	return titledBox(body, w, panelRows, "keys")
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// panelBodyLines is the packed content (keys, a rule, then actions) for a panel
+// whose interior is innerW wide. Shared by the renderer and the height reserver
+// so the reserved rows always match what's drawn.
+func panelBodyLines(innerW int, acts []keyHint) []string {
+	lines := packHints(navHints, innerW)
+	lines = append(lines, sectionRule("actions", innerW))
+	return append(lines, packHints(acts, innerW)...)
+}
+
+// defaultActionHints is the action list computeLayout reserves space for,
+// without needing a Model.
+func defaultActionHints() []keyHint {
+	acts := action.DefaultPRActions()
+	hs := make([]keyHint, 0, len(actionOrder))
+	for _, k := range actionOrder {
+		if a, ok := acts[k]; ok {
+			hs = append(hs, keyHint{a.Key, a.Label})
+		}
+	}
+	return hs
+}
+
+// panelRowsFor is the panel's outer height (border + packed body) at a given
+// interior width.
+func panelRowsFor(innerW int) int {
+	return len(panelBodyLines(innerW, defaultActionHints())) + 2
+}
+
+// actionHints is the focused view's actions in display order.
+func (m Model) actionHints() []keyHint {
+	hs := make([]keyHint, 0, len(actionOrder))
+	for _, k := range actionOrder {
+		if a, ok := m.actions[k]; ok {
+			hs = append(hs, keyHint{a.Key, a.Label})
+		}
+	}
+	return hs
+}
+
+// keysActionsPanel is the docked footer: a bordered box with the keybinding
+// cheatsheet and the focused view's actions, sized to the given outer width.
+func (m Model) keysActionsPanel(w int) string {
+	body := strings.Join(panelBodyLines(w-2, m.actionHints()), "\n")
+	return titledBox(body, w, panelRowsFor(w-2), "keys")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:

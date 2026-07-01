@@ -282,6 +282,19 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 }
 
 // renderMain lays the bordered list and (when wide) the bordered side preview.
+// renderDocked stacks the keys/actions panel beneath the list in the left
+// column and lets the preview span the full height on the right.
+func (m Model) renderDocked(l Layout) string {
+	list := titledBox(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle())
+	panel := m.keysActionsPanel(l.ListWidth)
+	left := lipgloss.JoinVertical(lipgloss.Left, list, panel)
+
+	fullH := l.ContentHeight + l.PanelRows // list + panel, so the preview reaches the bottom
+	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, fullH, m.previewTitle())
+	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
+}
+
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	if m.previewMax && l.ShowSide {
