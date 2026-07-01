@@ -38,6 +38,7 @@ type Model struct {
 	actions         map[string]action.Action
 	pending         *action.Action
 	showActions     bool
+	showLegend      bool
 	actionFilter    textinput.Model
 	actionCursor    int
 	sel             selection
@@ -457,6 +458,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionCursor = 0
 			return m, cmd
 		}
+		if m.showLegend {
+			m.showLegend = false // any key dismisses the legend
+			return m, nil
+		}
 		switch msg.String() {
 		case "a":
 			m.showActions = true
@@ -495,6 +500,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
+		case "?":
+			m.showLegend = true
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case " ":
@@ -561,6 +569,9 @@ func (m Model) render() string {
 	}
 	if m.showPicker {
 		return m.pickerView()
+	}
+	if m.showLegend {
+		return m.legendView()
 	}
 	if m.showActions {
 		acts := filterActions(m.actions, m.actionFilter.Value())
@@ -634,6 +645,22 @@ func (m Model) cursorCard() (triage.Card, bool) {
 		return triage.Card{}, false
 	}
 	return triage.Compute(ps.prAt(m.cursor), d), true
+}
+
+// legendView is the ?-toggled glyph + key reference, as a centered modal.
+func (m Model) legendView() string {
+	rows := []string{
+		accentStyle.Render("CI / review") + statusBarStyle.Render("  ✓ pass   ✗ fail   ● running   · none"),
+		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
+		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
+		"",
+		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" copy   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
+		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
+		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
+	}
+	body := strings.Join(rows, "\n")
+	panel := titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
+	return modal(panel, m.width, m.height)
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:

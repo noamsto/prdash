@@ -299,3 +299,25 @@ func TestActionMenuRendersAsFloatingModal(t *testing.T) {
 		t.Fatalf("action menu should be a bordered floating panel titled Actions: %q", out)
 	}
 }
+
+func TestLegendToggle(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = u.(Model)
+	if !m.showLegend {
+		t.Fatal("? should open the legend")
+	}
+	out := m.render()
+	if !strings.Contains(out, "Legend") || !strings.Contains(out, "conflict") {
+		t.Fatalf("legend should explain the glyphs: %q", out)
+	}
+	u, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = u.(Model)
+	if m.showLegend {
+		t.Fatal("a key should close the legend")
+	}
+}
