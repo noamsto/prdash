@@ -163,7 +163,16 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.expandedTab = (m.expandedTab + 1) % len(expandedTabs)
 		m.renderExpanded()
 		return m, nil
-	case "shift+tab", "left", "h":
+	case "left", "h":
+		if m.expandedTab == 0 {
+			m.expanded = false
+			m.renderList()
+			return m, nil
+		}
+		m.expandedTab--
+		m.renderExpanded()
+		return m, nil
+	case "shift+tab":
 		m.expandedTab = (m.expandedTab + len(expandedTabs) - 1) % len(expandedTabs)
 		m.renderExpanded()
 		return m, nil

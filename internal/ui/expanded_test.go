@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
@@ -119,5 +120,33 @@ func TestExpandedViewShowsTabStrip(t *testing.T) {
 	}
 	if !strings.Contains(out, "#7") {
 		t.Fatalf("expanded view should show the PR number: %q", out)
+	}
+}
+
+func TestExpandedLeftOnFirstTabExits(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.width, m.height = 120, 40
+	m.expanded = true
+	m.expandedTab = 0
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m = u.(Model)
+	if m.expanded {
+		t.Fatal("h on the first tab should exit the expanded view")
+	}
+}
+
+func TestExpandedLeftOnLaterTabMovesLeft(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.width, m.height = 120, 40
+	m.expanded = true
+	m.expandedTab = 2
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m = u.(Model)
+	if !m.expanded || m.expandedTab != 1 {
+		t.Fatalf("h on a later tab should move left; expanded=%v tab=%d", m.expanded, m.expandedTab)
 	}
 }
