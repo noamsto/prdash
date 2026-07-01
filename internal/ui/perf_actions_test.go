@@ -89,6 +89,36 @@ func TestWarmFiltersCoversAllPresetsCurrentFirst(t *testing.T) {
 	}
 }
 
+func TestMembersHydrateFromCache(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	raw := []byte(`[{"login":"octocat"},{"login":"hubber"}]`)
+	c.Set(membersKey("noamsto/prdash"), raw)
+
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("noamsto/prdash")
+	m.Hydrate()
+
+	if len(m.members) != 2 || m.members[0].Login != "octocat" {
+		t.Fatalf("launch did not hydrate cached members: %+v", m.members)
+	}
+}
+
+func TestActionPaneHeightIsConstantWhileFiltering(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 120, 40
+	m.setPRs([]gh.PR{{Number: 1}})
+	m.showActions = true
+
+	full := strings.Count(m.render(), "\n")
+	m.actionFilter.SetValue("merge") // narrows to one action
+	narrowed := strings.Count(m.render(), "\n")
+
+	if full != narrowed {
+		t.Fatalf("action pane height changed with filter: %d vs %d lines", full, narrowed)
+	}
+}
+
 type stubRunner struct{}
 
 func (stubRunner) Run(string, ...string) ([]byte, error) { return []byte("[]"), nil }

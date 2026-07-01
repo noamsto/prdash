@@ -51,6 +51,8 @@ type Model struct {
 	expandedTab     int
 	loaded          bool // first live fetch has returned; distinguishes empty from loading
 	refreshing      bool // a list fetch for the current filter is in flight
+	spinning        bool // the refresh spinner tick loop is running
+	spinnerFrame    int  // advancing index into spinnerFrames
 	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool // z: preview takes full width, list hidden
 	hideDrafts      bool // D: exclude draft PRs from the board
@@ -253,7 +255,34 @@ func (m *Model) hydrateDetail() {
 	}
 }
 
-func (m *Model) Hydrate() { m.hydrate() }
+// membersSchemaVer is bumped whenever the assignable-users field set changes.
+const membersSchemaVer = "v1"
+
+// membersKey scopes the cached assignable-users list by repo.
+func membersKey(repo string) string { return cache.Key("members", repo, 0, membersSchemaVer) }
+
+// hydrateMembers paints the assignable-users list from disk so the author/
+// reviewer picker opens instantly; Init refetches once per launch to refresh it.
+func (m *Model) hydrateMembers() {
+	if m.cache == nil {
+		return
+	}
+	e, ok := m.cache.Get(membersKey(m.repo))
+	if !ok {
+		return
+	}
+	var users []gh.User
+	if err := json.Unmarshal(e.Rows, &users); err != nil {
+		slog.Debug("members cache unmarshal failed", "err", err)
+		return
+	}
+	m.members = users
+}
+
+func (m *Model) Hydrate() {
+	m.hydrate()
+	m.hydrateMembers()
+}
 
 // fetchCmd runs `gh pr list` for filter, tagging the result so a background
 // prewarm of a non-current preset lands in the cache without repainting the view.
@@ -284,6 +313,22 @@ func warmFilters(current string) []string {
 	return out
 }
 
+// spinnerFrames is the braille cycle for the header refresh indicator.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+func spinnerTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+}
+
+// startSpinner kicks the tick loop unless it is already running (one loop only).
+func (m *Model) startSpinner() tea.Cmd {
+	if m.spinning {
+		return nil
+	}
+	m.spinning = true
+	return spinnerTick()
+}
+
 // switchToFilter repoints the model at m.filter: it paints cached rows instantly
 // when the preset is warm (else clears stale rows), flags a refresh, and returns
 // the live fetch to reconcile.
@@ -296,7 +341,7 @@ func (m *Model) switchToFilter() tea.Cmd {
 	if !hit {
 		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
 	}
-	return m.fetchCmd(m.filter)
+	return tea.Batch(m.fetchCmd(m.filter), m.startSpinner())
 }
 
 // openPicker shows the member picker in the given mode, pre-checking the right
@@ -375,10 +420,12 @@ func (m *Model) confirmPicker() tea.Cmd {
 
 func (m Model) Init() tea.Cmd {
 	filters := warmFilters(m.filter)
-	cmds := make([]tea.Cmd, 0, len(filters))
+	cmds := make([]tea.Cmd, 0, len(filters)+1)
 	for _, f := range filters {
 		cmds = append(cmds, m.fetchCmd(f))
 	}
+	cmds = append(cmds, m.fetchMembersCmd()) // refresh the disk-cached members once per launch
+	cmds = append(cmds, spinnerTick())       // animate the initial-load refresh indicator
 	return tea.Batch(cmds...)
 }
 
@@ -417,6 +464,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case membersFetchedMsg:
 		m.members = msg.users
+		if m.cache != nil {
+			if raw, err := json.Marshal(msg.users); err == nil {
+				m.cache.Set(membersKey(m.repo), raw)
+			}
+		}
 		if m.showPicker {
 			m.pick.cands = msg.users
 		}
@@ -434,6 +486,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case spinnerTickMsg:
+		if !m.refreshing {
+			m.spinning = false // fetch settled; let the loop die
+			return m, nil
+		}
+		m.spinning = true
+		m.spinnerFrame++
+		return m, spinnerTick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.renderList()
@@ -667,7 +727,9 @@ func (m Model) render() string {
 			}
 			b.WriteString(cursor + line + "\n")
 		}
-		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(acts)+3, "Actions")
+		// Height keys off the full action count, not the filtered one, so the pane
+		// stays a constant size as you type instead of shrinking per keystroke.
+		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(m.actions)+3, "Actions")
 		return modal(panel, m.width, m.height)
 	}
 	if m.filtering {
@@ -694,7 +756,8 @@ func (m Model) header() string {
 	}
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
 	if m.refreshing {
-		h += dimStyle.Render(" · ⟳ refreshing")
+		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" refreshing")
 	}
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))

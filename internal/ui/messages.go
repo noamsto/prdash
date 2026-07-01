@@ -16,3 +16,7 @@ type fetchFailedMsg struct {
 type membersFetchedMsg struct{ users []gh.User }
 
 type detailDebounceMsg struct{ seq int }
+
+// spinnerTickMsg advances the header refresh spinner; the loop runs only while a
+// fetch is in flight.
+type spinnerTickMsg struct{}
