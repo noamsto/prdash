@@ -24,6 +24,18 @@ func clipLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// dropLines removes the first n lines of s (for scrolling).
+func dropLines(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	if n >= len(lines) {
+		return ""
+	}
+	return strings.Join(lines[n:], "\n")
+}
+
 // titledBox wraps content in a rounded border of OUTER size w × h, with title
 // set into the top edge. lipgloss has no native border title, so the body is
 // rendered with left/right/bottom borders only and a hand-built top line is

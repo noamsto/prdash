@@ -266,13 +266,13 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	if m.previewMax && l.ShowSide {
-		return titledBox(m.previewPane(), m.width, l.ContentHeight, m.previewTitle())
+		return titledBox(dropLines(m.previewPane(), m.previewOffset), m.width, l.ContentHeight, m.previewTitle())
 	}
 	list := titledBox(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle())
 	if !l.ShowSide {
 		return list
 	}
-	side := titledBox(m.previewPane(), l.SideWidth, l.ContentHeight, m.previewTitle())
+	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, l.ContentHeight, m.previewTitle())
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, side)
 }

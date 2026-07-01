@@ -56,3 +56,12 @@ func TestClipLines(t *testing.T) {
 		t.Fatalf("clipLines = %q, want %q", got, "a\nb")
 	}
 }
+
+func TestDropLines(t *testing.T) {
+	if got := dropLines("a\nb\nc\nd", 2); got != "c\nd" {
+		t.Fatalf("dropLines = %q, want %q", got, "c\nd")
+	}
+	if got := dropLines("a\nb", 5); got != "" {
+		t.Fatalf("dropping more than present should empty: %q", got)
+	}
+}

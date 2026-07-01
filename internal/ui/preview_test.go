@@ -178,3 +178,27 @@ func TestRenderMainWideLayoutFitsAndBordersBoth(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewScrollClampsAndResets(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 150, 40
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+
+	m.previewScrollBy(-5) // can't scroll above the top
+	if m.previewOffset != 0 {
+		t.Fatalf("scroll up at top should clamp to 0, got %d", m.previewOffset)
+	}
+	m.previewScrollBy(3)
+	if m.previewOffset != 3 {
+		t.Fatalf("scroll down should advance the offset, got %d", m.previewOffset)
+	}
+	m.moveCursor(0) // focus change resets the preview scroll
+	if m.previewOffset != 0 {
+		t.Fatalf("moving the cursor should reset preview scroll, got %d", m.previewOffset)
+	}
+}

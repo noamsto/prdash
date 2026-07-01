@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -26,6 +27,7 @@ type Model struct {
 	vp              viewport.Model
 	cursor          int // indexes the section's shown set
 	cursorLine      int // display-line offset of the cursor row (headers shift it)
+	previewOffset   int // ctrl+j/k scroll position within the side preview
 	width           int
 	height          int
 	section         Section
@@ -98,6 +100,7 @@ func (m *Model) moveCursor(delta int) {
 	if m.cursor >= n {
 		m.cursor = n - 1
 	}
+	m.previewOffset = 0
 	m.renderList()
 }
 
@@ -167,6 +170,22 @@ func (m *Model) scrollToCursor() {
 		off = 0
 	}
 	m.vp.SetYOffset(off)
+}
+
+// previewScrollBy scrolls the side preview by delta lines, clamped so the last
+// line can't scroll above the top of the pane.
+func (m *Model) previewScrollBy(delta int) {
+	m.previewOffset += delta
+	if m.previewOffset < 0 {
+		m.previewOffset = 0
+	}
+	// Clamp the upper bound based on content height
+	l := computeLayout(m.width, m.height)
+	visible := l.ContentHeight - 2 // inside the pane border
+	over := lipgloss.Height(m.previewPane()) - visible
+	if m.previewOffset > over && over >= 0 {
+		m.previewOffset = over
+	}
 }
 
 func (m *Model) applyFilter() {
@@ -449,6 +468,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchCmd(m.runner)
 		case "z":
 			m.previewMax = !m.previewMax
+			return m, nil
+		case "ctrl+j":
+			m.previewScrollBy(1)
+			return m, nil
+		case "ctrl+k":
+			m.previewScrollBy(-1)
 			return m, nil
 		case "D":
 			m.hideDrafts = !m.hideDrafts
