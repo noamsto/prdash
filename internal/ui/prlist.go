@@ -833,37 +833,51 @@ func renderHint(h keyHint) string {
 	return accentStyle.Render(h.key) + statusBarStyle.Render(" "+h.label)
 }
 
-// packHints greedily lays hints across as few lines as fit within width, so the
-// panel reflows to whatever column it's docked in instead of clipping.
-func packHints(hints []keyHint, width int) []string {
-	const sep = "   "
-	var lines []string
-	cur := ""
+// gridHints lays hints into aligned columns: every cell is padded to the widest
+// hint's width so columns line up vertically across rows (a greedy pack leaves
+// a ragged, cramped-looking grid). Reflows to as many columns as fit in width.
+func gridHints(hints []keyHint, width int) []string {
+	if len(hints) == 0 {
+		return nil
+	}
+	const gutter = 3
+	cellW := 0
 	for _, h := range hints {
-		s := renderHint(h)
-		switch {
-		case cur == "":
-			cur = s
-		case lipgloss.Width(cur)+lipgloss.Width(sep)+lipgloss.Width(s) > width:
-			lines = append(lines, cur)
-			cur = s
-		default:
-			cur += sep + s
+		if w := lipgloss.Width(renderHint(h)); w > cellW {
+			cellW = w
 		}
 	}
-	if cur != "" {
-		lines = append(lines, cur)
+	cellW += gutter
+	cols := max(1, (width+gutter)/cellW)
+	var lines []string
+	for i := 0; i < len(hints); i += cols {
+		var b strings.Builder
+		for j := i; j < i+cols && j < len(hints); j++ {
+			s := renderHint(hints[j])
+			b.WriteString(s)
+			if j < i+cols-1 && j < len(hints)-1 { // pad every cell but the row's last
+				b.WriteString(strings.Repeat(" ", cellW-lipgloss.Width(s)))
+			}
+		}
+		lines = append(lines, b.String())
 	}
 	return lines
 }
 
-// panelBodyLines is the packed content (keys, a rule, then actions) for a panel
+// panelDivider is a full-width labelled rule separating the panel's sections.
+func panelDivider(label string, width int) string {
+	name := sectionLabelStyle.Render(strings.ToUpper(label))
+	ruleLen := max(0, width-lipgloss.Width(name)-1)
+	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
+}
+
+// panelBodyLines is the grid content (keys, a rule, then actions) for a panel
 // whose interior is innerW wide. Shared by the renderer and the height reserver
 // so the reserved rows always match what's drawn.
 func panelBodyLines(innerW int, acts []keyHint) []string {
-	lines := packHints(navHints, innerW)
-	lines = append(lines, sectionRule("actions", innerW))
-	return append(lines, packHints(acts, innerW)...)
+	lines := gridHints(navHints, innerW)
+	lines = append(lines, panelDivider("actions", innerW))
+	return append(lines, gridHints(acts, innerW)...)
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
