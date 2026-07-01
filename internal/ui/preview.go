@@ -108,9 +108,9 @@ func (m Model) previewWidth() int {
 		return 40
 	}
 	if m.previewMax {
-		return m.width - 2 // full width minus the pane's left padding
+		return m.width - 2 // interior of the full-width box
 	}
-	return l.SideWidth
+	return l.SideWidth - 2
 }
 
 // identityHeader is the side card's top block: number + title, then a dim
@@ -120,6 +120,20 @@ func identityHeader(pr gh.PR) string {
 	line2 := authorStyle(pr.Author.Login).Render(pr.Author.Login) +
 		dimStyle.Render(" · "+pr.HeadRefName+" · "+ageString(pr.UpdatedAt))
 	return line1 + "\n" + line2
+}
+
+// sectionRule is a section divider: an UPPERCASE sapphire label (distinct from
+// the body text) followed by a short rule — not the full pane width.
+func sectionRule(label string, w int) string {
+	name := sectionLabelStyle.Render(strings.ToUpper(label))
+	ruleLen := 6
+	if max := w - lipgloss.Width(name) - 1; ruleLen > max {
+		ruleLen = max
+	}
+	if ruleLen < 0 {
+		ruleLen = 0
+	}
+	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
 // previewPane renders the triage card (if available) followed by the timeline,
@@ -134,20 +148,40 @@ func (m Model) previewPane() string {
 		return "Loading preview…"
 	}
 	w := m.previewWidth()
-	var parts []string
+	bw := w - 2 // body width: leave room for the 2-col section indent below
+	// A section is its label (flush) + body indented one level under it; the blank
+	// line between blocks (the join below) separates sections so they breathe.
+	section := func(label, body string) string {
+		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
+	}
+	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
-		parts = append(parts, identityHeader(pr))
-		if card := renderCard(triage.Compute(pr, d), w); card != "" {
-			parts = append(parts, strings.TrimRight(card, "\n"))
+		blocks = append(blocks, identityHeader(pr))
+		tc := triage.Compute(pr, d)
+		if card := renderCard(tc, bw); card != "" {
+			blocks = append(blocks, section("blocker", card))
 		}
-		if ci := ciLine(pr); ci != "" {
-			parts = append(parts, ci)
+		// The checks section is redundant when the blocker card is already about
+		// CI; show it only when the blocker is something else (review/conflict)
+		// that would otherwise mask failing checks.
+		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
+			if ci := ciLine(pr); ci != "" {
+				blocks = append(blocks, section("checks", ci))
+			}
 		}
 	}
-	parts = append(parts, reviewersLine(d.ReviewRequests))
-	timeline := renderTimeline(preview.Timeline(d), m.previewN, w, m.previewExpanded)
-	return strings.Join(parts, "\n") + "\n\n" + timeline
+	blocks = append(blocks, section("review", reviewLine(d)))
+	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
+	return strings.Join(blocks, "\n\n")
+}
+
+// previewTitle is the side pane's border title.
+func (m Model) previewTitle() string {
+	if v, ok := m.cursorVars(); ok && v.Number > 0 {
+		return fmt.Sprintf("#%d", v.Number)
+	}
+	return "Preview"
 }
 
 // ciLine surfaces the check rollup in the quick view independent of the triage
@@ -162,15 +196,37 @@ func ciLine(pr gh.PR) string {
 				names = append(names, c.Label())
 			}
 		}
-		s := failStyle.Render("  ✗ checks failing")
+		s := failStyle.Render("✗ checks failing")
 		if len(names) > 0 {
 			s += dimStyle.Render(": " + strings.Join(names, ", "))
 		}
 		return s
 	case "pending":
-		return pendStyle.Render("  ● checks running")
+		return pendStyle.Render("● checks running")
 	default: // pass / none — the row glyph carries it; keep the quick view calm
 		return ""
+	}
+}
+
+// reviewLine summarises the review state: who requested changes (the actionable
+// case), else who approved, else the pending requested reviewers.
+func reviewLine(d gh.PRDetail) string {
+	var changed, approved []string
+	for _, r := range d.LatestReviews {
+		switch r.State {
+		case "CHANGES_REQUESTED":
+			changed = append(changed, "@"+r.Author.Login)
+		case "APPROVED":
+			approved = append(approved, "@"+r.Author.Login)
+		}
+	}
+	switch {
+	case len(changed) > 0:
+		return failStyle.Render("✗ changes requested by " + strings.Join(changed, ", "))
+	case len(approved) > 0:
+		return passStyle.Render("✓ approved by " + strings.Join(approved, ", "))
+	default:
+		return reviewersLine(d.ReviewRequests)
 	}
 }
 
@@ -184,9 +240,9 @@ func reviewersLine(reqs []gh.ReviewRequest) string {
 		}
 	}
 	if len(logins) == 0 {
-		return pendStyle.Render("  ⚠ no reviewers")
+		return pendStyle.Render("⚠ no reviewers")
 	}
-	return dimStyle.Render("  reviewers: " + strings.Join(logins, ", "))
+	return dimStyle.Render("reviewers: " + strings.Join(logins, ", "))
 }
 
 // flagGlyph is the board's ! column: a conflict (red) or behind-base (yellow)
@@ -206,23 +262,17 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 	}
 }
 
-// renderMain lays the list and (when wide) the contained side preview together.
+// renderMain lays the bordered list and (when wide) the bordered side preview.
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
+	if m.previewMax && l.ShowSide {
+		return titledBox(dropLines(m.previewPane(), m.previewOffset), m.width, l.ContentHeight, m.previewTitle())
+	}
+	list := titledBox(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle())
 	if !l.ShowSide {
-		return m.vp.View()
+		return list
 	}
-	// z maximizes the preview to full width, hiding the list for deep reading.
-	if m.previewMax {
-		return lipgloss.NewStyle().Width(m.width).Height(l.ContentHeight).
-			MaxWidth(m.width).MaxHeight(l.ContentHeight).
-			PaddingLeft(2).Render(m.previewPane())
-	}
-	// MaxWidth/MaxHeight hard-clip the pane: Width/Height only pad up, so a long
-	// timeline or wide glamour line would otherwise overflow and scroll the list
-	// out of view. The card + reviewers line lead, so only the timeline tail clips.
-	side := lipgloss.NewStyle().Width(l.SideWidth).Height(l.ContentHeight).
-		MaxWidth(l.SideWidth).MaxHeight(l.ContentHeight).
-		PaddingLeft(2).Render(m.previewPane())
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.vp.View(), side)
+	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, l.ContentHeight, m.previewTitle())
+	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
+	return lipgloss.JoinHorizontal(lipgloss.Top, list, side)
 }

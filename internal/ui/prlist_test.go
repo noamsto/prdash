@@ -73,7 +73,7 @@ func TestViewShowsHeaderAndStatus(t *testing.T) {
 	if !strings.Contains(out, "noamsto/prdash") {
 		t.Fatalf("header should show the repo: %q", out)
 	}
-	if !strings.Contains(out, "q quit") {
+	if !strings.Contains(out, "quit") {
 		t.Fatalf("status bar should show key hints: %q", out)
 	}
 }
@@ -130,5 +130,204 @@ func TestStatusBarSurfacesRecommendedFix(t *testing.T) {
 	out := m.statusBar()
 	if !strings.Contains(out, "rerun failed") {
 		t.Fatalf("failing-checks PR should surface the rerun fix: %q", out)
+	}
+}
+
+func TestGroupedRenderEmitsHeadersAndTracksCursorLine(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+
+	ready := gh.PR{Number: 2, Title: "ready", ReviewDecision: "APPROVED",
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	ready.Author.Login = "bob"
+	waiting := gh.PR{Number: 1, Title: "waiting", ReviewDecision: "REVIEW_REQUIRED"}
+	waiting.Author.Login = "alice"
+	m.setPRs([]gh.PR{waiting, ready})
+	m.renderList()
+
+	out := m.vp.View()
+	if !strings.Contains(out, "bob") || !strings.Contains(out, "alice") {
+		t.Fatalf("grouped board should show both author headers: %q", out)
+	}
+	// display lines: 0=bob header, 1=bob's #2, 2=alice header, 3=alice's #1.
+	// cursor starts at shown row 0 (bob's PR) → line 1.
+	if m.cursorLine != 1 {
+		t.Fatalf("cursor on first row should map to line 1 (after its header), got %d", m.cursorLine)
+	}
+	m.moveCursor(1) // to shown row 1 (alice's PR), below a blank line + second header
+	// lines: 0=bob hdr, 1=bob row, 2=blank, 3=alice hdr, 4=alice row
+	if m.cursorLine != 4 {
+		t.Fatalf("cursor on second group's row should map to line 4, got %d", m.cursorLine)
+	}
+}
+
+func TestMineViewRendersFlatNoHeaders(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil) // the "mine" preset
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+	p1 := gh.PR{Number: 1, Title: "one"}
+	p1.Author.Login = "alice"
+	p2 := gh.PR{Number: 2, Title: "two"}
+	p2.Author.Login = "alice"
+	m.setPRs([]gh.PR{p1, p2})
+	m.renderList()
+	if strings.Contains(m.vp.View(), "─") {
+		t.Fatalf("mine view should render flat with no header rules: %q", m.vp.View())
+	}
+	if m.cursorLine != 0 {
+		t.Fatalf("flat board cursor at row 0 should map to line 0, got %d", m.cursorLine)
+	}
+}
+
+func TestNonMineSingleAuthorStillGroups(t *testing.T) {
+	m := NewModel("/repo", "is:open review-requested:@me", nil) // a non-"mine" preset
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+	p1 := gh.PR{Number: 1, Title: "one"}
+	p1.Author.Login = "alice"
+	p2 := gh.PR{Number: 2, Title: "two"}
+	p2.Author.Login = "alice"
+	m.setPRs([]gh.PR{p1, p2})
+	m.renderList()
+	out := m.vp.View()
+	if !strings.Contains(out, "alice") || !strings.Contains(out, "─") {
+		t.Fatalf("non-mine single-author board should group under an author header: %q", out)
+	}
+}
+
+func TestToggleHideDrafts(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30
+	d := gh.PR{Number: 1, IsDraft: true}
+	d.Author.Login = "alice"
+	r := gh.PR{Number: 2}
+	r.Author.Login = "alice"
+	m.setPRs([]gh.PR{d, r})
+	if m.section.Len() != 2 {
+		t.Fatalf("both PRs shown before toggle, got %d", m.section.Len())
+	}
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'D', Text: "D"})
+	m = u.(Model)
+	if m.section.Len() != 1 {
+		t.Fatalf("D should hide the draft, leaving 1, got %d", m.section.Len())
+	}
+	u, _ = m.Update(tea.KeyPressMsg{Code: 'D', Text: "D"})
+	m = u.(Model)
+	if m.section.Len() != 2 {
+		t.Fatalf("D again should restore the draft, got %d", m.section.Len())
+	}
+}
+
+func TestStatusTextLivesInHeaderNotKeybindingBar(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 130, 40
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "alice"
+	m.setPRs([]gh.PR{p})
+	m.hideDrafts = true
+	m.sel.toggle(0)
+
+	bar := m.statusBar()
+	if strings.Contains(bar, "selected") {
+		t.Fatalf("keybinding bar must not carry selection status text: %q", bar)
+	}
+	if !strings.Contains(bar, "quit") {
+		t.Fatalf("keybinding bar should still list core keys: %q", bar)
+	}
+	head := m.header()
+	if !strings.Contains(head, "selected") {
+		t.Fatalf("header should carry the selection count: %q", head)
+	}
+}
+
+func TestDraftsToggleHighlightedInBar(t *testing.T) {
+	mk := func(hide bool) string {
+		m := NewModel("/repo", "", nil)
+		m.SetRepo("r")
+		m.width, m.height = 130, 40
+		p := gh.PR{Number: 1, Title: "x"}
+		p.Author.Login = "alice"
+		m.setPRs([]gh.PR{p})
+		m.hideDrafts = hide
+		return m.statusBar()
+	}
+	off, on := mk(false), mk(true)
+	if !strings.Contains(off, "drafts") {
+		t.Fatalf("bar should always list the drafts toggle: %q", off)
+	}
+	if off == on {
+		t.Fatal("the drafts toggle label should change appearance in the bar when active")
+	}
+}
+
+func TestListTitleReflectsSection(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+	if got := m.listTitle(); got != "PRs · 2" {
+		t.Fatalf("listTitle = %q, want %q", got, "PRs · 2")
+	}
+}
+
+func TestListViewportSizedForBorder(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30 // narrow (<120): single list pane, width 100
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.renderList()
+	l := computeLayout(100, 30)
+	if got := m.vp.Width(); got != l.ListWidth-2 {
+		t.Fatalf("viewport width = %d, want ListWidth-2 = %d", got, l.ListWidth-2)
+	}
+	if got := m.vp.Height(); got != l.ContentHeight-2 {
+		t.Fatalf("viewport height = %d, want ContentHeight-2 = %d", got, l.ContentHeight-2)
+	}
+}
+
+func TestActionMenuRendersAsFloatingModal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = u.(Model)
+	out := m.render()
+	if !strings.Contains(out, "Actions") || !strings.Contains(out, "╭") {
+		t.Fatalf("action menu should be a bordered floating panel titled Actions: %q", out)
+	}
+}
+
+func TestLegendToggle(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = u.(Model)
+	if !m.showLegend {
+		t.Fatal("? should open the legend")
+	}
+	out := m.render()
+	if !strings.Contains(out, "Legend") || !strings.Contains(out, "conflict") {
+		t.Fatalf("legend should explain the glyphs: %q", out)
+	}
+	u, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = u.(Model)
+	if m.showLegend {
+		t.Fatal("a key should close the legend")
+	}
+}
+
+func TestStatusBarHasTopRule(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	if !strings.Contains(m.statusBar(), "─") {
+		t.Fatalf("status bar should have a top rule separating it: %q", m.statusBar())
 	}
 }

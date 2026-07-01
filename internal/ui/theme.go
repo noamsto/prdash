@@ -8,25 +8,61 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Palette roles. Concrete colors inherit the terminal's theme (lazytmux
-// Catppuccin overlay); these adaptive defaults read well on dark backgrounds.
-var (
-	titleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))           // primary text — row titles, body
-	accentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))            // blue — PR#, action keys, links
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))           // meta text — age, labels
-	sepStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))           // divider rules — recede below text
-	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))           // green
-	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))           // red
-	pendStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))           // yellow
-	selMarkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))           // mauve — multi-select ●
-	focusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))            // cyan — cursor-row left bar
-	headerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true) // bright cyan — top header + active tab
-	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-)
+// Theme is the owned palette. Roles are concrete Catppuccin hex — prdash does
+// NOT inherit the terminal theme, so mauve is mauve everywhere. Adding a flavor
+// (Latte/Frappé/Macchiato) or a dark/light toggle later is a second constructor.
+type Theme struct {
+	Accent  string // mauve — #, keys, links, headline, header/active tab
+	Header  string // mauve — top header + active tab
+	Focus   string // sky — cursor-row bar
+	Select  string // pink — multi-select ●
+	Text    string // row titles, body
+	Meta    string // age, labels, dim hints
+	Rule    string // dividers, borders
+	RowBg   string // cursor-row background
+	Pass    string // green
+	Fail    string // red
+	Pending string // yellow
+	Draft   string // peach — the [draft] tag; kept out of the author rotation
+	Section string // sapphire — section/group divider labels
+	Author  []string
+}
 
-// authorPalette: legible-on-dark hues that stay distinct from the state colors
-// (red/green/yellow) so an author tint never reads as a CI signal.
-var authorPalette = []string{"75", "114", "176", "80", "215", "139", "179", "211", "73"}
+// Mocha is the Catppuccin Mocha flavor.
+func Mocha() Theme {
+	return Theme{
+		Accent: "#cba6f7", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
+		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
+		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
+		Section: "#74c7ec",
+		// Distinct author hues — deliberately excludes mauve (accent), sky (focus),
+		// pink (select), peach (draft tag), sapphire (section labels), and the
+		// green/red/yellow state colors.
+		Author: []string{
+			"#b4befe", "#94e2d5", "#eba0ac",
+			"#f5e0dc", "#f2cdcd", "#89b4fa",
+		},
+	}
+}
+
+// theme is the active palette. A future toggle reassigns this.
+var theme = Mocha()
+
+var (
+	titleStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
+	accentStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
+	dimStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	sepStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
+	passStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))
+	failStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Fail))
+	pendStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pending))
+	selMarkStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Select))
+	focusBarStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
+	headerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
+	statusBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
+	draftTagStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
+)
 
 // authorStyle gives each login a stable color so the same person reads the same
 // everywhere. Bots are muted — they're noise, not people.
@@ -36,7 +72,7 @@ func authorStyle(login string) lipgloss.Style {
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(login))
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(authorPalette[h.Sum32()%uint32(len(authorPalette))]))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Author[h.Sum32()%uint32(len(theme.Author))]))
 }
 
 func isBot(login string) bool {

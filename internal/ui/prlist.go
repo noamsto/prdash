@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -25,6 +26,8 @@ type Model struct {
 	runner          gh.Runner
 	vp              viewport.Model
 	cursor          int // indexes the section's shown set
+	cursorLine      int // display-line offset of the cursor row (headers shift it)
+	previewOffset   int // ctrl+j/k scroll position within the side preview
 	width           int
 	height          int
 	section         Section
@@ -35,6 +38,7 @@ type Model struct {
 	actions         map[string]action.Action
 	pending         *action.Action
 	showActions     bool
+	showLegend      bool
 	actionFilter    textinput.Model
 	actionCursor    int
 	sel             selection
@@ -47,6 +51,7 @@ type Model struct {
 	loaded          bool // first live fetch has returned; distinguishes empty from loading
 	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool // z: preview takes full width, list hidden
+	hideDrafts      bool // D: exclude draft PRs from the board
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
@@ -71,6 +76,9 @@ func (m *Model) SetRepo(repo string)   { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
+		// Outside the "mine" view, group by author even with a single author, so
+		// you always see whose PRs you're looking at.
+		s.SetForceGroup(!m.isMineView())
 		s.SetPRs(prs)
 	}
 	m.applyFilter()
@@ -93,52 +101,94 @@ func (m *Model) moveCursor(delta int) {
 	if m.cursor >= n {
 		m.cursor = n - 1
 	}
+	m.previewOffset = 0
 	m.renderList()
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
-	listW := l.ListWidth
+	innerW := l.ListWidth - 2  // inside the pane's left/right border
+	innerH := l.ContentHeight - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+	if innerH < 1 {
+		innerH = 1
+	}
+	numW := columnWidths(m.section)
 	ps, isPR := m.section.(*PRSection)
+	grouped := isPR && ps.grouped
 	var b strings.Builder
+	line, prevAuthor := 0, ""
 	for i := 0; i < m.section.Len(); i++ {
+		if grouped {
+			if a := ps.prAt(i).Author.Login; a != prevAuthor {
+				if prevAuthor != "" { // blank line between groups, not above the first
+					b.WriteString("\n")
+					line++
+				}
+				b.WriteString(groupHeader(a, innerW) + "\n")
+				line++
+				prevAuthor = a
+			}
+		}
+		if i == m.cursor {
+			m.cursorLine = line
+		}
 		flag := ""
 		if isPR {
-			num := ps.prAt(i).Number
-			d, cached := m.detail[num]
+			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}
 		b.WriteString(m.section.RenderRow(i, RowOpts{
-			Width: listW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
+			Width: innerW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
 		}))
 		b.WriteString("\n")
+		line++
 	}
-	m.vp.SetWidth(listW)
-	m.vp.SetHeight(l.ContentHeight)
+	if m.section.Len() == 0 {
+		m.cursorLine = 0
+	}
+	m.vp.SetWidth(innerW)
+	m.vp.SetHeight(innerH)
 	m.vp.SetContent(b.String())
 	m.scrollToCursor()
 }
 
-// rowLines is the visual height of one rendered row: a single dense line.
-const rowLines = 1
-
-// scrollToCursor nudges the viewport offset only when the cursor row would fall
-// outside the visible window, so surrounding rows stay in view (no jump-to-top).
+// scrollToCursor nudges the viewport offset only when the cursor row (at its
+// display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
-	top := m.cursor * rowLines
-	bottom := top + rowLines - 1
+	top := m.cursorLine
 	off := m.vp.YOffset()
 	switch {
 	case top < off:
 		off = top
-	case bottom >= off+m.vp.Height():
-		off = bottom - m.vp.Height() + 1
+	case top >= off+m.vp.Height():
+		off = top - m.vp.Height() + 1
 	}
 	if off < 0 {
 		off = 0
 	}
 	m.vp.SetYOffset(off)
+}
+
+// previewScrollBy scrolls the side preview by delta lines, clamped so the last
+// line can't scroll above the top of the pane.
+func (m *Model) previewScrollBy(delta int) {
+	l := computeLayout(m.width, m.height)
+	visible := l.ContentHeight - 2 // inside the pane border
+	over := lipgloss.Height(m.previewPane()) - visible
+	if over < 0 {
+		over = 0 // content fits the pane; nothing to scroll
+	}
+	m.previewOffset += delta
+	if m.previewOffset > over {
+		m.previewOffset = over
+	}
+	if m.previewOffset < 0 {
+		m.previewOffset = 0
+	}
 }
 
 func (m *Model) applyFilter() {
@@ -408,6 +458,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionCursor = 0
 			return m, cmd
 		}
+		if m.showLegend {
+			m.showLegend = false // any key dismisses the legend
+			return m, nil
+		}
 		switch msg.String() {
 		case "a":
 			m.showActions = true
@@ -422,6 +476,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
+		case "ctrl+j":
+			m.previewScrollBy(1)
+			return m, nil
+		case "ctrl+k":
+			m.previewScrollBy(-1)
+			return m, nil
+		case "D":
+			m.hideDrafts = !m.hideDrafts
+			if ps, ok := m.section.(*PRSection); ok {
+				ps.SetHideDrafts(m.hideDrafts)
+			}
+			m.sel.clear() // the shown set changes; stale indexes would point elsewhere
+			m.applyFilter()
+			return m, nil
 		case "F":
 			return m, m.openPicker("author")
 		case "R":
@@ -432,6 +500,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
+		case "?":
+			m.showLegend = true
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case " ":
@@ -499,18 +570,26 @@ func (m Model) render() string {
 	if m.showPicker {
 		return m.pickerView()
 	}
+	if m.showLegend {
+		return m.legendView()
+	}
 	if m.showActions {
 		acts := filterActions(m.actions, m.actionFilter.Value())
 		var b strings.Builder
 		b.WriteString(m.actionFilter.View() + "\n")
 		for i, a := range acts {
-			cur := "  "
+			cursor := "  "
+			line := fmt.Sprintf("%-6s %s", a.Key, a.Label)
 			if i == m.actionCursor {
-				cur = "> "
+				cursor = accentStyle.Render("▸ ")
+				line = accentStyle.Render(line)
+			} else {
+				line = statusBarStyle.Render(line)
 			}
-			b.WriteString(fmt.Sprintf("%s%-6s %s\n", cur, a.Key, a.Label))
+			b.WriteString(cursor + line + "\n")
 		}
-		return b.String()
+		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(acts)+3, "Actions")
+		return modal(panel, m.width, m.height)
 	}
 	if m.filtering {
 		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()
@@ -534,8 +613,25 @@ func (m Model) header() string {
 	if m.presetIdx >= 0 {
 		label = defaultPresets[m.presetIdx].name
 	}
-	return headerStyle.Render("  "+m.repo) + dimStyle.Render(
-		fmt.Sprintf("   %s · %d open", label, m.section.Len()))
+	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
+	if n := m.sel.count(); n > 0 {
+		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
+	}
+	return h
+}
+
+// listTitle is the list pane's border title: the section kind + shown count.
+func (m Model) listTitle() string {
+	if m.section.Kind() == "issue" {
+		return fmt.Sprintf("Issues · %d", m.section.Len())
+	}
+	return fmt.Sprintf("PRs · %d", m.section.Len())
+}
+
+// isMineView reports whether the active view is the "mine" preset, where every
+// PR is the author's own — so grouping by author would be noise.
+func (m Model) isMineView() bool {
+	return m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.
@@ -551,17 +647,46 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	return triage.Compute(ps.prAt(m.cursor), d), true
 }
 
-// statusBar is the bottom key/context line.
+// legendView is the ?-toggled glyph + key reference, as a centered modal.
+func (m Model) legendView() string {
+	rows := []string{
+		accentStyle.Render("CI / review") + statusBarStyle.Render("  ✓ pass   ✗ fail   ● running   · none"),
+		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
+		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
+		"",
+		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" copy   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
+		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
+		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
+	}
+	body := strings.Join(rows, "\n")
+	panel := titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
+	return modal(panel, m.width, m.height)
+}
+
+// statusBar is the bottom keybinding line, in the lazytmux picker style:
+// accent key + dim ":label", space-separated. It leads with the focused PR's
+// recommended action, and a live toggle (drafts) highlights its label when
+// active — the indication lives on the key itself, not as floating status text.
 func (m Model) statusBar() string {
-	keys := "↑↓ move · → expand · z max · f filter · F author · R reviewers · / find · a actions · space select · q quit"
-	prefix := ""
-	if n := m.sel.count(); n > 0 {
-		prefix = selMarkStyle.Render(fmt.Sprintf("%d selected", n)) + " · "
+	hint := func(k, desc string) string {
+		return accentStyle.Render(k) + statusBarStyle.Render(":"+desc)
 	}
+	parts := []string{}
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
-		prefix += accentStyle.Render(card.ActionKey) + " " + card.ActionLabel + " · "
+		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
 	}
-	return statusBarStyle.Render("  " + prefix + keys)
+	drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
+	if m.hideDrafts {
+		drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
+	}
+	parts = append(parts,
+		hint("↵", "worktree"), hint("a", "actions"), hint("→", "expand"),
+		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
+		accentStyle.Render("D")+statusBarStyle.Render(":")+drafts,
+		hint("q", "quit"),
+	)
+	rule := sepStyle.Render(strings.Repeat("─", max(m.width, 1)))
+	return rule + "\n  " + strings.Join(parts, "  ")
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.

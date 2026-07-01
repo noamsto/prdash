@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
 	Width    int
+	NumWidth int // cell width for the right-aligned number column (0 = natural)
 	Focused  bool
 	Selected bool
+	Draft    bool   // dim the title; drafts sort last (see prRank)
 	Flag     string // pre-rendered ! column glyph (conflict/behind), "" when unknown
 }
 
@@ -32,25 +35,31 @@ type Section interface {
 
 // --- PR section ---
 type PRSection struct {
-	filter string
-	prs    []gh.PR
-	shown  []int
+	filter     string
+	prs        []gh.PR
+	shown      []int
+	grouped    bool // true when the board renders author headers (see setShownOrdered)
+	hideDrafts bool // when true, draft PRs are excluded from the shown set
+	forceGroup bool // group even with a single author (non-"mine" views)
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
 func (s *PRSection) Kind() string           { return "pr" }
 func (s *PRSection) Filter() string         { return s.filter }
-func (s *PRSection) SetPRs(p []gh.PR)       { s.prs = p; s.shown = allIdx(len(p)) }
+func (s *PRSection) SetPRs(p []gh.PR)       { sortPRs(p); s.prs = p; s.setShownOrdered(allIdx(len(p))) }
 func (s *PRSection) Len() int               { return len(s.shown) }
-func (s *PRSection) SetShown(idx []int)     { s.shown = idx }
+func (s *PRSection) SetShown(idx []int)     { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
+	o.Draft = p.IsDraft
+	// Author is dropped from the row: it's redundant in a single-author (flat)
+	// view and hoisted into the group header when grouped.
 	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
-		p.Author.Login, ageString(p.UpdatedAt),
+		"", ageString(p.UpdatedAt),
 		ciGlyph(p.CIState()), reviewDot(p.ReviewDecision))
 }
 
@@ -65,6 +74,107 @@ func (s *PRSection) Haystacks() []string {
 		h[i] = haystack(p)
 	}
 	return h
+}
+
+// Actionability ranks (lower sorts higher). Drafts always last.
+const (
+	rankReady = iota
+	rankChanges
+	rankFail
+	rankRunning
+	rankWaiting
+	rankDraft
+)
+
+// prRank scores a PR by how much it needs the author, using only signals that
+// are reliable from the bulk `gh pr list` (CI rollup, reviewDecision, isDraft).
+// It deliberately ignores mergeStateStatus/conflict — those are detail-derived
+// and would reshuffle the board as background prefetch lands.
+func prRank(p gh.PR) int {
+	ci := p.CIState()
+	switch {
+	case p.IsDraft:
+		return rankDraft
+	case p.ReviewDecision == "CHANGES_REQUESTED":
+		return rankChanges
+	case ci == "fail":
+		return rankFail
+	case ci == "pending":
+		return rankRunning
+	case p.ReviewDecision == "APPROVED":
+		return rankReady
+	default:
+		return rankWaiting
+	}
+}
+
+// sortPRs orders by actionability rank, ties broken most-recently-updated first.
+func sortPRs(prs []gh.PR) {
+	slices.SortStableFunc(prs, func(a, b gh.PR) int {
+		if d := prRank(a) - prRank(b); d != 0 {
+			return d
+		}
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
+}
+
+// setShownOrdered records the shown subset in display order and decides grouping.
+// idx arrives in actionability order (prs is rank-sorted; idx preserves it). With
+// ≥2 distinct authors the rows are regrouped contiguously by author so the cursor
+// still walks them top-to-bottom; with one author the flat rank order stands.
+func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
+func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
+
+func (s *PRSection) setShownOrdered(idx []int) {
+	if s.hideDrafts {
+		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool { return s.prs[i].IsDraft })
+	}
+	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
+		s.grouped = true
+		s.shown = groupByAuthor(s.prs, idx)
+		return
+	}
+	s.grouped = false
+	s.shown = idx
+}
+
+func distinctAuthors(prs []gh.PR, idx []int) int {
+	seen := map[string]struct{}{}
+	for _, i := range idx {
+		seen[prs[i].Author.Login] = struct{}{}
+	}
+	return len(seen)
+}
+
+// groupByAuthor reorders idx so each author's rows are contiguous. Groups are
+// ordered by their best (lowest) member rank, ties by login; within a group the
+// incoming (rank) order is preserved.
+func groupByAuthor(prs []gh.PR, idx []int) []int {
+	groups := map[string][]int{}
+	best := map[string]int{}
+	for _, i := range idx {
+		a := prs[i].Author.Login
+		r := prRank(prs[i])
+		if _, ok := groups[a]; !ok || r < best[a] {
+			best[a] = r
+		}
+		groups[a] = append(groups[a], i)
+	}
+	authors := make([]string, 0, len(groups))
+	for a := range groups {
+		authors = append(authors, a)
+	}
+	slices.SortStableFunc(authors, func(x, y string) int {
+		if best[x] != best[y] {
+			return best[x] - best[y]
+		}
+		return strings.Compare(x, y)
+	})
+	out := make([]int, 0, len(idx))
+	for _, a := range authors {
+		out = append(out, groups[a]...)
+	}
+	return out
 }
 
 // --- Issue section ---
@@ -148,8 +258,12 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 	if review == "" {
 		review = dimStyle.Render("·")
 	}
-	left := bar + mark + " " + ci + " " + review + " " + flag + " " + accentStyle.Render(num) + " "
-	right := authorStyle(author).Render(author) + dimStyle.Render("  "+age)
+	numCell := num
+	if o.NumWidth > 0 {
+		numCell = padNum(num, o.NumWidth)
+	}
+	left := bar + mark + " " + ci + " " + review + " " + flag + " " + accentStyle.Render(numCell) + " "
+	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2
@@ -157,16 +271,70 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 		titleRoom = 1
 	}
 	titleSt := titleStyle
-	if o.Focused {
-		titleSt = titleSt.Bold(true)
+	switch {
+	case o.Focused:
+		titleSt = titleSt.Bold(true) // the hovered row is always readable, even if draft
+	case o.Draft:
+		titleSt = dimStyle
 	}
-	titleTxt := titleSt.Render(truncate(title, titleRoom))
+	// A draft dims the whole row but paints its tag in the draft accent (peach),
+	// so the one thing that stands out on a receded row is what it is.
+	draftTag := ""
+	if o.Draft {
+		const tag = " [draft]"
+		draftTag = draftTagStyle.Render(tag)
+		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
+			titleRoom = 1
+		}
+	}
+	titleTxt := titleSt.Render(truncate(title, titleRoom)) + draftTag
 
 	gap := w - leftW - lipgloss.Width(titleTxt) - rightW
 	if gap < 1 {
 		gap = 1
 	}
-	return left + titleTxt + strings.Repeat(" ", gap) + right
+	line := left + titleTxt + strings.Repeat(" ", gap) + right
+	if o.Focused {
+		line = rowBgWrap(line, theme.RowBg)
+	}
+	return line
+}
+
+// rowBgWrap fills a composed row with a background. lipgloss ends each styled
+// segment with a full SGR reset, which also clears the background, so a single
+// outer Background paints only the first token and the trailing pad. We instead
+// re-apply the background's opening sequence (taken from lipgloss, so it honors
+// the active color profile) after every reset, filling the whole line.
+func rowBgWrap(line, bg string) string {
+	probe := lipgloss.NewStyle().Background(lipgloss.Color(bg)).Render("X")
+	set := probe[:strings.Index(probe, "X")]
+	const reset = "\x1b[m"
+	return set + strings.ReplaceAll(line, reset, reset+set) + reset
+}
+
+// padNum right-aligns a plain "#123" string to w cells; never truncates.
+func padNum(num string, w int) string {
+	if len(num) >= w {
+		return num
+	}
+	return strings.Repeat(" ", w-len(num)) + num
+}
+
+// columnWidths returns the cell width for the number column: the widest "#N"
+// across the shown set, floored at 4 ("#999").
+func columnWidths(s Section) int {
+	w := 4
+	switch x := s.(type) {
+	case *PRSection:
+		for _, i := range x.shown {
+			w = max(w, len(fmt.Sprintf("#%d", x.prs[i].Number)))
+		}
+	case *IssueSection:
+		for _, i := range x.shown {
+			w = max(w, len(fmt.Sprintf("#%d", x.issues[i].Number)))
+		}
+	}
+	return w
 }
 
 // truncate shortens a plain (unstyled) string to at most w display cells, adding
@@ -197,6 +365,20 @@ func reviewDot(decision string) string {
 	default:
 		return dimStyle.Render("·")
 	}
+}
+
+// groupHeader is an author divider: the login (bold, in its hue) + a short rule
+// — never the full row width. Visual-only; never a selectable cursor target.
+func groupHeader(author string, width int) string {
+	name := authorStyle(author).Bold(true).Render(author)
+	ruleLen := 6
+	if max := width - lipgloss.Width(name) - 1; ruleLen > max {
+		ruleLen = max
+	}
+	if ruleLen < 0 {
+		ruleLen = 0
+	}
+	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
 func ageString(t time.Time) string {

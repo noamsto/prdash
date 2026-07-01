@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -47,5 +50,201 @@ func TestPRSectionRenderRow(t *testing.T) {
 	sel := s.RenderRow(0, RowOpts{Width: 80, Selected: true})
 	if !strings.Contains(sel, "●") {
 		t.Fatalf("selected row should carry the ● marker: %q", sel)
+	}
+}
+
+func TestSetPRsSortsByActionability(t *testing.T) {
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{
+		{Number: 1, IsDraft: true},
+		{Number: 2, ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}},
+		{Number: 3, ReviewDecision: "CHANGES_REQUESTED"},
+		{Number: 4, StatusCheckRollup: []gh.Check{{Conclusion: "FAILURE"}}},
+		{Number: 5, StatusCheckRollup: []gh.Check{{Conclusion: "IN_PROGRESS"}}},
+		{Number: 6, ReviewDecision: "REVIEW_REQUIRED"},
+	})
+	var got []int
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	// ready(2) → changes(3) → fail(4) → running(5) → waiting(6) → draft(1)
+	want := []int{2, 3, 4, 5, 6, 1}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sort order = %v, want %v", got, want)
+	}
+}
+
+func TestDraftRowIsStyledDistinctly(t *testing.T) {
+	args := func(o RowOpts) string {
+		return renderItemRow(o, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+	}
+	plain := args(RowOpts{Width: 80})
+	draft := args(RowOpts{Width: 80, Draft: true})
+	if plain == draft {
+		t.Fatal("a draft row must render distinctly (dimmed) from a normal row")
+	}
+}
+
+func TestPRSectionMarksDraftRow(t *testing.T) {
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{{Number: 1, Title: "wip", IsDraft: true}})
+	normal := NewPRSection("")
+	normal.SetPRs([]gh.PR{{Number: 1, Title: "wip"}})
+	if s.RenderRow(0, RowOpts{Width: 80}) == normal.RenderRow(0, RowOpts{Width: 80}) {
+		t.Fatal("PRSection.RenderRow should style a draft PR distinctly")
+	}
+}
+
+func TestDraftRowShowsDraftTag(t *testing.T) {
+	row := func(o RowOpts) string {
+		return renderItemRow(o, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+	}
+	if got := row(RowOpts{Width: 80, Draft: true}); !strings.Contains(got, "[draft]") {
+		t.Fatalf("draft row should carry a [draft] tag: %q", got)
+	}
+	if got := row(RowOpts{Width: 80}); strings.Contains(got, "[draft]") {
+		t.Fatalf("non-draft row must not carry a [draft] tag: %q", got)
+	}
+}
+
+func TestPadNumRightAligns(t *testing.T) {
+	if got := padNum("#7", 5); got != "   #7" {
+		t.Fatalf("padNum(#7,5) = %q, want %q", got, "   #7")
+	}
+	if got := padNum("#1234", 3); got != "#1234" { // never truncates below content
+		t.Fatalf("padNum(#1234,3) = %q, want %q", got, "#1234")
+	}
+}
+
+func TestColumnWidthsUsesWidestNumber(t *testing.T) {
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{{Number: 7}, {Number: 1234}})
+	if got := columnWidths(s); got != len("#1234") {
+		t.Fatalf("columnWidths = %d, want %d", got, len("#1234"))
+	}
+}
+
+func TestPRRankApprovedFailingIsNotReady(t *testing.T) {
+	approvedFailing := gh.PR{ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "FAILURE"}}}
+	approvedPassing := gh.PR{ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	if got := prRank(approvedFailing); got != rankFail {
+		t.Errorf("approved+failing should rank as failing (%d), got %d", rankFail, got)
+	}
+	if got := prRank(approvedPassing); got != rankReady {
+		t.Errorf("approved+passing should rank as ready (%d), got %d", rankReady, got)
+	}
+}
+
+func TestSetShownOrderedGroupsByAuthorWhenMultiple(t *testing.T) {
+	a := gh.PR{Number: 1, ReviewDecision: "REVIEW_REQUIRED"} // alice, rank waiting
+	a.Author.Login = "alice"
+	b := gh.PR{Number: 2, ReviewDecision: "APPROVED",          // bob, rank ready
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	b.Author.Login = "bob"
+	a2 := gh.PR{Number: 3, ReviewDecision: "CHANGES_REQUESTED"} // alice, rank changes
+	a2.Author.Login = "alice"
+
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{a, b, a2})
+
+	if !s.grouped {
+		t.Fatal("two distinct authors should switch the section to grouped mode")
+	}
+	// bob's group leads (its best rank, ready=0, beats alice's best, changes=1).
+	// within alice's group, changes(#3) precedes waiting(#1).
+	var got []int
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	want := []int{2, 3, 1}
+	if !slices.Equal(got, want) {
+		t.Fatalf("grouped display order = %v, want %v", got, want)
+	}
+}
+
+func TestSetShownOrderedFlatWhenSingleAuthor(t *testing.T) {
+	p1 := gh.PR{Number: 1, ReviewDecision: "APPROVED",
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	p1.Author.Login = "alice"
+	p2 := gh.PR{Number: 2, ReviewDecision: "REVIEW_REQUIRED"}
+	p2.Author.Login = "alice"
+
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{p2, p1}) // unsorted input
+
+	if s.grouped {
+		t.Fatal("a single distinct author must stay flat (not grouped)")
+	}
+	// flat actionability order: ready(#1) before waiting(#2)
+	if s.prAt(0).Number != 1 || s.prAt(1).Number != 2 {
+		t.Fatalf("flat order = [%d %d], want [1 2]", s.prAt(0).Number, s.prAt(1).Number)
+	}
+}
+
+func TestPRRowOmitsInlineAuthor(t *testing.T) {
+	p := gh.PR{Number: 1, Title: "do the thing"}
+	p.Author.Login = "alice"
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{p})
+	if row := s.RenderRow(0, RowOpts{Width: 80}); strings.Contains(row, "alice") {
+		t.Fatalf("PR row must not render the author inline (it lives in the header): %q", row)
+	}
+}
+
+func TestIssueRowKeepsInlineAuthor(t *testing.T) {
+	is := gh.Issue{Number: 1, Title: "bug"}
+	is.Author.Login = "carol"
+	s := NewIssueSection("")
+	s.SetIssues([]gh.Issue{is})
+	if row := s.RenderRow(0, RowOpts{Width: 80}); !strings.Contains(row, "carol") {
+		t.Fatalf("issue row should still show its author: %q", row)
+	}
+}
+
+func TestGroupHeaderShowsAuthorAndRule(t *testing.T) {
+	h := groupHeader("alice", 40)
+	if !strings.Contains(h, "alice") {
+		t.Fatalf("group header should name the author: %q", h)
+	}
+	if !strings.Contains(h, "─") {
+		t.Fatalf("group header should draw a rule: %q", h)
+	}
+	if strings.Contains(h, "\n") {
+		t.Fatalf("group header must be a single line: %q", h)
+	}
+}
+
+func TestFocusedRowGetsBackground(t *testing.T) {
+	// the exact bg-open sequence lipgloss emits for RowBg under the active profile
+	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
+	set := probe[:strings.Index(probe, "X")]
+	row := func(o RowOpts) string {
+		return renderItemRow(o, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""))
+	}
+	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
+		t.Fatalf("focused row should carry the cursor background: %q", got)
+	}
+	if got := row(RowOpts{Width: 80}); strings.Contains(got, set) {
+		t.Fatalf("unfocused row must not carry a background: %q", got)
+	}
+}
+
+func TestSetHideDraftsExcludesDrafts(t *testing.T) {
+	d := gh.PR{Number: 1, IsDraft: true}
+	d.Author.Login = "alice"
+	r := gh.PR{Number: 2}
+	r.Author.Login = "alice"
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{d, r})
+	if s.Len() != 2 {
+		t.Fatalf("both PRs shown before hiding drafts, got %d", s.Len())
+	}
+	s.SetHideDrafts(true)
+	s.SetShown([]int{0, 1}) // re-evaluate the shown set with the flag on
+	if s.Len() != 1 {
+		t.Fatalf("draft should be excluded, got %d", s.Len())
+	}
+	if s.prAt(0).Number != 2 {
+		t.Fatalf("remaining row should be the non-draft #2, got #%d", s.prAt(0).Number)
 	}
 }

@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
@@ -42,6 +45,24 @@ func TestReviewersLine(t *testing.T) {
 	}
 }
 
+func TestReviewLineNamesWho(t *testing.T) {
+	mk := func(state string) gh.PRDetail {
+		var r gh.Review
+		r.Author.Login = "alice"
+		r.State = state
+		return gh.PRDetail{LatestReviews: []gh.Review{r}}
+	}
+	if got := reviewLine(mk("CHANGES_REQUESTED")); !strings.Contains(got, "changes requested by @alice") {
+		t.Fatalf("should name who requested changes: %q", got)
+	}
+	if got := reviewLine(mk("APPROVED")); !strings.Contains(got, "approved by @alice") {
+		t.Fatalf("should name who approved: %q", got)
+	}
+	if got := reviewLine(gh.PRDetail{ReviewRequests: []gh.ReviewRequest{{Login: "bob"}}}); !strings.Contains(got, "bob") {
+		t.Fatalf("with no reviews, should fall back to pending reviewers: %q", got)
+	}
+}
+
 func TestFlagGlyph(t *testing.T) {
 	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, false) != "" {
 		t.Fatal("uncached detail must render no flag")
@@ -57,6 +78,16 @@ func TestFlagGlyph(t *testing.T) {
 	}
 	if !strings.Contains(flagGlyph(gh.PRDetail{Mergeable: "CONFLICTING"}, true), "⚠") {
 		t.Fatal("CONFLICTING should show the conflict flag")
+	}
+}
+
+func TestSectionRule(t *testing.T) {
+	r := sectionRule("blocker", 30)
+	if !strings.Contains(r, "BLOCKER") || !strings.Contains(r, "─") {
+		t.Fatalf("section rule should show the uppercased label and a rule: %q", r)
+	}
+	if strings.Contains(r, "\n") {
+		t.Fatalf("section rule is one line: %q", r)
 	}
 }
 
@@ -79,5 +110,115 @@ func TestPrefetchNumbers(t *testing.T) {
 	all := map[int]gh.PRDetail{1: {}, 2: {}, 3: {}, 4: {}, 5: {}}
 	if n := prefetchNumbers(ps, 0, all, 3); n != nil {
 		t.Fatalf("all cached should yield nil, got %v", n)
+	}
+}
+
+func TestRenderMainBordersListPane(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 100, 30 // narrow: single bordered list pane
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.renderList()
+	out := m.renderMain()
+	if !strings.Contains(out, "╭") || !strings.Contains(out, "╯") {
+		t.Fatalf("renderMain should wrap the list in a rounded border: %q", out)
+	}
+	if !strings.Contains(out, "PRs · 1") {
+		t.Fatalf("list pane should be titled: %q", out)
+	}
+}
+
+func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
+	ansi := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	render := func(d gh.PRDetail) string {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 150, 40
+		p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
+		p.Author.Login = "a"
+		m.setPRs([]gh.PR{p})
+		m.detail[1] = d
+		m.renderList()
+		return ansi.ReplaceAllString(m.previewPane(), "")
+	}
+	// Blocker IS checks-failing → no redundant standalone "checks" section.
+	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, "\nCHECKS ─") {
+		t.Fatalf("checks section should be suppressed when the blocker is CI:\n%s", got)
+	}
+	// Blocker is a conflict that masks failing CI → checks section surfaces it.
+	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, "\nCHECKS ─") {
+		t.Fatalf("checks section should show when a conflict masks failing CI:\n%s", got)
+	}
+}
+
+func TestPreviewWidthSubtractsBorder(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40 // wide: side pane shows
+	l := computeLayout(150, 40)
+	if got := m.previewWidth(); got != l.SideWidth-2 {
+		t.Fatalf("previewWidth = %d, want SideWidth-2 = %d", got, l.SideWidth-2)
+	}
+}
+
+func TestRenderMainWideLayoutFitsAndBordersBoth(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 140, 30 // wide: list + side pane
+	p := gh.PR{Number: 1, Title: "hello"}
+	p.Author.Login = "al"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+	out := m.renderMain()
+	if n := strings.Count(out, "╭"); n < 2 {
+		t.Fatalf("wide layout should border both panes (got %d top-left corners)", n)
+	}
+	for i, ln := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(ln); w > m.width {
+			t.Fatalf("line %d width %d exceeds terminal width %d", i, w, m.width)
+		}
+	}
+}
+
+func TestPreviewScrollClampsAndResets(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 150, 6 // tiny height → preview content overflows the pane
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+
+	over := lipgloss.Height(m.previewPane()) - (computeLayout(150, 6).ContentHeight - 2)
+	if over <= 0 {
+		t.Fatalf("fixture must overflow the pane for this test; over=%d", over)
+	}
+
+	m.previewScrollBy(-5) // can't scroll above the top
+	if m.previewOffset != 0 {
+		t.Fatalf("scroll up at top should clamp to 0, got %d", m.previewOffset)
+	}
+	m.previewScrollBy(9999) // can't scroll the last line above the top
+	if m.previewOffset != over {
+		t.Fatalf("scroll down should clamp to over=%d, got %d", over, m.previewOffset)
+	}
+	m.moveCursor(0) // focus change resets the preview scroll
+	if m.previewOffset != 0 {
+		t.Fatalf("moving the cursor should reset preview scroll, got %d", m.previewOffset)
+	}
+}
+
+func TestPreviewScrollNoOpWhenContentFits(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 150, 60 // tall pane → short preview fits, nothing to scroll
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+	m.previewScrollBy(1) // must not blank the preview by scrolling past the end
+	if m.previewOffset != 0 {
+		t.Fatalf("scrolling when content fits must stay at 0, got %d", m.previewOffset)
 	}
 }

@@ -3,8 +3,9 @@ package ui
 // sideThreshold is the minimum terminal width at which the side preview shows.
 const sideThreshold = 120
 
-// chromeRows is the vertical space taken by the header + spacer + status bar.
-const chromeRows = 3
+// chromeRows is the vertical space taken by the header + spacer + status bar
+// (rule + keys = 2 rows).
+const chromeRows = 4
 
 // Layout is the computed geometry for one frame.
 type Layout struct {
