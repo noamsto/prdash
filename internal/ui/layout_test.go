@@ -26,8 +26,13 @@ func TestLayoutNarrowHidesSide(t *testing.T) {
 }
 
 func TestLayoutContentHeight(t *testing.T) {
-	l := computeLayout(160, 40)
-	if l.ContentHeight != 36 {
-		t.Fatalf("ContentHeight = %d, want 36", l.ContentHeight)
+	// Tall terminal: the docked panel is reserved, so the main area is
+	// h - spacerRows(2) - panelRows(8) = 30.
+	if l := computeLayout(160, 40); l.ContentHeight != 30 {
+		t.Fatalf("tall ContentHeight = %d, want 30", l.ContentHeight)
+	}
+	// Short terminal: no panel, so the main area is h - chromeRows(4) = 12.
+	if l := computeLayout(160, 16); l.ContentHeight != 12 {
+		t.Fatalf("short ContentHeight = %d, want 12", l.ContentHeight)
 	}
 }

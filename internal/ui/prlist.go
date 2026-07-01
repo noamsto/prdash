@@ -745,7 +745,11 @@ func (m Model) render() string {
 		}
 		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
-	return m.header() + "\n" + m.renderMain() + "\n" + m.statusBar()
+	foot := m.statusBar()
+	if computeLayout(m.width, m.height).ShowPanel {
+		foot = m.keysActionsPanel(m.width)
+	}
+	return m.header() + "\n" + m.renderMain() + "\n" + foot
 }
 
 // header is the top line: repo · filter · open count.
@@ -806,6 +810,31 @@ func (m Model) legendView() string {
 	body := strings.Join(rows, "\n")
 	panel := titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
 	return modal(panel, m.width, m.height)
+}
+
+// actionOrder is the display order for the docked panel's actions section, so
+// it doesn't jump around with Go's random map iteration.
+var actionOrder = []string{"enter", "m", "r", "u", "ready", "y", "Y", "o", "W"}
+
+// keysActionsPanel is the docked footer for tall terminals: a bordered box with
+// a keybinding cheatsheet and the focused PR's actions, replacing the status bar.
+func (m Model) keysActionsPanel(w int) string {
+	hint := func(k, desc string) string { return accentStyle.Render(k) + statusBarStyle.Render(" "+desc) }
+	keys := []string{
+		strings.Join([]string{hint("↑↓", "move"), hint("→", "expand"), hint("z", "max"), hint("ctrl+j/k", "scroll preview")}, "   "),
+		strings.Join([]string{hint("f", "filter"), hint("F", "author"), hint("R", "reviewers"), hint("/", "find")}, "   "),
+		strings.Join([]string{hint("space", "select"), hint("V", "all"), hint("D", "drafts"), hint("q", "quit")}, "   "),
+	}
+	var acts []string
+	for _, k := range actionOrder {
+		if a, ok := m.actions[k]; ok {
+			acts = append(acts, hint(a.Key, a.Label))
+		}
+	}
+	half := (len(acts) + 1) / 2 // two stable rows so the box never changes height
+	actLines := []string{strings.Join(acts[:half], "   "), strings.Join(acts[half:], "   ")}
+	body := strings.Join(keys, "\n") + "\n" + sectionRule("actions", w-4) + "\n" + strings.Join(actLines, "\n")
+	return titledBox(body, w, panelRows, "keys")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:

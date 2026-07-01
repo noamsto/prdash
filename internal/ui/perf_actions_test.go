@@ -89,6 +89,31 @@ func TestWarmFiltersCoversAllPresetsCurrentFirst(t *testing.T) {
 	}
 }
 
+func TestLayoutReservesPanelByHeight(t *testing.T) {
+	if !computeLayout(120, 50).ShowPanel {
+		t.Fatal("a tall terminal should reserve the keys/actions panel")
+	}
+	if computeLayout(120, 16).ShowPanel {
+		t.Fatal("a short terminal should fall back to the one-line status bar")
+	}
+}
+
+func TestKeysActionsPanelListsKeysAndActions(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 120, 50
+	m.setPRs([]gh.PR{{Number: 1, Title: "hi"}})
+	m.renderList()
+
+	panel := m.keysActionsPanel(m.width)
+	if !strings.Contains(panel, "move") {
+		t.Fatalf("panel missing navigation keys:\n%s", panel)
+	}
+	if !strings.Contains(panel, "worktree") { // the enter action's label
+		t.Fatalf("panel missing focused-PR actions:\n%s", panel)
+	}
+}
+
 func TestMembersHydrateFromCache(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw := []byte(`[{"login":"octocat"},{"login":"hubber"}]`)
