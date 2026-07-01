@@ -23,7 +23,7 @@ func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	return func() tea.Msg {
 		d, err := gh.FetchPRDetail(r, dir, number)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err}
 		}
 		return prDetailMsg{number: number, detail: d}
 	}

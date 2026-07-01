@@ -34,8 +34,22 @@ func clipboardText(builtin string, v action.Vars) string {
 	}
 }
 
+// PendingExec is the list of exits-TUI commands queued to run after the program
+// quits, populated only when no orchestrator handoff file is set.
+func (m Model) PendingExec() [][]string { return m.pendingExec }
+
+// queueExit routes an exits-TUI command: to the orchestrator's handoff file when
+// one is set, otherwise onto pendingExec for main to exec after the TUI closes.
+func (m *Model) queueExit(key string, argv []string) {
+	if path := os.Getenv("PRDASH_ACTION_FILE"); path != "" {
+		_ = action.AppendHandoff(path, key, argv)
+		return
+	}
+	m.pendingExec = append(m.pendingExec, argv)
+}
+
 // runAction executes a single-scope action against the cursor row. exits-tui
-// actions write the handoff file and quit; inline actions run via the runner.
+// actions hand off (or queue) the command and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
 	v, ok := m.cursorVars()
 	if !ok {
@@ -48,9 +62,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			m.err = err
 			return nil
 		}
-		if path := os.Getenv("PRDASH_ACTION_FILE"); path != "" {
-			_ = action.AppendHandoff(path, a.Key, argv)
-		}
+		m.queueExit(a.Key, argv)
 		return tea.Quit
 	}
 
@@ -63,7 +75,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		dir, branch := m.dir, v.HeadRefName
 		return func() tea.Msg {
 			if err := action.RerunFailed(r, dir, branch); err != nil {
-				return fetchFailedMsg{err}
+				return fetchFailedMsg{err: err}
 			}
 			return nil
 		}
@@ -77,7 +89,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		dir := m.dir
 		return func() tea.Msg {
 			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
-				return fetchFailedMsg{err}
+				return fetchFailedMsg{err: err}
 			}
 			return nil
 		}
@@ -117,10 +129,10 @@ func (m Model) assignReviewersCmd(number int, add, remove []string) tea.Cmd {
 	if len(remove) > 0 {
 		args = append(args, "--remove-reviewer", strings.Join(remove, ","))
 	}
-	fetch := m.fetchCmd(m.runner)
+	fetch := m.fetchCmd(m.filter)
 	return func() tea.Msg {
 		if _, err := r.Run(dir, args...); err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err}
 		}
 		return fetch()
 	}
@@ -142,7 +154,6 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 	if len(idx) == 0 {
 		idx = []int{m.cursor}
 	}
-	path := os.Getenv("PRDASH_ACTION_FILE")
 	for _, i := range idx {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -154,8 +165,8 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 			m.err = err
 			continue
 		}
-		if a.ExitsTUI && path != "" {
-			_ = action.AppendHandoff(path, a.Key, argv)
+		if a.ExitsTUI {
+			m.queueExit(a.Key, argv)
 		}
 	}
 	if a.ExitsTUI {

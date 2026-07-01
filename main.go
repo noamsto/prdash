@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
@@ -39,8 +40,28 @@ func main() {
 	m.SetRepo(repo)
 	m.Hydrate()
 
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	final, err := tea.NewProgram(m).Run()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	// Standalone fallback: with no orchestrator handoff sink, exits-TUI actions
+	// (open worktree) queue their command here to run once the alt-screen is gone.
+	if fm, ok := final.(ui.Model); ok {
+		for _, argv := range fm.PendingExec() {
+			if err := runExit(dir, argv); err != nil {
+				fmt.Fprintln(os.Stderr, "prdash:", err)
+			}
+		}
+	}
+}
+
+// runExit runs one queued exits-TUI command with the terminal attached, so an
+// interactive tool (wt switch) can prompt and its tmux hook can navigate.
+func runExit(dir string, argv []string) error {
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Dir = dir
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return c.Run()
 }

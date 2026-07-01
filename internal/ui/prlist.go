@@ -49,13 +49,15 @@ type Model struct {
 	expanded        bool
 	expandedTab     int
 	loaded          bool // first live fetch has returned; distinguishes empty from loading
+	refreshing      bool // a list fetch for the current filter is in flight
 	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool // z: preview takes full width, list hidden
 	hideDrafts      bool // D: exclude draft PRs from the board
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
-	members         []gh.User // cached assignable users for this repo
+	members         []gh.User  // cached assignable users for this repo
+	pendingExec     [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -67,7 +69,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 2,
-		presetIdx: presetIndexFor(filter),
+		presetIdx: presetIndexFor(filter), refreshing: true,
 	}
 }
 
@@ -108,7 +110,7 @@ func (m *Model) moveCursor(delta int) {
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
-	innerW := l.ListWidth - 2  // inside the pane's left/right border
+	innerW := l.ListWidth - 2 // inside the pane's left/right border
 	innerH := l.ContentHeight - 2
 	if innerW < 1 {
 		innerW = 1
@@ -202,37 +204,68 @@ func (m *Model) applyFilter() {
 	m.renderList()
 }
 
-func (m *Model) hydrate() {
+// hydrate paints rows for m.filter from the cache, reporting whether it hit.
+func (m *Model) hydrate() bool {
 	if m.cache == nil {
-		return
+		return false
 	}
 	e, ok := m.cache.Get(cache.Key("pr", m.filter, defaultLimit, schemaVer))
 	if !ok {
-		return
+		return false
 	}
 	var prs []gh.PR
 	if err := json.Unmarshal(e.Rows, &prs); err != nil {
 		slog.Debug("cache unmarshal failed", "err", err)
-		return
+		return false
 	}
 	m.setPRs(prs)
+	return true
 }
 
 func (m *Model) Hydrate() { m.hydrate() }
 
-func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
-	dir, filter := m.dir, m.filter
+// fetchCmd runs `gh pr list` for filter, tagging the result so a background
+// prewarm of a non-current preset lands in the cache without repainting the view.
+func (m Model) fetchCmd(filter string) tea.Cmd {
+	r, dir := m.runner, m.dir
 	return func() tea.Msg {
 		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err, filter: filter}
 		}
 		prs, err := gh.ParsePRs(raw)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err, filter: filter}
 		}
-		return prsFetchedMsg{prs: prs, raw: raw}
+		return prsFetchedMsg{filter: filter, prs: prs, raw: raw}
 	}
+}
+
+// warmFilters is the fetch order at launch: the current filter first (it paints
+// the view), then every other preset so a later f-switch reads a warm cache.
+func warmFilters(current string) []string {
+	out := []string{current}
+	for _, p := range defaultPresets {
+		if p.search != current {
+			out = append(out, p.search)
+		}
+	}
+	return out
+}
+
+// switchToFilter repoints the model at m.filter: it paints cached rows instantly
+// when the preset is warm (else clears stale rows), flags a refresh, and returns
+// the live fetch to reconcile.
+func (m *Model) switchToFilter() tea.Cmd {
+	m.cursor = 0
+	m.sel.clear()
+	m.refreshing = true
+	hit := m.hydrate()
+	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
+	if !hit {
+		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
+	}
+	return m.fetchCmd(m.filter)
 }
 
 // openPicker shows the member picker in the given mode, pre-checking the right
@@ -266,7 +299,7 @@ func (m Model) fetchMembersCmd() tea.Cmd {
 	return func() tea.Msg {
 		users, err := gh.FetchAssignableUsers(r, dir, repo)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err}
 		}
 		return membersFetchedMsg{users: users}
 	}
@@ -289,9 +322,7 @@ func (m *Model) confirmPicker() tea.Cmd {
 		slices.Sort(terms)
 		m.filter = "is:open " + strings.Join(terms, " ")
 		m.presetIdx = -1
-		m.cursor = 0
-		m.loaded = false
-		return m.fetchCmd(m.runner)
+		return m.switchToFilter()
 	case "reviewer":
 		v, ok := m.cursorVars()
 		if !ok {
@@ -311,7 +342,14 @@ func (m *Model) confirmPicker() tea.Cmd {
 	return nil
 }
 
-func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
+func (m Model) Init() tea.Cmd {
+	filters := warmFilters(m.filter)
+	cmds := make([]tea.Cmd, 0, len(filters))
+	for _, f := range filters {
+		cmds = append(cmds, m.fetchCmd(f))
+	}
+	return tea.Batch(cmds...)
+}
 
 // debounceDetailCmd schedules a detail fetch ~150ms out, tagged with the current
 // seq so a later move cancels it (the stale tick is ignored on arrival).
@@ -325,17 +363,25 @@ func (m Model) debounceDetailCmd() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(cache.Key("pr", msg.filter, defaultLimit, schemaVer), msg.raw)
+		}
+		if msg.filter != "" && msg.filter != m.filter {
+			return m, nil // background prewarm of another preset: cache only
+		}
+		m.refreshing = false
 		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
-		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
-		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case fetchFailedMsg:
+		if msg.filter != "" && msg.filter != m.filter {
+			return m, nil // a background prewarm failed; the current view is unaffected
+		}
+		m.refreshing = false
 		m.err = msg.err
 		return m, nil
 	case membersFetchedMsg:
@@ -395,7 +441,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				m.showPicker = false
 				return m, m.confirmPicker()
-			case " ":
+			case "space":
 				m.pick.toggleCursor()
 				return m, nil
 			case "up", "ctrl+p":
@@ -470,9 +516,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			m.presetIdx = nextPreset(max(m.presetIdx, 0))
 			m.filter = defaultPresets[m.presetIdx].search
-			m.cursor = 0
-			m.loaded = false
-			return m, m.fetchCmd(m.runner)
+			return m, m.switchToFilter()
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
@@ -505,7 +549,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case " ":
+		case "space":
 			m.sel.toggle(m.cursor)
 			m.renderList()
 			return m, nil
@@ -614,6 +658,9 @@ func (m Model) header() string {
 		label = defaultPresets[m.presetIdx].name
 	}
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
+	if m.refreshing {
+		h += dimStyle.Render(" · ⟳ refreshing")
+	}
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
