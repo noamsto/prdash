@@ -175,16 +175,18 @@ func (m *Model) scrollToCursor() {
 // previewScrollBy scrolls the side preview by delta lines, clamped so the last
 // line can't scroll above the top of the pane.
 func (m *Model) previewScrollBy(delta int) {
-	m.previewOffset += delta
-	if m.previewOffset < 0 {
-		m.previewOffset = 0
-	}
-	// Clamp the upper bound based on content height
 	l := computeLayout(m.width, m.height)
 	visible := l.ContentHeight - 2 // inside the pane border
 	over := lipgloss.Height(m.previewPane()) - visible
-	if m.previewOffset > over && over >= 0 {
+	if over < 0 {
+		over = 0 // content fits the pane; nothing to scroll
+	}
+	m.previewOffset += delta
+	if m.previewOffset > over {
 		m.previewOffset = over
+	}
+	if m.previewOffset < 0 {
+		m.previewOffset = 0
 	}
 }
 

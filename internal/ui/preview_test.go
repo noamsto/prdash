@@ -182,23 +182,43 @@ func TestRenderMainWideLayoutFitsAndBordersBoth(t *testing.T) {
 func TestPreviewScrollClampsAndResets(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("r")
-	m.width, m.height = 150, 40
+	m.width, m.height = 150, 6 // tiny height → preview content overflows the pane
 	p := gh.PR{Number: 1, Title: "x"}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
 	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 
+	over := lipgloss.Height(m.previewPane()) - (computeLayout(150, 6).ContentHeight - 2)
+	if over <= 0 {
+		t.Fatalf("fixture must overflow the pane for this test; over=%d", over)
+	}
+
 	m.previewScrollBy(-5) // can't scroll above the top
 	if m.previewOffset != 0 {
 		t.Fatalf("scroll up at top should clamp to 0, got %d", m.previewOffset)
 	}
-	m.previewScrollBy(3)
-	if m.previewOffset != 3 {
-		t.Fatalf("scroll down should advance the offset, got %d", m.previewOffset)
+	m.previewScrollBy(9999) // can't scroll the last line above the top
+	if m.previewOffset != over {
+		t.Fatalf("scroll down should clamp to over=%d, got %d", over, m.previewOffset)
 	}
 	m.moveCursor(0) // focus change resets the preview scroll
 	if m.previewOffset != 0 {
 		t.Fatalf("moving the cursor should reset preview scroll, got %d", m.previewOffset)
+	}
+}
+
+func TestPreviewScrollNoOpWhenContentFits(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 150, 60 // tall pane → short preview fits, nothing to scroll
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+	m.previewScrollBy(1) // must not blank the preview by scrolling past the end
+	if m.previewOffset != 0 {
+		t.Fatalf("scrolling when content fits must stay at 0, got %d", m.previewOffset)
 	}
 }
