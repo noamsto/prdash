@@ -43,7 +43,7 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 	switch {
 	case pr.IsDraft || mss == "DRAFT":
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
-			ActionKey: "a", ActionLabel: "Mark ready"}
+			ActionKey: "M", ActionLabel: "Mark ready"}
 	case mss == "DIRTY" || d.Mergeable == "CONFLICTING":
 		return Card{Kind: KindConflict, Headline: "Conflicts with base",
 			ActionKey: "enter", ActionLabel: "worktree to resolve"}
