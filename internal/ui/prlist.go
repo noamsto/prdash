@@ -864,20 +864,43 @@ func gridHints(hints []keyHint, width int) []string {
 	return lines
 }
 
-// panelDivider is a full-width labelled rule separating the panel's sections.
-func panelDivider(label string, width int) string {
+// panelHeader is a column heading: an uppercase label with a short trailing rule.
+func panelHeader(label string, width int) string {
 	name := sectionLabelStyle.Render(strings.ToUpper(label))
 	ruleLen := max(0, width-lipgloss.Width(name)-1)
 	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
-// panelBodyLines is the grid content (keys, a rule, then actions) for a panel
-// whose interior is innerW wide. Shared by the renderer and the height reserver
-// so the reserved rows always match what's drawn.
-func panelBodyLines(innerW int, acts []keyHint) []string {
-	lines := gridHints(navHints, innerW)
-	lines = append(lines, panelDivider("actions", innerW))
-	return append(lines, gridHints(acts, innerW)...)
+// panelSplit divides the panel interior into a keys column, a 3-wide separator
+// (space · rule · space), and an actions column.
+func panelSplit(innerW int) (leftW, rightW int) {
+	const sepW = 3
+	leftW = (innerW - sepW) / 2
+	return leftW, innerW - sepW - leftW
+}
+
+// panelColumn is a headed, grid-packed block padded to exactly w wide so the
+// column to its right lines up.
+func panelColumn(label string, hints []keyHint, w int) string {
+	lines := append([]string{panelHeader(label, w)}, gridHints(hints, w)...)
+	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
+}
+
+// panelBody lays keys on the left and actions on the right, split by a vertical
+// rule. Narrow columns collapse each side to a single vertical stack.
+func panelBody(innerW int, acts []keyHint) string {
+	lw, rw := panelSplit(innerW)
+	left := panelColumn("keys", navHints, lw)
+	right := panelColumn("actions", acts, rw)
+	h := max(lipgloss.Height(left), lipgloss.Height(right))
+	rule := sepStyle.Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " "+rule+" ", right)
+}
+
+// panelContentRows is the tallest of the two columns (each = header + grid).
+func panelContentRows(innerW int) int {
+	lw, rw := panelSplit(innerW)
+	return max(1+len(gridHints(navHints, lw)), 1+len(gridHints(defaultActionHints(), rw)))
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
@@ -893,10 +916,10 @@ func defaultActionHints() []keyHint {
 	return hs
 }
 
-// panelRowsFor is the panel's outer height (border + packed body) at a given
+// panelRowsFor is the panel's outer height (border + tallest column) at a given
 // interior width.
 func panelRowsFor(innerW int) int {
-	return len(panelBodyLines(innerW, defaultActionHints())) + 2
+	return panelContentRows(innerW) + 2
 }
 
 // actionHints is the focused view's actions in display order.
@@ -913,8 +936,7 @@ func (m Model) actionHints() []keyHint {
 // keysActionsPanel is the docked footer: a bordered box with the keybinding
 // cheatsheet and the focused view's actions, sized to the given outer width.
 func (m Model) keysActionsPanel(w int) string {
-	body := strings.Join(panelBodyLines(w-2, m.actionHints()), "\n")
-	return titledBox(body, w, panelRowsFor(w-2), "keys")
+	return titledBox(panelBody(w-2, m.actionHints()), w, panelRowsFor(w-2), "help")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:
