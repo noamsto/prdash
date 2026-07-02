@@ -114,7 +114,7 @@ func (m *Model) moveCursor(delta int) {
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
 	innerW := l.ListWidth - 2 // inside the pane's left/right border
-	innerH := l.ContentHeight - 2
+	innerH := m.contentHeight(l) - 2
 	if innerW < 1 {
 		innerW = 1
 	}
@@ -182,7 +182,7 @@ func (m *Model) scrollToCursor() {
 // line can't scroll above the top of the pane.
 func (m *Model) previewScrollBy(delta int) {
 	l := computeLayout(m.width, m.height)
-	visible := l.ContentHeight - 2 // inside the pane border
+	visible := m.contentHeight(l) - 2 // inside the pane border
 	over := lipgloss.Height(m.previewPane()) - visible
 	if over < 0 {
 		over = 0 // content fits the pane; nothing to scroll
@@ -751,7 +751,10 @@ func (m Model) render() string {
 		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
 	l := computeLayout(m.width, m.height)
-	if l.ShowSide && l.ShowPanel && !m.previewMax {
+	if m.previewMax && l.ShowSide {
+		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
+	}
+	if l.ShowSide && l.ShowPanel {
 		return m.header() + "\n" + m.renderDocked(l)
 	}
 	foot := m.statusBar()

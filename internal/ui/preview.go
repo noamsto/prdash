@@ -197,10 +197,35 @@ func (m Model) previewPane() string {
 
 // previewTitle is the side pane's border title.
 func (m Model) previewTitle() string {
+	base := "Preview"
 	if v, ok := m.cursorVars(); ok && v.Number > 0 {
-		return fmt.Sprintf("#%d", v.Number)
+		base = fmt.Sprintf("#%d", v.Number)
 	}
-	return "Preview"
+	// Zoom hides the keys/actions panel, so fold the recommended action into the
+	// title where there's room.
+	if m.previewMax {
+		if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
+			base += " · " + card.ActionLabel + " → " + card.ActionKey
+		}
+	}
+	return base
+}
+
+// contentHeight is the list/preview body height. Modes that don't dock the panel
+// (zoom, filtering, a confirm prompt) reclaim its reserved rows so the box fills
+// the frame instead of stranding the bottom border mid-screen.
+func (m Model) contentHeight(l Layout) int {
+	if !l.ShowPanel {
+		return l.ContentHeight
+	}
+	switch {
+	case m.previewMax:
+		return l.ContentHeight + l.PanelRows
+	case m.filtering || m.pending != nil:
+		return l.ContentHeight + l.PanelRows - 1 // minus the prompt/filter input line
+	default:
+		return l.ContentHeight
+	}
 }
 
 // ciLine surfaces the check rollup in the quick view independent of the triage
@@ -297,14 +322,15 @@ func (m Model) renderDocked(l Layout) string {
 
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
+	ch := m.contentHeight(l)
 	if m.previewMax && l.ShowSide {
-		return titledBox(dropLines(m.previewPane(), m.previewOffset), m.width, l.ContentHeight, m.previewTitle())
+		return titledBox(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle())
 	}
-	list := titledBox(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle())
+	list := titledBox(m.vp.View(), l.ListWidth, ch, m.listTitle())
 	if !l.ShowSide {
 		return list
 	}
-	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, l.ContentHeight, m.previewTitle())
+	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, ch, m.previewTitle())
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, side)
 }
