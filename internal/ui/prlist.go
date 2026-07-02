@@ -834,21 +834,33 @@ var navHints = []keyHint{
 	{"space", "select"}, {"V", "all"}, {"D", "drafts"}, {"q", "quit"},
 }
 
-func renderHint(h keyHint) string {
-	return accentStyle.Render(h.key) + statusBarStyle.Render(" "+h.label)
-}
-
 // gridHints lays hints into aligned columns: every cell is padded to the widest
 // hint's width so columns line up vertically across rows (a greedy pack leaves
 // a ragged, cramped-looking grid). Reflows to as many columns as fit in width.
-func gridHints(hints []keyHint, width int) []string {
+func gridHints(hints []keyHint, width int, alignKeys bool) []string {
 	if len(hints) == 0 {
 		return nil
+	}
+	// alignKeys pads every key to the widest so the labels line up in a column.
+	keyW := 0
+	if alignKeys {
+		for _, h := range hints {
+			if w := lipgloss.Width(h.key); w > keyW {
+				keyW = w
+			}
+		}
+	}
+	render := func(h keyHint) string {
+		key := accentStyle.Render(h.key)
+		if pad := keyW - lipgloss.Width(h.key); pad > 0 {
+			key += strings.Repeat(" ", pad)
+		}
+		return key + statusBarStyle.Render(" "+h.label)
 	}
 	const gutter = 3
 	cellW := 0
 	for _, h := range hints {
-		if w := lipgloss.Width(renderHint(h)); w > cellW {
+		if w := lipgloss.Width(render(h)); w > cellW {
 			cellW = w
 		}
 	}
@@ -858,7 +870,7 @@ func gridHints(hints []keyHint, width int) []string {
 	for i := 0; i < len(hints); i += cols {
 		var b strings.Builder
 		for j := i; j < i+cols && j < len(hints); j++ {
-			s := renderHint(hints[j])
+			s := render(hints[j])
 			b.WriteString(s)
 			if j < i+cols-1 && j < len(hints)-1 { // pad every cell but the row's last
 				b.WriteString(strings.Repeat(" ", cellW-lipgloss.Width(s)))
@@ -884,18 +896,19 @@ func panelSplit(innerW int) (leftW, rightW int) {
 }
 
 // panelColumn is a headed, grid-packed block padded to exactly w wide so the
-// column to its right lines up.
-func panelColumn(label string, hints []keyHint, w int) string {
-	lines := append([]string{panelHeader(label)}, gridHints(hints, w)...)
+// column to its right lines up. alignKeys column-aligns the labels.
+func panelColumn(label string, hints []keyHint, w int, alignKeys bool) string {
+	lines := append([]string{panelHeader(label)}, gridHints(hints, w, alignKeys)...)
 	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
 }
 
 // panelBody lays keys on the left and actions on the right, split by a vertical
-// rule. Narrow columns collapse each side to a single vertical stack.
-func panelBody(innerW int, acts []keyHint) string {
+// rule. Narrow columns collapse each side to a single vertical stack. Action
+// labels are column-aligned; keys aren't (their widths vary too much).
+func panelBody(innerW int, actionsLabel string, acts []keyHint) string {
 	lw, rw := panelSplit(innerW)
-	left := panelColumn("keys", navHints, lw)
-	right := panelColumn("actions", acts, rw)
+	left := panelColumn("keys", navHints, lw, false)
+	right := panelColumn(actionsLabel, acts, rw, true)
 	h := max(lipgloss.Height(left), lipgloss.Height(right))
 	// Each separator line must carry its own padding — wrapping the whole
 	// multi-line rule in " "+…+" " only pads the first and last rows, jagging
@@ -906,9 +919,11 @@ func panelBody(innerW int, acts []keyHint) string {
 }
 
 // panelContentRows is the tallest of the two columns (each = header + grid).
+// Reserved against the full action set so the height is stable when batch mode
+// hides the single-only actions.
 func panelContentRows(innerW int) int {
 	lw, rw := panelSplit(innerW)
-	return max(1+len(gridHints(navHints, lw)), 1+len(gridHints(defaultActionHints(), rw)))
+	return max(1+len(gridHints(navHints, lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
@@ -930,21 +945,35 @@ func panelRowsFor(innerW int) int {
 	return panelContentRows(innerW) + 2
 }
 
-// actionHints is the focused view's actions in display order.
-func (m Model) actionHints() []keyHint {
-	hs := make([]keyHint, 0, len(actionOrder))
+// batchCapable reports whether an action operates over the whole selection —
+// the copy builtins and the per-selected worktree fan-out.
+func batchCapable(a action.Action) bool {
+	return a.Scope == "per-selected" || strings.HasPrefix(a.Command.Builtin, "copy-")
+}
+
+// actionHints is the actions shown in the panel, with a column header. With a
+// selection active the panel enters batch mode: only batch-capable actions show
+// (the single-only ones act on the cursor, not the selection, so they'd mislead).
+func (m Model) actionHints() (label string, hints []keyHint) {
+	batch := m.sel.count() > 0
 	for _, k := range actionOrder {
-		if a, ok := m.actions[k]; ok {
-			hs = append(hs, keyHint{a.Key, a.Label})
+		a, ok := m.actions[k]
+		if !ok || (batch && !batchCapable(a)) {
+			continue
 		}
+		hints = append(hints, keyHint{a.Key, a.Label})
 	}
-	return hs
+	if batch {
+		return fmt.Sprintf("batch · %d", m.sel.count()), hints
+	}
+	return "actions", hints
 }
 
 // keysActionsPanel is the docked footer: a bordered box with the keybinding
 // cheatsheet and the focused view's actions, sized to the given outer width.
 func (m Model) keysActionsPanel(w int) string {
-	return titledBox(panelBody(w-2, m.actionHints()), w, panelRowsFor(w-2), "help")
+	label, acts := m.actionHints()
+	return titledBox(panelBody(w-2, label, acts), w, panelRowsFor(w-2), "help")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:

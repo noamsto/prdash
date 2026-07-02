@@ -135,6 +135,26 @@ func TestBulkWorktreeWarnsOverFour(t *testing.T) {
 	}
 }
 
+func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 120, 50
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+
+	panel := m.keysActionsPanel(m.width)
+	if !strings.Contains(panel, "BATCH") {
+		t.Fatalf("selection should flip the panel to batch mode:\n%s", panel)
+	}
+	if !strings.Contains(panel, "Copy URL") {
+		t.Fatalf("batch mode should keep the copy actions:\n%s", panel)
+	}
+	if strings.Contains(panel, "Merge") {
+		t.Fatalf("batch mode should hide single-only actions like merge:\n%s", panel)
+	}
+}
+
 func TestLayoutReservesPanelByHeight(t *testing.T) {
 	if !computeLayout(120, 50).ShowPanel {
 		t.Fatal("a tall terminal should reserve the keys/actions panel")
