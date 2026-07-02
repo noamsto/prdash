@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,16 +24,46 @@ func (m *Model) cursorVars() (action.Vars, bool) {
 	return v, true
 }
 
-// clipboardText is the payload an OSC52 copy action writes for the focused PR.
+// clipboardText is the payload an OSC52 copy action writes for one PR.
 func clipboardText(builtin string, v action.Vars) string {
 	switch builtin {
 	case "copy-url":
 		return v.URL
 	case "copy-branch":
 		return v.Branch
+	case "copy-number":
+		return fmt.Sprintf("#%d", v.Number)
 	default:
 		return ""
 	}
+}
+
+// selectedOrCursor returns the selected row indices (sorted), or the cursor row
+// when nothing is selected.
+func (m *Model) selectedOrCursor() []int {
+	idx := m.sel.indices()
+	if len(idx) == 0 {
+		return []int{m.cursor}
+	}
+	slices.Sort(idx)
+	return idx
+}
+
+// copyPayload joins the clipboard text for every selected row (or the cursor),
+// so the copy actions grab the whole selection at once.
+func (m *Model) copyPayload(builtin string) string {
+	var lines []string
+	for _, i := range m.selectedOrCursor() {
+		if i < 0 || i >= m.section.Len() {
+			continue
+		}
+		v := m.section.VarsAt(i)
+		v.Repo = m.repo
+		if s := clipboardText(builtin, v); s != "" {
+			lines = append(lines, s)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // PendingExec is the list of exits-TUI commands queued to run after the program
@@ -67,8 +99,8 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	}
 
 	switch a.Command.Builtin {
-	case "copy-url", "copy-branch":
-		text := clipboardText(a.Command.Builtin, v)
+	case "copy-url", "copy-branch", "copy-number":
+		text := m.copyPayload(a.Command.Builtin)
 		return func() tea.Msg { print(action.OSC52(text)); return nil }
 	case "rerun-failed":
 		r := m.runner
@@ -144,7 +176,24 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	if !yes || a == nil {
 		return nil
 	}
+	if a.Scope == "per-selected" {
+		return m.runBulk(*a)
+	}
 	return m.runAction(*a)
+}
+
+// bulkWarnThreshold is the selection size above which a worktree fan-out prompts
+// first — opening a windowful of worktrees at once is rarely intended.
+const bulkWarnThreshold = 4
+
+// startBulk runs a per-selected action, first prompting when it would open more
+// than bulkWarnThreshold worktrees.
+func (m *Model) startBulk(a action.Action) tea.Cmd {
+	if a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold {
+		m.pending = &a
+		return nil
+	}
+	return m.runBulk(a)
 }
 
 // runBulk applies a per-selected action to each selected row (or the cursor row

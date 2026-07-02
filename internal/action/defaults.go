@@ -14,6 +14,8 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Builtin: "copy-url"}, Scope: "single"},
 		"Y": {Key: "Y", Label: "Copy branch",
 			Command: Command{Builtin: "copy-branch"}, Scope: "single"},
+		"#": {Key: "#", Label: "Copy PR #",
+			Command: Command{Builtin: "copy-number"}, Scope: "single"},
 		"o": {Key: "o", Label: "Open in browser",
 			Command: Command{Argv: []string{"gh", "pr", "view", "{{.Number}}", "--web"}}, Scope: "single"},
 		"W": {Key: "W", Label: "Bulk worktrees",

@@ -574,7 +574,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i >= 0 && i < len(acts) {
 					a := acts[i]
 					if a.Scope == "per-selected" {
-						return m, m.runBulk(a)
+						return m, m.startBulk(a)
 					}
 					if a.Confirm {
 						m.pending = &a
@@ -675,7 +675,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
-					return m, m.runBulk(a)
+					return m, m.startBulk(a)
 				}
 				if a.Confirm {
 					m.pending = &a
@@ -699,12 +699,17 @@ func (m Model) render() string {
 		return m.expandedView()
 	}
 	if m.pending != nil {
-		n := 0
-		if v, ok := m.cursorVars(); ok {
-			n = v.Number
+		prompt := ""
+		if m.pending.Scope == "per-selected" {
+			prompt = fmt.Sprintf("%s for %d PRs? y/N", m.pending.Label, len(m.selectedOrCursor()))
+		} else {
+			n := 0
+			if v, ok := m.cursorVars(); ok {
+				n = v.Number
+			}
+			prompt = fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)
 		}
-		return m.header() + "\n" + accentStyle.Render(fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)) +
-			"\n" + m.renderMain()
+		return m.header() + "\n" + accentStyle.Render(prompt) + "\n" + m.renderMain()
 	}
 	if m.showPicker {
 		return m.pickerView()
@@ -818,7 +823,7 @@ func (m Model) legendView() string {
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "r", "u", "ready", "y", "Y", "o", "W"}
+var actionOrder = []string{"enter", "m", "r", "u", "ready", "y", "Y", "#", "o", "W"}
 
 type keyHint struct{ key, label string }
 

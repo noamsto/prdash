@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -86,6 +87,51 @@ func TestWarmFiltersCoversAllPresetsCurrentFirst(t *testing.T) {
 		if !containsStr(got, p.search) {
 			t.Fatalf("preset %q missing from warm list %v", p.search, got)
 		}
+	}
+}
+
+func TestBatchCopyJoinsSelectedRows(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.setPRs([]gh.PR{{Number: 1, URL: "u1"}, {Number: 2, URL: "u2"}, {Number: 3, URL: "u3"}})
+	m.sel.toggle(0)
+	m.sel.toggle(2)
+
+	if got := m.copyPayload("copy-url"); got != "u1\nu3" {
+		t.Fatalf("batch copy = %q, want %q", got, "u1\nu3")
+	}
+}
+
+func TestCopyNumberPayload(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.setPRs([]gh.PR{{Number: 2443}})
+	if got := m.copyPayload("copy-number"); got != "#2443" {
+		t.Fatalf("copy-number = %q, want #2443", got)
+	}
+}
+
+func TestBulkWorktreeWarnsOverFour(t *testing.T) {
+	t.Setenv("PRDASH_ACTION_FILE", "")
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 120, 40
+	prs := make([]gh.PR, 6)
+	for i := range prs {
+		prs[i] = gh.PR{Number: i + 1, HeadRefName: fmt.Sprintf("b%d", i)}
+	}
+	m.setPRs(prs)
+	for i := 0; i < 5; i++ {
+		m.sel.toggle(i)
+	}
+
+	W := m.actions["W"]
+	if cmd := m.startBulk(W); cmd != nil || m.pending == nil {
+		t.Fatal("opening 5 worktrees should prompt before running")
+	}
+	m.confirmAnswer(true)
+	if len(m.pendingExec) != 5 {
+		t.Fatalf("after confirm want 5 worktree commands queued, got %d", len(m.pendingExec))
 	}
 }
 

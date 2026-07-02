@@ -45,7 +45,11 @@ go build -o prdash . && ./prdash
 | `a` | actions menu · `?` legend · `q` quit |
 | `enter` | open a git worktree for the focused PR |
 | `m` merge · `r` rerun · `u` update · `ready` mark ready | act on the focused PR |
-| `y` copy URL · `Y` copy branch · `o` open in browser | |
+| `y` copy URL · `Y` copy branch · `#` copy PR number · `o` open in browser | |
+
+Select multiple PRs with `space` and the copy actions (`y` `Y` `#`) grab the
+whole selection at once; `W` opens a worktree for each (prompting first if that's
+more than four).
 
 On a wide terminal the preview shows beside the list and a keys/actions panel
 docks under it; narrow terminals drop the preview and show a compact status bar.
