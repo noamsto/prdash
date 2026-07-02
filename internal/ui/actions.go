@@ -103,29 +103,36 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		text := m.copyPayload(a.Command.Builtin)
 		return func() tea.Msg { print(action.OSC52(text)); return nil }
 	case "rerun-failed":
-		r := m.runner
-		dir, branch := m.dir, v.HeadRefName
-		return func() tea.Msg {
-			if err := action.RerunFailed(r, dir, branch); err != nil {
-				return fetchFailedMsg{err: err}
-			}
-			return nil
-		}
+		r, dir, branch, label := m.runner, m.dir, v.HeadRefName, a.Label
+		m.actionStatus = &actionStat{label: label}
+		return tea.Batch(func() tea.Msg {
+			return actionDoneMsg{label: label, err: action.RerunFailed(r, dir, branch)}
+		}, m.startSpinner())
 	default: // argv (e.g. gh pr merge)
 		argv, err := a.ExpandArgv(v)
 		if err != nil {
 			m.err = err
 			return nil
 		}
-		r := m.runner
-		dir := m.dir
-		return func() tea.Msg {
-			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
-				return fetchFailedMsg{err: err}
-			}
-			return nil
-		}
+		r, dir, label := m.runner, m.dir, a.Label
+		m.actionStatus = &actionStat{label: label}
+		return tea.Batch(func() tea.Msg {
+			_, err := r.Run(dir, argv[1:]...) // argv[0]=="gh"
+			return actionDoneMsg{label: label, err: err}
+		}, m.startSpinner())
 	}
+}
+
+// actionStat is an inline action's transient progress, surfaced by the header.
+type actionStat struct {
+	label string
+	done  bool
+	err   error
+}
+
+// actionRunning reports whether an inline action is still in flight.
+func (m Model) actionRunning() bool {
+	return m.actionStatus != nil && !m.actionStatus.done
 }
 
 // reviewerDiff compares the currently-requested reviewers against the picked

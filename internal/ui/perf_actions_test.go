@@ -90,6 +90,36 @@ func TestWarmFiltersCoversAllPresetsCurrentFirst(t *testing.T) {
 	}
 }
 
+func TestInlineActionShowsFeedback(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.SetRunner(stubRunner{})
+	m.width, m.height = 120, 40
+	m.setPRs([]gh.PR{{Number: 1}})
+	m.renderList()
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"}) // update-branch (inline argv)
+	m = u.(Model)
+	if !m.actionRunning() {
+		t.Fatal("dispatching an inline action should show it running")
+	}
+
+	u, _ = m.Update(actionDoneMsg{label: "Update branch", err: nil})
+	m = u.(Model)
+	if m.actionRunning() || m.actionStatus == nil {
+		t.Fatal("completion should mark the status done, not running")
+	}
+	if !strings.Contains(m.render(), "Update branch") {
+		t.Fatalf("header should surface the finished action:\n%s", m.render())
+	}
+
+	u, _ = m.Update(actionClearMsg{})
+	m = u.(Model)
+	if m.actionStatus != nil {
+		t.Fatal("clear should drop the settled status")
+	}
+}
+
 func TestBatchCopyJoinsSelectedRows(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")

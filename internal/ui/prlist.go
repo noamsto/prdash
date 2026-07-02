@@ -49,13 +49,14 @@ type Model struct {
 	previewN        int
 	expanded        bool
 	expandedTab     int
-	loaded          bool // first live fetch has returned; distinguishes empty from loading
-	refreshing      bool // a list fetch for the current filter is in flight
-	spinning        bool // the refresh spinner tick loop is running
-	spinnerFrame    int  // advancing index into spinnerFrames
-	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
-	previewMax      bool // z: preview takes full width, list hidden
-	hideDrafts      bool // D: exclude draft PRs from the board
+	loaded          bool        // first live fetch has returned; distinguishes empty from loading
+	refreshing      bool        // a list fetch for the current filter is in flight
+	spinning        bool        // the refresh spinner tick loop is running
+	spinnerFrame    int         // advancing index into spinnerFrames
+	actionStatus    *actionStat // transient inline-action progress shown by the header
+	presetIdx       int         // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax      bool        // z: preview takes full width, list hidden
+	hideDrafts      bool        // D: exclude draft PRs from the board
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
@@ -487,13 +488,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case spinnerTickMsg:
-		if !m.refreshing {
-			m.spinning = false // fetch settled; let the loop die
+		if !m.refreshing && !m.actionRunning() {
+			m.spinning = false // fetch/action settled; let the loop die
 			return m, nil
 		}
 		m.spinning = true
 		m.spinnerFrame++
 		return m, spinnerTick()
+	case actionDoneMsg:
+		// Scope the error to the status line rather than m.err, which blanks the board.
+		m.actionStatus = &actionStat{label: msg.label, done: true, err: msg.err}
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+	case actionClearMsg:
+		if m.actionStatus != nil && m.actionStatus.done {
+			m.actionStatus = nil
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.renderList()
@@ -774,6 +784,17 @@ func (m Model) header() string {
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" refreshing")
+	}
+	if s := m.actionStatus; s != nil {
+		switch {
+		case !s.done:
+			spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+			h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" "+s.label+"…")
+		case s.err != nil:
+			h += dimStyle.Render(" · ") + failStyle.Render("✗ "+s.label)
+		default:
+			h += dimStyle.Render(" · ") + passStyle.Render("✓ "+s.label)
+		}
 	}
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))

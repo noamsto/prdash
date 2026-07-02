@@ -20,3 +20,13 @@ type detailDebounceMsg struct{ seq int }
 // spinnerTickMsg advances the header refresh spinner; the loop runs only while a
 // fetch is in flight.
 type spinnerTickMsg struct{}
+
+// actionDoneMsg reports an inline action's completion so the header can show
+// success/failure.
+type actionDoneMsg struct {
+	label string
+	err   error
+}
+
+// actionClearMsg wipes a settled action status after its dwell time.
+type actionClearMsg struct{}
