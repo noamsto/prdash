@@ -8,6 +8,13 @@ type prsFetchedMsg struct {
 	raw    []byte
 }
 
+// mineFetchedMsg carries both halves of the "mine" view (authored +
+// review-requested) so it can render them as two sections.
+type mineFetchedMsg struct {
+	mine, review       []gh.PR
+	mineRaw, reviewRaw []byte
+}
+
 type fetchFailedMsg struct {
 	err    error
 	filter string // set for list fetches; a background prewarm failure is dropped

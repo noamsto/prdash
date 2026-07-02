@@ -32,8 +32,8 @@ func TestSpaceTogglesSelection(t *testing.T) {
 
 func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
-	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-review"}})
-	c.Set(cache.Key("pr", "is:open review-requested:@me", defaultLimit, schemaVer), raw)
+	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-all"}})
+	c.Set(cache.Key("pr", "is:open", defaultLimit, schemaVer), raw)
 
 	m := NewModel("/repo", "is:open author:@me", c)
 	m.SetRepo("x")
@@ -41,10 +41,10 @@ func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 1, Title: "mine"}}) // current preset's rows
 	m.renderList()
 
-	u, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"}) // mine → all
 	m = u.(Model)
 
-	if m.filter != "is:open review-requested:@me" {
+	if m.filter != "is:open" {
 		t.Fatalf("filter=%q", m.filter)
 	}
 	ps := m.section.(*PRSection)
@@ -75,18 +75,23 @@ func TestBackgroundFetchCachesWithoutClobbering(t *testing.T) {
 	}
 }
 
-func TestWarmFiltersCoversAllPresetsCurrentFirst(t *testing.T) {
-	got := warmFilters("is:open review-requested:@me")
-	if len(got) != len(defaultPresets) {
-		t.Fatalf("warmFilters returned %d filters, want %d", len(got), len(defaultPresets))
+func TestMineViewSections(t *testing.T) {
+	m := NewModel("/repo", mineFilter, nil)
+	m.SetRepo("x")
+	m.width, m.height = 130, 40
+	m.setMine(
+		[]gh.PR{{Number: 1, Title: "my pr"}, {Number: 2, Title: "also mine"}},
+		[]gh.PR{{Number: 2, Title: "also mine"}, {Number: 9, Title: "please review"}}, // #2 authored+requested → stays Mine
+	)
+	m.renderList()
+
+	ps := m.section.(*PRSection)
+	if ps.Len() != 3 {
+		t.Fatalf("deduped mine view should show 3 PRs, got %d", ps.Len())
 	}
-	if got[0] != "is:open review-requested:@me" {
-		t.Fatalf("current filter should be warmed first, got %q", got[0])
-	}
-	for _, p := range defaultPresets {
-		if !containsStr(got, p.search) {
-			t.Fatalf("preset %q missing from warm list %v", p.search, got)
-		}
+	out := m.render()
+	if !strings.Contains(out, "Mine") || !strings.Contains(out, "Review requested") {
+		t.Fatalf("mine view should show both section headers:\n%s", out)
 	}
 }
 
@@ -269,15 +274,6 @@ func TestCachedDetailStillTriggersRefetch(t *testing.T) {
 	if cmd := m.detailCmdForCursor(); cmd == nil {
 		t.Fatal("stale (non-fresh) cursor detail must still refetch to revalidate")
 	}
-}
-
-func containsStr(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestExitActionWithoutHandoffQueuesExec(t *testing.T) {

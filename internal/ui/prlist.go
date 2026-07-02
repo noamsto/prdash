@@ -93,6 +93,31 @@ func (m *Model) setPRs(prs []gh.PR) {
 	}
 }
 
+// setMine paints the mine view: authored PRs under "Mine", review-requested
+// under "Review requested". A PR that is both stays under Mine.
+func (m *Model) setMine(mine, review []gh.PR) {
+	cats := make(map[int]string, len(mine)+len(review))
+	all := make([]gh.PR, 0, len(mine)+len(review))
+	for _, p := range mine {
+		cats[p.Number] = "Mine"
+		all = append(all, p)
+	}
+	for _, p := range review {
+		if _, dup := cats[p.Number]; dup {
+			continue
+		}
+		cats[p.Number] = "Review requested"
+		all = append(all, p)
+	}
+	if s, ok := m.section.(*PRSection); ok {
+		s.SetCategorized(all, cats, []string{"Mine", "Review requested"})
+	}
+	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n {
+		m.cursor = max(0, n-1)
+	}
+}
+
 // moveCursor clamps the cursor to the shown set and keeps it visible.
 func (m *Model) moveCursor(delta int) {
 	n := m.section.Len()
@@ -126,17 +151,17 @@ func (m *Model) renderList() {
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
 	var b strings.Builder
-	line, prevAuthor := 0, ""
+	line, prevGroup := 0, ""
 	for i := 0; i < m.section.Len(); i++ {
 		if grouped {
-			if a := ps.prAt(i).Author.Login; a != prevAuthor {
-				if prevAuthor != "" { // blank line between groups, not above the first
+			if g := ps.groupLabel(i); g != prevGroup {
+				if prevGroup != "" { // blank line between groups, not above the first
 					b.WriteString("\n")
 					line++
 				}
-				b.WriteString(groupHeader(a, innerW) + "\n")
+				b.WriteString(groupHeader(g, innerW) + "\n")
 				line++
-				prevAuthor = a
+				prevGroup = g
 			}
 		}
 		if i == m.cursor {
@@ -208,18 +233,38 @@ func (m *Model) applyFilter() {
 	m.renderList()
 }
 
-// hydrate paints rows for m.filter from the cache, reporting whether it hit.
-func (m *Model) hydrate() bool {
-	if m.cache == nil {
-		return false
-	}
-	e, ok := m.cache.Get(cache.Key("pr", m.filter, defaultLimit, schemaVer))
+// cachedPRs returns the cached PR list for a filter, if present and parseable.
+func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
+	e, ok := m.cache.Get(cache.Key("pr", filter, defaultLimit, schemaVer))
 	if !ok {
-		return false
+		return nil, false
 	}
 	var prs []gh.PR
 	if err := json.Unmarshal(e.Rows, &prs); err != nil {
 		slog.Debug("cache unmarshal failed", "err", err)
+		return nil, false
+	}
+	return prs, true
+}
+
+// hydrate paints rows for the current view from the cache, reporting whether it
+// hit. The mine view combines the two cached searches into its sections.
+func (m *Model) hydrate() bool {
+	if m.cache == nil {
+		return false
+	}
+	if m.isMineView() {
+		mine, ok1 := m.cachedPRs(mineFilter)
+		rev, ok2 := m.cachedPRs(reviewFilter)
+		if !ok1 && !ok2 {
+			return false
+		}
+		m.setMine(mine, rev)
+		m.hydrateDetail()
+		return true
+	}
+	prs, ok := m.cachedPRs(m.filter)
+	if !ok {
 		return false
 	}
 	m.setPRs(prs)
@@ -302,16 +347,29 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// warmFilters is the fetch order at launch: the current filter first (it paints
-// the view), then every other preset so a later f-switch reads a warm cache.
-func warmFilters(current string) []string {
-	out := []string{current}
-	for _, p := range defaultPresets {
-		if p.search != current {
-			out = append(out, p.search)
+// mineFetchCmd fetches both halves of the mine view in one command, caching each
+// under its own filter key. Sequential (not parallel) — two quick gh calls.
+func (m Model) mineFetchCmd() tea.Cmd {
+	r, dir := m.runner, m.dir
+	list := func(filter string) ([]gh.PR, []byte, error) {
+		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
+		if err != nil {
+			return nil, nil, err
 		}
+		prs, err := gh.ParsePRs(raw)
+		return prs, raw, err
 	}
-	return out
+	return func() tea.Msg {
+		mine, mineRaw, err := list(mineFilter)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: mineFilter}
+		}
+		rev, revRaw, err := list(reviewFilter)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: mineFilter}
+		}
+		return mineFetchedMsg{mine: mine, mineRaw: mineRaw, review: rev, reviewRaw: revRaw}
+	}
 }
 
 // spinnerFrames is the braille cycle for the header refresh indicator.
@@ -342,7 +400,11 @@ func (m *Model) switchToFilter() tea.Cmd {
 	if !hit {
 		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
 	}
-	return tea.Batch(m.fetchCmd(m.filter), m.startSpinner())
+	fetch := m.fetchCmd(m.filter)
+	if m.isMineView() {
+		fetch = m.mineFetchCmd()
+	}
+	return tea.Batch(fetch, m.startSpinner())
 }
 
 // openPicker shows the member picker in the given mode, pre-checking the right
@@ -420,14 +482,14 @@ func (m *Model) confirmPicker() tea.Cmd {
 }
 
 func (m Model) Init() tea.Cmd {
-	filters := warmFilters(m.filter)
-	cmds := make([]tea.Cmd, 0, len(filters)+1)
-	for _, f := range filters {
-		cmds = append(cmds, m.fetchCmd(f))
-	}
-	cmds = append(cmds, m.fetchMembersCmd()) // refresh the disk-cached members once per launch
-	cmds = append(cmds, spinnerTick())       // animate the initial-load refresh indicator
-	return tea.Batch(cmds...)
+	// Prewarm both views (the current one paints on arrival, the other just
+	// caches), refresh members once, and start the spinner.
+	return tea.Batch(
+		m.mineFetchCmd(),
+		m.fetchCmd("is:open"),
+		m.fetchMembersCmd(),
+		spinnerTick(),
+	)
 }
 
 // debounceDetailCmd schedules a detail fetch ~150ms out, tagged with the current
@@ -452,6 +514,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
+		}
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case mineFetchedMsg:
+		if m.cache != nil {
+			m.cache.Set(cache.Key("pr", mineFilter, defaultLimit, schemaVer), msg.mineRaw)
+			m.cache.Set(cache.Key("pr", reviewFilter, defaultLimit, schemaVer), msg.reviewRaw)
+		}
+		if m.filter != mineFilter {
+			return m, nil // prewarm while viewing something else
+		}
+		m.refreshing = false
+		m.loaded = true
+		m.sel.clear()
+		m.setMine(msg.mine, msg.review)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}

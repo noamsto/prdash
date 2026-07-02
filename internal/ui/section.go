@@ -38,17 +38,44 @@ type PRSection struct {
 	filter     string
 	prs        []gh.PR
 	shown      []int
-	grouped    bool // true when the board renders author headers (see setShownOrdered)
+	grouped    bool // true when the board renders group headers (see setShownOrdered)
 	hideDrafts bool // when true, draft PRs are excluded from the shown set
 	forceGroup bool // group even with a single author (non-"mine" views)
+
+	cats     map[int]string // PR number → category label; non-nil switches grouping from author to category
+	catOrder []string       // category header order (e.g. Mine, Review requested)
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
 func (s *PRSection) Kind() string           { return "pr" }
 func (s *PRSection) Filter() string         { return s.filter }
-func (s *PRSection) SetPRs(p []gh.PR)       { sortPRs(p); s.prs = p; s.setShownOrdered(allIdx(len(p))) }
-func (s *PRSection) Len() int               { return len(s.shown) }
-func (s *PRSection) SetShown(idx []int)     { s.setShownOrdered(idx) }
+func (s *PRSection) SetPRs(p []gh.PR) {
+	s.cats, s.catOrder = nil, nil // flat/author grouping; SetCategorized opts into category grouping
+	sortPRs(p)
+	s.prs = p
+	s.setShownOrdered(allIdx(len(p)))
+}
+
+// SetCategorized paints PRs grouped under category headers (order) instead of by
+// author — used by the mine view (Mine / Review requested).
+func (s *PRSection) SetCategorized(p []gh.PR, cats map[int]string, order []string) {
+	sortPRs(p)
+	s.prs = p
+	s.cats = cats
+	s.catOrder = order
+	s.setShownOrdered(allIdx(len(p)))
+}
+
+// groupLabel is the header key for shown-row i: category when categorized, else author.
+func (s *PRSection) groupLabel(i int) string {
+	p := s.prs[s.shown[i]]
+	if len(s.catOrder) > 0 {
+		return s.cats[p.Number]
+	}
+	return p.Author.Login
+}
+func (s *PRSection) Len() int           { return len(s.shown) }
+func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
@@ -129,6 +156,11 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	if s.hideDrafts {
 		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool { return s.prs[i].IsDraft })
 	}
+	if len(s.catOrder) > 0 {
+		s.grouped = true
+		s.shown = groupByCategory(s.prs, idx, s.cats, s.catOrder)
+		return
+	}
 	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
 		s.grouped = true
 		s.shown = groupByAuthor(s.prs, idx)
@@ -136,6 +168,19 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	}
 	s.grouped = false
 	s.shown = idx
+}
+
+// groupByCategory reorders idx so rows cluster under their category in header order.
+func groupByCategory(prs []gh.PR, idx []int, cats map[int]string, order []string) []int {
+	out := make([]int, 0, len(idx))
+	for _, cat := range order {
+		for _, i := range idx {
+			if cats[prs[i].Number] == cat {
+				out = append(out, i)
+			}
+		}
+	}
+	return out
 }
 
 func distinctAuthors(prs []gh.PR, idx []int) int {
