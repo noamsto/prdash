@@ -864,11 +864,10 @@ func gridHints(hints []keyHint, width int) []string {
 	return lines
 }
 
-// panelHeader is a column heading: an uppercase label with a short trailing rule.
-func panelHeader(label string, width int) string {
-	name := sectionLabelStyle.Render(strings.ToUpper(label))
-	ruleLen := max(0, width-lipgloss.Width(name)-1)
-	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
+// panelHeader is a column heading: just the uppercase label — the box already
+// frames the panel, so no trailing rule.
+func panelHeader(label string) string {
+	return sectionLabelStyle.Render(strings.ToUpper(label))
 }
 
 // panelSplit divides the panel interior into a keys column, a 3-wide separator
@@ -882,7 +881,7 @@ func panelSplit(innerW int) (leftW, rightW int) {
 // panelColumn is a headed, grid-packed block padded to exactly w wide so the
 // column to its right lines up.
 func panelColumn(label string, hints []keyHint, w int) string {
-	lines := append([]string{panelHeader(label, w)}, gridHints(hints, w)...)
+	lines := append([]string{panelHeader(label)}, gridHints(hints, w)...)
 	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
 }
 
@@ -893,8 +892,12 @@ func panelBody(innerW int, acts []keyHint) string {
 	left := panelColumn("keys", navHints, lw)
 	right := panelColumn("actions", acts, rw)
 	h := max(lipgloss.Height(left), lipgloss.Height(right))
-	rule := sepStyle.Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, " "+rule+" ", right)
+	// Each separator line must carry its own padding — wrapping the whole
+	// multi-line rule in " "+…+" " only pads the first and last rows, jagging
+	// the divider and the right border.
+	sepLine := " " + sepStyle.Render("│") + " "
+	sep := strings.TrimSuffix(strings.Repeat(sepLine+"\n", h), "\n")
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
 }
 
 // panelContentRows is the tallest of the two columns (each = header + grid).
