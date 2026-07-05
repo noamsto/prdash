@@ -803,17 +803,24 @@ func (m Model) render() string {
 		return m.expandedView()
 	}
 	if m.pending != nil {
-		prompt := ""
+		q := ""
 		if m.pending.Scope == "per-selected" {
-			prompt = fmt.Sprintf("%s for %d PRs? y/N", m.pending.Label, len(m.selectedOrCursor()))
+			q = fmt.Sprintf("%s for %d PRs?", m.pending.Label, len(m.selectedOrCursor()))
 		} else {
 			n := 0
 			if v, ok := m.cursorVars(); ok {
 				n = v.Number
 			}
-			prompt = fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)
+			q = fmt.Sprintf("%s #%d?", m.pending.Label, n)
 		}
-		return m.header() + "\n" + accentStyle.Render(prompt) + "\n" + m.renderMain()
+		hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
+			accentStyle.Render("n") + statusBarStyle.Render(" cancel")
+		body := titleStyle.Render(q) + "\n\n" + hint
+		w := lipgloss.Width(q) + 6
+		if w < 34 {
+			w = 34
+		}
+		return modal(titledBox(body, w, 5, "Confirm"), m.width, m.height)
 	}
 	if m.showPicker {
 		return m.pickerView()
