@@ -24,7 +24,7 @@ func (m *Model) cursorVars() (action.Vars, bool) {
 	return v, true
 }
 
-// clipboardText is the payload an OSC52 copy action writes for one PR.
+// clipboardText is the payload a copy action writes for one PR.
 func clipboardText(builtin string, v action.Vars) string {
 	switch builtin {
 	case "copy-url":
@@ -122,10 +122,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			m.sel.clear() // a batch copy consumes the selection
 		}
 		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // copy is instant
-		return tea.Batch(
-			func() tea.Msg { print(action.OSC52(text)); return nil },
-			clearStatusCmd(),
-		)
+		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
 	case "rerun-failed":
 		r, dir, branch := m.runner, m.dir, v.HeadRefName
 		m.actionStatus = statFor(a)

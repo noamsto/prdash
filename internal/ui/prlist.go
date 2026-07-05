@@ -869,7 +869,7 @@ func (m Model) header() string {
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-		h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" refreshing")
+		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
 	}
 	if s := m.actionStatus; s != nil {
 		switch {

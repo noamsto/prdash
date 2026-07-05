@@ -64,6 +64,10 @@ var (
 	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
 	draftTagStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
 
+	// refreshStyle marks ambient background revalidation — brighter than dim but
+	// unfilled, so it stays distinct from the mauve running-action badge.
+	refreshStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
+
 	// Filled status badges: dark base text on a bright role-color fill, so an
 	// action's outcome reads as a distinct chip against the dim header.
 	badgeBase      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Base)).Bold(true).Padding(0, 1)
