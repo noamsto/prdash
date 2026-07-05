@@ -178,12 +178,18 @@ func (m *Model) renderList() {
 		b.WriteString("\n")
 		line++
 	}
+	content := b.String()
 	if m.section.Len() == 0 {
 		m.cursorLine = 0
+		hint := "Loading…"
+		if m.loaded {
+			hint = "No open PRs."
+		}
+		content = dimStyle.Render(hint)
 	}
 	m.vp.SetWidth(innerW)
 	m.vp.SetHeight(innerH)
-	m.vp.SetContent(b.String())
+	m.vp.SetContent(content)
 	m.scrollToCursor()
 }
 
@@ -802,64 +808,31 @@ func (m Model) render() string {
 	if m.expanded {
 		return m.expandedView()
 	}
-	if m.pending != nil {
-		q := ""
-		if m.pending.Scope == "per-selected" {
-			q = fmt.Sprintf("%s for %d PRs?", m.pending.Label, len(m.selectedOrCursor()))
-		} else {
-			n := 0
-			if v, ok := m.cursorVars(); ok {
-				n = v.Number
-			}
-			q = fmt.Sprintf("%s #%d?", m.pending.Label, n)
-		}
-		hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
-			accentStyle.Render("n") + statusBarStyle.Render(" cancel")
-		body := titleStyle.Render(q) + "\n\n" + hint
-		w := lipgloss.Width(q) + 6
-		if w < 34 {
-			w = 34
-		}
-		return modal(titledBox(body, w, 5, "Confirm"), m.width, m.height)
-	}
-	if m.showPicker {
-		return m.pickerView()
-	}
-	if m.showLegend {
-		return m.legendView()
-	}
-	if m.showActions {
-		acts := filterActions(m.actions, m.actionFilter.Value())
-		var b strings.Builder
-		b.WriteString(m.actionFilter.View() + "\n")
-		for i, a := range acts {
-			cursor := "  "
-			line := fmt.Sprintf("%-6s %s", a.Key, a.Label)
-			if i == m.actionCursor {
-				cursor = accentStyle.Render("▸ ")
-				line = accentStyle.Render(line)
-			} else {
-				line = statusBarStyle.Render(line)
-			}
-			b.WriteString(cursor + line + "\n")
-		}
-		// Height keys off the full action count, not the filtered one, so the pane
-		// stays a constant size as you type instead of shrinking per keystroke.
-		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(m.actions)+3, "Actions")
-		return modal(panel, m.width, m.height)
-	}
 	if m.filtering {
 		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()
 	}
+	// Overlays float over the live board so the layout stays put behind them.
+	board := m.board()
+	switch {
+	case m.pending != nil:
+		return overlayCenter(board, m.confirmPanel(), m.width, m.height)
+	case m.showPicker:
+		return overlayCenter(board, m.pickerView(), m.width, m.height)
+	case m.showLegend:
+		return overlayCenter(board, m.legendView(), m.width, m.height)
+	case m.showActions:
+		return overlayCenter(board, m.actionsPanel(), m.width, m.height)
+	}
+	return board
+}
+
+// board renders the full PR board — the base layer under any overlay. The
+// empty/loading state paints inside the boxed chrome (via the list viewport)
+// so the layout stays solid while a fetch is in flight instead of collapsing
+// to a bare line.
+func (m Model) board() string {
 	if m.err != nil && m.section.Len() == 0 {
 		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
-	}
-	if m.section.Len() == 0 {
-		hint := "  Loading…"
-		if m.loaded {
-			hint = "  No open PRs."
-		}
-		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
 	l := computeLayout(m.width, m.height)
 	if m.previewMax && l.ShowSide {
@@ -873,6 +846,49 @@ func (m Model) render() string {
 		foot = m.keysActionsPanel(m.width)
 	}
 	return m.header() + "\n" + m.renderMain() + "\n" + foot
+}
+
+// confirmPanel is the y/n dialog for a pending action.
+func (m Model) confirmPanel() string {
+	q := ""
+	if m.pending.Scope == "per-selected" {
+		q = fmt.Sprintf("%s for %d PRs?", m.pending.Label, len(m.selectedOrCursor()))
+	} else {
+		n := 0
+		if v, ok := m.cursorVars(); ok {
+			n = v.Number
+		}
+		q = fmt.Sprintf("%s #%d?", m.pending.Label, n)
+	}
+	hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
+		accentStyle.Render("n") + statusBarStyle.Render(" cancel")
+	body := titleStyle.Render(q) + "\n\n" + hint
+	w := lipgloss.Width(q) + 6
+	if w < 34 {
+		w = 34
+	}
+	return titledBox(body, w, 5, "Confirm")
+}
+
+// actionsPanel is the floating action menu.
+func (m Model) actionsPanel() string {
+	acts := filterActions(m.actions, m.actionFilter.Value())
+	var b strings.Builder
+	b.WriteString(m.actionFilter.View() + "\n")
+	for i, a := range acts {
+		cursor := "  "
+		line := fmt.Sprintf("%-6s %s", a.Key, a.Label)
+		if i == m.actionCursor {
+			cursor = accentStyle.Render("▸ ")
+			line = accentStyle.Render(line)
+		} else {
+			line = statusBarStyle.Render(line)
+		}
+		b.WriteString(cursor + line + "\n")
+	}
+	// Height keys off the full action count, not the filtered one, so the pane
+	// stays a constant size as you type instead of shrinking per keystroke.
+	return titledBox(strings.TrimRight(b.String(), "\n"), 40, len(m.actions)+3, "Actions")
 }
 
 // clearStatusCmd wipes a settled action badge after its dwell time.
@@ -947,8 +963,7 @@ func (m Model) legendView() string {
 		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
 	}
 	body := strings.Join(rows, "\n")
-	panel := titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
-	return modal(panel, m.width, m.height)
+	return titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
 }
 
 // actionOrder is the display order for the docked panel's actions section, so

@@ -65,7 +65,23 @@ func titledBox(content string, w, h int, title string) string {
 	return top + "\n" + body
 }
 
-// modal centers panel on a cleared w×h frame — a floating dialog.
-func modal(panel string, w, h int) string {
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, panel)
+// overlayCenter composites panel centered on top of base, leaving base visible
+// around it — a true floating dialog. Layer.Draw ignores its own x/y, so the
+// positioning has to go through a Compositor, which draws each layer at its
+// absolute bounds.
+func overlayCenter(base, panel string, w, h int) string {
+	pw, ph := lipgloss.Width(panel), lipgloss.Height(panel)
+	px, py := (w-pw)/2, (h-ph)/2
+	if px < 0 {
+		px = 0
+	}
+	if py < 0 {
+		py = 0
+	}
+	canvas := lipgloss.NewCanvas(w, h)
+	canvas.Compose(lipgloss.NewCompositor(
+		lipgloss.NewLayer(base),
+		lipgloss.NewLayer(panel).X(px).Y(py).Z(1),
+	))
+	return canvas.Render()
 }
