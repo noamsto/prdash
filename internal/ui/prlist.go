@@ -233,9 +233,16 @@ func (m *Model) applyFilter() {
 	m.renderList()
 }
 
+// prKey scopes the cached PR list by repo — the shared cache file holds every
+// repo's lists, and a filter like "is:open author:@me" is identical across them,
+// so without the repo they collide and bleed between repos.
+func prKey(repo, filter string) string {
+	return cache.Key("pr", repo+"\x00"+filter, defaultLimit, schemaVer)
+}
+
 // cachedPRs returns the cached PR list for a filter, if present and parseable.
 func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
-	e, ok := m.cache.Get(cache.Key("pr", filter, defaultLimit, schemaVer))
+	e, ok := m.cache.Get(prKey(m.repo, filter))
 	if !ok {
 		return nil, false
 	}
@@ -505,7 +512,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(cache.Key("pr", msg.filter, defaultLimit, schemaVer), msg.raw)
+			m.cache.Set(prKey(m.repo, msg.filter), msg.raw)
 		}
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // background prewarm of another preset: cache only
@@ -520,8 +527,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case mineFetchedMsg:
 		if m.cache != nil {
-			m.cache.Set(cache.Key("pr", mineFilter, defaultLimit, schemaVer), msg.mineRaw)
-			m.cache.Set(cache.Key("pr", reviewFilter, defaultLimit, schemaVer), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, mineFilter), msg.mineRaw)
+			m.cache.Set(prKey(m.repo, reviewFilter), msg.reviewRaw)
 		}
 		if m.filter != mineFilter {
 			return m, nil // prewarm while viewing something else

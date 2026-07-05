@@ -33,7 +33,7 @@ func TestSpaceTogglesSelection(t *testing.T) {
 func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-all"}})
-	c.Set(cache.Key("pr", "is:open", defaultLimit, schemaVer), raw)
+	c.Set(prKey("x", "is:open"), raw)
 
 	m := NewModel("/repo", "is:open author:@me", c)
 	m.SetRepo("x")
@@ -70,7 +70,7 @@ func TestBackgroundFetchCachesWithoutClobbering(t *testing.T) {
 	if len(ps.prs) != 1 || ps.prs[0].Number != 1 {
 		t.Fatalf("background fetch clobbered the current view: %+v", ps.prs)
 	}
-	if _, ok := c.Get(cache.Key("pr", other, defaultLimit, schemaVer)); !ok {
+	if _, ok := c.Get(prKey("x", other)); !ok {
 		t.Fatal("background fetch did not populate the cache")
 	}
 }
@@ -167,6 +167,21 @@ func TestBulkWorktreeWarnsOverFour(t *testing.T) {
 	m.confirmAnswer(true)
 	if len(m.pendingExec) != 5 {
 		t.Fatalf("after confirm want 5 worktree commands queued, got %d", len(m.pendingExec))
+	}
+}
+
+func TestPRListCacheScopedByRepo(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "results.json"))
+	filter := "is:open author:@me"
+
+	a := NewModel("/a", filter, c)
+	a.SetRepo("owner/repo-a")
+	a.Update(prsFetchedMsg{filter: filter, raw: []byte(`[{"number":1}]`), prs: []gh.PR{{Number: 1}}})
+
+	b := NewModel("/b", filter, c)
+	b.SetRepo("owner/repo-b")
+	if prs, ok := b.cachedPRs(filter); ok {
+		t.Fatalf("repo-b must not hydrate repo-a's cached PR list; got %d rows", len(prs))
 	}
 }
 

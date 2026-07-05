@@ -28,9 +28,10 @@ func TestSetPRsBuildsRows(t *testing.T) {
 func TestHydrateFromCache(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 42, Title: "cached"}})
-	c.Set(cache.Key("pr", "is:open", 20, schemaVer), raw)
 
 	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("owner/repo")
+	c.Set(prKey(m.repo, "is:open"), raw)
 	m.hydrate()
 	sec := m.section.(*PRSection)
 	if len(sec.prs) != 1 || sec.prs[0].Number != 42 {
