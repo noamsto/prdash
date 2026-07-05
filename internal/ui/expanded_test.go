@@ -25,9 +25,23 @@ func TestRenderChecksListsByName(t *testing.T) {
 		{State: "FAILURE", Name: "lint"},
 		{State: "SUCCESS", Name: "build"},
 	}}
-	out := renderChecks(pr, 60)
+	out := renderChecks(pr, 60, 0)
 	if !strings.Contains(out, "lint") || !strings.Contains(out, "build") {
 		t.Fatalf("checks not listed by name: %q", out)
+	}
+}
+
+func TestRenderChecksMarksCursor(t *testing.T) {
+	pr := gh.PR{StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "lint"},
+		{State: "SUCCESS", Name: "build"},
+	}}
+	lines := strings.Split(strings.TrimRight(renderChecks(pr, 60, 1), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 check lines, got %d: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[1], "▎") || strings.Contains(lines[0], "▎") {
+		t.Fatalf("cursor gutter should mark only the hovered check:\n%q", lines)
 	}
 }
 
@@ -74,6 +88,43 @@ func TestEnterExpandedDeepLinks(t *testing.T) {
 	// sanity: the triage card for this PR really is checks-failing
 	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}).JumpTab != "checks" {
 		t.Fatal("precondition: expected checks JumpTab")
+	}
+}
+
+func TestChecksTabCursorNavigates(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "lint"}, {State: "SUCCESS", Name: "build"},
+	}}})
+	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.enterExpanded() // deep-links to the Checks tab (index 2)
+	if m.expandedTab != 2 {
+		t.Fatalf("precondition: expected Checks tab, got %d", m.expandedTab)
+	}
+	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = updated.(Model)
+	if m.checkCursor != 1 {
+		t.Fatalf("j on Checks tab should advance checkCursor to 1, got %d", m.checkCursor)
+	}
+}
+
+func TestRerunExternalCheckReportsNoJob(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	// A StatusContext-style check: no /job/ in DetailsUrl → not job-rerunnable.
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Context: "buildkite", DetailsUrl: "https://buildkite.com/x/42"},
+	}}})
+	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.enterExpanded()
+	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	m = updated.(Model)
+	if m.actionStatus == nil || m.actionStatus.err == nil {
+		t.Fatal("rerunning an external check should settle to a failed status")
+	}
+	if !strings.Contains(m.actionStatus.fail, "external") {
+		t.Fatalf("status should explain the external-check case, got %q", m.actionStatus.fail)
 	}
 }
 
