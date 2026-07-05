@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -70,32 +71,46 @@ func (p picker) selected() []string {
 	return out
 }
 
+// pickerRows caps how many candidates the floating picker lists at once; the
+// filter narrows the set to reach the rest.
+const pickerRows = 12
+
 func (m Model) pickerView() string {
 	p := m.pick
 	var b strings.Builder
-	b.WriteString(headerStyle.Render("  "+p.title) + "\n")
-	b.WriteString("  " + p.filter.View() + "\n\n")
-	if p.cands == nil {
-		b.WriteString(dimStyle.Render("  Loading…"))
-		return b.String()
-	}
-	for i, u := range p.visible() {
-		mark := "  "
-		if p.checked[u.Login] {
-			mark = selMarkStyle.Render("● ")
+	b.WriteString(p.filter.View() + "\n\n")
+	switch {
+	case p.cands == nil:
+		b.WriteString(dimStyle.Render("Loading…"))
+	case len(p.cands) == 0:
+		b.WriteString(dimStyle.Render("No assignable users."))
+	default:
+		vis := p.visible()
+		start := 0 // scroll the window so the cursor stays visible
+		if p.cursor >= pickerRows {
+			start = p.cursor - pickerRows + 1
 		}
-		cur := "  "
-		if i == p.cursor {
-			cur = "> "
+		end := min(start+pickerRows, len(vis))
+		for i, u := range vis[start:end] {
+			mark := "  "
+			if p.checked[u.Login] {
+				mark = selMarkStyle.Render("● ")
+			}
+			cur := "  "
+			if start+i == p.cursor {
+				cur = accentStyle.Render("▸ ")
+			}
+			label := "@" + u.Login
+			if u.Name != "" {
+				label += dimStyle.Render("  " + u.Name)
+			}
+			b.WriteString(cur + mark + label + "\n")
 		}
-		label := "@" + u.Login
-		if u.Name != "" {
-			label += dimStyle.Render("  " + u.Name)
-		}
-		b.WriteString(cur + mark + label + "\n")
 	}
-	if len(p.cands) == 0 {
-		b.WriteString(dimStyle.Render("  No assignable users."))
+	body := strings.TrimRight(b.String(), "\n")
+	h := lipgloss.Height(body) + 2
+	if maxH := m.height - 2; h > maxH {
+		h = maxH
 	}
-	return b.String()
+	return modal(titledBox(body, 54, h, p.title), m.width, m.height)
 }

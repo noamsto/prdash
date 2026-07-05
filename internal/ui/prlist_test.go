@@ -87,10 +87,10 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 	}
 	m2, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	m = m2.(Model)
-	if m.filter != "is:open review-requested:@me" {
+	if m.filter != "is:open" {
 		t.Fatalf("after f, filter = %q", m.filter)
 	}
-	if !strings.Contains(m.render(), "review-requested") {
+	if !strings.Contains(m.render(), "all") {
 		t.Fatalf("header should show the active preset name: %q", m.render())
 	}
 }

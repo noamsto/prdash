@@ -2,9 +2,16 @@ package ui
 
 type filterPreset struct{ name, search string }
 
+// mineFilter / reviewFilter are the two searches the "mine" view combines into
+// its Mine and Review-requested sections. mineFilter doubles as the preset's
+// identity (presetIndexFor keys on it).
+const (
+	mineFilter   = "is:open author:@me"
+	reviewFilter = "is:open review-requested:@me"
+)
+
 var defaultPresets = []filterPreset{
-	{"mine", "is:open author:@me"},
-	{"review-requested", "is:open review-requested:@me"},
+	{"mine", mineFilter},
 	{"all", "is:open"},
 }
 

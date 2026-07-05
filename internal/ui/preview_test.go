@@ -94,10 +94,10 @@ func TestSectionRule(t *testing.T) {
 func TestPrefetchNumbers(t *testing.T) {
 	ps := NewPRSection("is:open")
 	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}, {Number: 5}})
-	detail := map[int]gh.PRDetail{2: {}} // #2 already cached
+	fresh := map[int]bool{2: true} // #2 already refreshed this session
 
-	got := prefetchNumbers(ps, 0, detail, 3)
-	want := []int{1, 3, 4} // skips cached #2, capped at window=3
+	got := prefetchNumbers(ps, 0, fresh, 3)
+	want := []int{1, 3, 4} // skips fresh #2, capped at window=3
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -107,9 +107,9 @@ func TestPrefetchNumbers(t *testing.T) {
 		}
 	}
 
-	all := map[int]gh.PRDetail{1: {}, 2: {}, 3: {}, 4: {}, 5: {}}
+	all := map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true}
 	if n := prefetchNumbers(ps, 0, all, 3); n != nil {
-		t.Fatalf("all cached should yield nil, got %v", n)
+		t.Fatalf("all fresh should yield nil, got %v", n)
 	}
 }
 

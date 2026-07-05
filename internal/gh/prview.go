@@ -63,14 +63,6 @@ func PRViewArgs(number int) []string {
 		"comments,reviews,latestReviews,mergeStateStatus,mergeable,isDraft,reviewRequests,files"}
 }
 
-func FetchPRDetail(r Runner, dir string, number int) (PRDetail, error) {
-	out, err := r.Run(dir, PRViewArgs(number)...)
-	if err != nil {
-		return PRDetail{}, err
-	}
-	return ParsePRDetail(out)
-}
-
 func ParsePRDetail(b []byte) (PRDetail, error) {
 	var d PRDetail
 	err := json.Unmarshal(b, &d)

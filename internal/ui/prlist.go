@@ -42,20 +42,26 @@ type Model struct {
 	actionFilter    textinput.Model
 	actionCursor    int
 	sel             selection
-	detail          map[int]gh.PRDetail
-	detailSeq       int // bumped on cursor move; gates the debounced detail fetch
+	detail          map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	fresh           map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	detailSeq       int                 // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded bool
 	previewN        int
 	expanded        bool
 	expandedTab     int
-	loaded          bool // first live fetch has returned; distinguishes empty from loading
-	presetIdx       int  // index into defaultPresets; -1 when filter is a custom (author) query
-	previewMax      bool // z: preview takes full width, list hidden
-	hideDrafts      bool // D: exclude draft PRs from the board
+	loaded          bool        // first live fetch has returned; distinguishes empty from loading
+	refreshing      bool        // a list fetch for the current filter is in flight
+	spinning        bool        // the refresh spinner tick loop is running
+	spinnerFrame    int         // advancing index into spinnerFrames
+	actionStatus    *actionStat // transient inline-action progress shown by the header
+	presetIdx       int         // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax      bool        // z: preview takes full width, list hidden
+	hideDrafts      bool        // D: exclude draft PRs from the board
 	showPicker      bool
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
-	members         []gh.User // cached assignable users for this repo
+	members         []gh.User  // cached assignable users for this repo
+	pendingExec     [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -66,8 +72,8 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	return Model{
 		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
-		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, previewN: 2,
-		presetIdx: presetIndexFor(filter),
+		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, fresh: map[int]bool{}, previewN: 2,
+		presetIdx: presetIndexFor(filter), refreshing: true,
 	}
 }
 
@@ -83,6 +89,31 @@ func (m *Model) setPRs(prs []gh.PR) {
 	}
 	m.applyFilter()
 	if n := m.section.Len(); m.cursor >= n { // a refetch may shrink the shown set
+		m.cursor = max(0, n-1)
+	}
+}
+
+// setMine paints the mine view: authored PRs under "Mine", review-requested
+// under "Review requested". A PR that is both stays under Mine.
+func (m *Model) setMine(mine, review []gh.PR) {
+	cats := make(map[int]string, len(mine)+len(review))
+	all := make([]gh.PR, 0, len(mine)+len(review))
+	for _, p := range mine {
+		cats[p.Number] = "Mine"
+		all = append(all, p)
+	}
+	for _, p := range review {
+		if _, dup := cats[p.Number]; dup {
+			continue
+		}
+		cats[p.Number] = "Review requested"
+		all = append(all, p)
+	}
+	if s, ok := m.section.(*PRSection); ok {
+		s.SetCategorized(all, cats, []string{"Mine", "Review requested"})
+	}
+	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n {
 		m.cursor = max(0, n-1)
 	}
 }
@@ -108,8 +139,8 @@ func (m *Model) moveCursor(delta int) {
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
-	innerW := l.ListWidth - 2  // inside the pane's left/right border
-	innerH := l.ContentHeight - 2
+	innerW := l.ListWidth - 2 // inside the pane's left/right border
+	innerH := m.contentHeight(l) - 2
 	if innerW < 1 {
 		innerW = 1
 	}
@@ -120,17 +151,17 @@ func (m *Model) renderList() {
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
 	var b strings.Builder
-	line, prevAuthor := 0, ""
+	line, prevGroup := 0, ""
 	for i := 0; i < m.section.Len(); i++ {
 		if grouped {
-			if a := ps.prAt(i).Author.Login; a != prevAuthor {
-				if prevAuthor != "" { // blank line between groups, not above the first
+			if g := ps.groupLabel(i); g != prevGroup {
+				if prevGroup != "" { // blank line between groups, not above the first
 					b.WriteString("\n")
 					line++
 				}
-				b.WriteString(groupHeader(a, innerW) + "\n")
+				b.WriteString(groupHeader(g, innerW) + "\n")
 				line++
-				prevAuthor = a
+				prevGroup = g
 			}
 		}
 		if i == m.cursor {
@@ -177,7 +208,7 @@ func (m *Model) scrollToCursor() {
 // line can't scroll above the top of the pane.
 func (m *Model) previewScrollBy(delta int) {
 	l := computeLayout(m.width, m.height)
-	visible := l.ContentHeight - 2 // inside the pane border
+	visible := m.contentHeight(l) - 2 // inside the pane border
 	over := lipgloss.Height(m.previewPane()) - visible
 	if over < 0 {
 		over = 0 // content fits the pane; nothing to scroll
@@ -202,37 +233,178 @@ func (m *Model) applyFilter() {
 	m.renderList()
 }
 
-func (m *Model) hydrate() {
-	if m.cache == nil {
-		return
-	}
-	e, ok := m.cache.Get(cache.Key("pr", m.filter, defaultLimit, schemaVer))
+// cachedPRs returns the cached PR list for a filter, if present and parseable.
+func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
+	e, ok := m.cache.Get(cache.Key("pr", filter, defaultLimit, schemaVer))
 	if !ok {
-		return
+		return nil, false
 	}
 	var prs []gh.PR
 	if err := json.Unmarshal(e.Rows, &prs); err != nil {
 		slog.Debug("cache unmarshal failed", "err", err)
-		return
+		return nil, false
 	}
-	m.setPRs(prs)
+	return prs, true
 }
 
-func (m *Model) Hydrate() { m.hydrate() }
+// hydrate paints rows for the current view from the cache, reporting whether it
+// hit. The mine view combines the two cached searches into its sections.
+func (m *Model) hydrate() bool {
+	if m.cache == nil {
+		return false
+	}
+	if m.isMineView() {
+		mine, ok1 := m.cachedPRs(mineFilter)
+		rev, ok2 := m.cachedPRs(reviewFilter)
+		if !ok1 && !ok2 {
+			return false
+		}
+		m.setMine(mine, rev)
+		m.hydrateDetail()
+		return true
+	}
+	prs, ok := m.cachedPRs(m.filter)
+	if !ok {
+		return false
+	}
+	m.setPRs(prs)
+	m.hydrateDetail()
+	return true
+}
 
-func (m Model) fetchCmd(r gh.Runner) tea.Cmd {
-	dir, filter := m.dir, m.filter
+// hydrateDetail paints each shown PR's detail from the disk cache (leaving it
+// non-fresh, so the live prefetch still revalidates). Without this the side
+// preview and ! column show Loading… until the first gh pr view returns.
+func (m *Model) hydrateDetail() {
+	if m.cache == nil {
+		return
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return
+	}
+	for i := 0; i < ps.Len(); i++ {
+		num := ps.prAt(i).Number
+		if _, ok := m.detail[num]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(detailKey(m.repo, num))
+		if !hit {
+			continue
+		}
+		var d gh.PRDetail
+		if err := json.Unmarshal(e.Rows, &d); err != nil {
+			slog.Debug("detail cache unmarshal failed", "err", err)
+			continue
+		}
+		m.detail[num] = d
+	}
+}
+
+// membersSchemaVer is bumped whenever the assignable-users field set changes.
+const membersSchemaVer = "v1"
+
+// membersKey scopes the cached assignable-users list by repo.
+func membersKey(repo string) string { return cache.Key("members", repo, 0, membersSchemaVer) }
+
+// hydrateMembers paints the assignable-users list from disk so the author/
+// reviewer picker opens instantly; Init refetches once per launch to refresh it.
+func (m *Model) hydrateMembers() {
+	if m.cache == nil {
+		return
+	}
+	e, ok := m.cache.Get(membersKey(m.repo))
+	if !ok {
+		return
+	}
+	var users []gh.User
+	if err := json.Unmarshal(e.Rows, &users); err != nil {
+		slog.Debug("members cache unmarshal failed", "err", err)
+		return
+	}
+	m.members = users
+}
+
+func (m *Model) Hydrate() {
+	m.hydrate()
+	m.hydrateMembers()
+}
+
+// fetchCmd runs `gh pr list` for filter, tagging the result so a background
+// prewarm of a non-current preset lands in the cache without repainting the view.
+func (m Model) fetchCmd(filter string) tea.Cmd {
+	r, dir := m.runner, m.dir
 	return func() tea.Msg {
 		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err, filter: filter}
 		}
 		prs, err := gh.ParsePRs(raw)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err, filter: filter}
 		}
-		return prsFetchedMsg{prs: prs, raw: raw}
+		return prsFetchedMsg{filter: filter, prs: prs, raw: raw}
 	}
+}
+
+// mineFetchCmd fetches both halves of the mine view in one command, caching each
+// under its own filter key. Sequential (not parallel) — two quick gh calls.
+func (m Model) mineFetchCmd() tea.Cmd {
+	r, dir := m.runner, m.dir
+	list := func(filter string) ([]gh.PR, []byte, error) {
+		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
+		if err != nil {
+			return nil, nil, err
+		}
+		prs, err := gh.ParsePRs(raw)
+		return prs, raw, err
+	}
+	return func() tea.Msg {
+		mine, mineRaw, err := list(mineFilter)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: mineFilter}
+		}
+		rev, revRaw, err := list(reviewFilter)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: mineFilter}
+		}
+		return mineFetchedMsg{mine: mine, mineRaw: mineRaw, review: rev, reviewRaw: revRaw}
+	}
+}
+
+// spinnerFrames is the braille cycle for the header refresh indicator.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+func spinnerTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+}
+
+// startSpinner kicks the tick loop unless it is already running (one loop only).
+func (m *Model) startSpinner() tea.Cmd {
+	if m.spinning {
+		return nil
+	}
+	m.spinning = true
+	return spinnerTick()
+}
+
+// switchToFilter repoints the model at m.filter: it paints cached rows instantly
+// when the preset is warm (else clears stale rows), flags a refresh, and returns
+// the live fetch to reconcile.
+func (m *Model) switchToFilter() tea.Cmd {
+	m.cursor = 0
+	m.sel.clear()
+	m.refreshing = true
+	hit := m.hydrate()
+	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
+	if !hit {
+		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
+	}
+	fetch := m.fetchCmd(m.filter)
+	if m.isMineView() {
+		fetch = m.mineFetchCmd()
+	}
+	return tea.Batch(fetch, m.startSpinner())
 }
 
 // openPicker shows the member picker in the given mode, pre-checking the right
@@ -266,7 +438,7 @@ func (m Model) fetchMembersCmd() tea.Cmd {
 	return func() tea.Msg {
 		users, err := gh.FetchAssignableUsers(r, dir, repo)
 		if err != nil {
-			return fetchFailedMsg{err}
+			return fetchFailedMsg{err: err}
 		}
 		return membersFetchedMsg{users: users}
 	}
@@ -289,9 +461,7 @@ func (m *Model) confirmPicker() tea.Cmd {
 		slices.Sort(terms)
 		m.filter = "is:open " + strings.Join(terms, " ")
 		m.presetIdx = -1
-		m.cursor = 0
-		m.loaded = false
-		return m.fetchCmd(m.runner)
+		return m.switchToFilter()
 	case "reviewer":
 		v, ok := m.cursorVars()
 		if !ok {
@@ -311,7 +481,16 @@ func (m *Model) confirmPicker() tea.Cmd {
 	return nil
 }
 
-func (m Model) Init() tea.Cmd { return m.fetchCmd(m.runner) }
+func (m Model) Init() tea.Cmd {
+	// Prewarm both views (the current one paints on arrival, the other just
+	// caches), refresh members once, and start the spinner.
+	return tea.Batch(
+		m.mineFetchCmd(),
+		m.fetchCmd("is:open"),
+		m.fetchMembersCmd(),
+		spinnerTick(),
+	)
+}
 
 // debounceDetailCmd schedules a detail fetch ~150ms out, tagged with the current
 // seq so a later move cancels it (the stale tick is ignored on arrival).
@@ -325,27 +504,60 @@ func (m Model) debounceDetailCmd() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(cache.Key("pr", msg.filter, defaultLimit, schemaVer), msg.raw)
+		}
+		if msg.filter != "" && msg.filter != m.filter {
+			return m, nil // background prewarm of another preset: cache only
+		}
+		m.refreshing = false
 		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
-		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(cache.Key("pr", m.filter, defaultLimit, schemaVer), msg.raw)
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case mineFetchedMsg:
+		if m.cache != nil {
+			m.cache.Set(cache.Key("pr", mineFilter, defaultLimit, schemaVer), msg.mineRaw)
+			m.cache.Set(cache.Key("pr", reviewFilter, defaultLimit, schemaVer), msg.reviewRaw)
+		}
+		if m.filter != mineFilter {
+			return m, nil // prewarm while viewing something else
+		}
+		m.refreshing = false
+		m.loaded = true
+		m.sel.clear()
+		m.setMine(msg.mine, msg.review)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case fetchFailedMsg:
+		if msg.filter != "" && msg.filter != m.filter {
+			return m, nil // a background prewarm failed; the current view is unaffected
+		}
+		m.refreshing = false
 		m.err = msg.err
 		return m, nil
 	case membersFetchedMsg:
 		m.members = msg.users
+		if m.cache != nil {
+			if raw, err := json.Marshal(msg.users); err == nil {
+				m.cache.Set(membersKey(m.repo), raw)
+			}
+		}
 		if m.showPicker {
 			m.pick.cands = msg.users
 		}
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
+		m.fresh[msg.number] = true
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+		}
 		m.renderList()
 		return m, nil
 	case detailDebounceMsg:
@@ -353,6 +565,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case spinnerTickMsg:
+		if !m.refreshing && !m.actionRunning() {
+			m.spinning = false // fetch/action settled; let the loop die
+			return m, nil
+		}
+		m.spinning = true
+		m.spinnerFrame++
+		return m, spinnerTick()
+	case actionDoneMsg:
+		// Scope the error to the status line rather than m.err, which blanks the board.
+		m.actionStatus = &actionStat{label: msg.label, done: true, err: msg.err}
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+	case actionClearMsg:
+		if m.actionStatus != nil && m.actionStatus.done {
+			m.actionStatus = nil
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.renderList()
@@ -395,7 +624,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				m.showPicker = false
 				return m, m.confirmPicker()
-			case " ":
+			case "space":
 				m.pick.toggleCursor()
 				return m, nil
 			case "up", "ctrl+p":
@@ -433,7 +662,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i >= 0 && i < len(acts) {
 					a := acts[i]
 					if a.Scope == "per-selected" {
-						return m, m.runBulk(a)
+						return m, m.startBulk(a)
 					}
 					if a.Confirm {
 						m.pending = &a
@@ -470,9 +699,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			m.presetIdx = nextPreset(max(m.presetIdx, 0))
 			m.filter = defaultPresets[m.presetIdx].search
-			m.cursor = 0
-			m.loaded = false
-			return m, m.fetchCmd(m.runner)
+			return m, m.switchToFilter()
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
@@ -505,7 +732,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case " ":
+		case "space":
 			m.sel.toggle(m.cursor)
 			m.renderList()
 			return m, nil
@@ -536,7 +763,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
-					return m, m.runBulk(a)
+					return m, m.startBulk(a)
 				}
 				if a.Confirm {
 					m.pending = &a
@@ -560,12 +787,17 @@ func (m Model) render() string {
 		return m.expandedView()
 	}
 	if m.pending != nil {
-		n := 0
-		if v, ok := m.cursorVars(); ok {
-			n = v.Number
+		prompt := ""
+		if m.pending.Scope == "per-selected" {
+			prompt = fmt.Sprintf("%s for %d PRs? y/N", m.pending.Label, len(m.selectedOrCursor()))
+		} else {
+			n := 0
+			if v, ok := m.cursorVars(); ok {
+				n = v.Number
+			}
+			prompt = fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)
 		}
-		return m.header() + "\n" + accentStyle.Render(fmt.Sprintf("%s #%d? y/N", m.pending.Label, n)) +
-			"\n" + m.renderMain()
+		return m.header() + "\n" + accentStyle.Render(prompt) + "\n" + m.renderMain()
 	}
 	if m.showPicker {
 		return m.pickerView()
@@ -588,7 +820,9 @@ func (m Model) render() string {
 			}
 			b.WriteString(cursor + line + "\n")
 		}
-		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(acts)+3, "Actions")
+		// Height keys off the full action count, not the filtered one, so the pane
+		// stays a constant size as you type instead of shrinking per keystroke.
+		panel := titledBox(strings.TrimRight(b.String(), "\n"), 40, len(m.actions)+3, "Actions")
 		return modal(panel, m.width, m.height)
 	}
 	if m.filtering {
@@ -604,7 +838,18 @@ func (m Model) render() string {
 		}
 		return m.header() + "\n\n" + dimStyle.Render(hint) + "\n" + m.statusBar()
 	}
-	return m.header() + "\n" + m.renderMain() + "\n" + m.statusBar()
+	l := computeLayout(m.width, m.height)
+	if m.previewMax && l.ShowSide {
+		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
+	}
+	if l.ShowSide && l.ShowPanel {
+		return m.header() + "\n" + m.renderDocked(l)
+	}
+	foot := m.statusBar()
+	if l.ShowPanel {
+		foot = m.keysActionsPanel(m.width)
+	}
+	return m.header() + "\n" + m.renderMain() + "\n" + foot
 }
 
 // header is the top line: repo · filter · open count.
@@ -614,6 +859,21 @@ func (m Model) header() string {
 		label = defaultPresets[m.presetIdx].name
 	}
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
+	if m.refreshing {
+		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" refreshing")
+	}
+	if s := m.actionStatus; s != nil {
+		switch {
+		case !s.done:
+			spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+			h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" "+s.label+"…")
+		case s.err != nil:
+			h += dimStyle.Render(" · ") + failStyle.Render("✗ "+s.label)
+		default:
+			h += dimStyle.Render(" · ") + passStyle.Render("✓ "+s.label)
+		}
+	}
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
@@ -654,13 +914,168 @@ func (m Model) legendView() string {
 		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
 		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
 		"",
-		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" copy   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
+		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
 		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
 		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
 	}
 	body := strings.Join(rows, "\n")
 	panel := titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
 	return modal(panel, m.width, m.height)
+}
+
+// actionOrder is the display order for the docked panel's actions section, so
+// it doesn't jump around with Go's random map iteration.
+var actionOrder = []string{"enter", "m", "r", "u", "M", "y", "Y", "b", "o", "W"}
+
+type keyHint struct{ key, label string }
+
+// navHints is the keybinding cheatsheet shown in the docked panel's top section.
+var navHints = []keyHint{
+	{"↑↓", "move"}, {"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+	{"f", "filter"}, {"F", "author"}, {"R", "reviewers"}, {"/", "find"},
+	{"space", "select"}, {"V", "all"}, {"D", "drafts"}, {"q", "quit"},
+}
+
+// gridHints lays hints into aligned columns: every cell is padded to the widest
+// hint's width so columns line up vertically across rows (a greedy pack leaves
+// a ragged, cramped-looking grid). Reflows to as many columns as fit in width.
+func gridHints(hints []keyHint, width int, alignKeys bool) []string {
+	if len(hints) == 0 {
+		return nil
+	}
+	// alignKeys pads every key to the widest so the labels line up in a column.
+	keyW := 0
+	if alignKeys {
+		for _, h := range hints {
+			if w := lipgloss.Width(h.key); w > keyW {
+				keyW = w
+			}
+		}
+	}
+	render := func(h keyHint) string {
+		key := accentStyle.Render(h.key)
+		if pad := keyW - lipgloss.Width(h.key); pad > 0 {
+			key += strings.Repeat(" ", pad)
+		}
+		return key + statusBarStyle.Render(" "+h.label)
+	}
+	const gutter = 3
+	cellW := 0
+	for _, h := range hints {
+		if w := lipgloss.Width(render(h)); w > cellW {
+			cellW = w
+		}
+	}
+	cellW += gutter
+	cols := max(1, (width+gutter)/cellW)
+	var lines []string
+	for i := 0; i < len(hints); i += cols {
+		var b strings.Builder
+		for j := i; j < i+cols && j < len(hints); j++ {
+			s := render(hints[j])
+			b.WriteString(s)
+			if j < i+cols-1 && j < len(hints)-1 { // pad every cell but the row's last
+				b.WriteString(strings.Repeat(" ", cellW-lipgloss.Width(s)))
+			}
+		}
+		lines = append(lines, b.String())
+	}
+	return lines
+}
+
+// panelHeader is a column heading: just the uppercase label — the box already
+// frames the panel, so no trailing rule.
+func panelHeader(label string) string {
+	return sectionLabelStyle.Render(strings.ToUpper(label))
+}
+
+// panelSplit divides the panel interior into a keys column, a 3-wide separator
+// (space · rule · space), and an actions column.
+func panelSplit(innerW int) (leftW, rightW int) {
+	const sepW = 3
+	leftW = (innerW - sepW) / 2
+	return leftW, innerW - sepW - leftW
+}
+
+// panelColumn is a headed, grid-packed block padded to exactly w wide so the
+// column to its right lines up. alignKeys column-aligns the labels.
+func panelColumn(label string, hints []keyHint, w int, alignKeys bool) string {
+	lines := append([]string{panelHeader(label)}, gridHints(hints, w, alignKeys)...)
+	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
+}
+
+// panelBody lays keys on the left and actions on the right, split by a vertical
+// rule. Narrow columns collapse each side to a single vertical stack. Action
+// labels are column-aligned; keys aren't (their widths vary too much).
+func panelBody(innerW int, actionsLabel string, acts []keyHint) string {
+	lw, rw := panelSplit(innerW)
+	left := panelColumn("keys", navHints, lw, false)
+	right := panelColumn(actionsLabel, acts, rw, true)
+	h := max(lipgloss.Height(left), lipgloss.Height(right))
+	// Each separator line must carry its own padding — wrapping the whole
+	// multi-line rule in " "+…+" " only pads the first and last rows, jagging
+	// the divider and the right border.
+	sepLine := " " + sepStyle.Render("│") + " "
+	sep := strings.TrimSuffix(strings.Repeat(sepLine+"\n", h), "\n")
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
+}
+
+// panelContentRows is the tallest of the two columns (each = header + grid).
+// Reserved against the full action set so the height is stable when batch mode
+// hides the single-only actions.
+func panelContentRows(innerW int) int {
+	lw, rw := panelSplit(innerW)
+	return max(1+len(gridHints(navHints, lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
+}
+
+// defaultActionHints is the action list computeLayout reserves space for,
+// without needing a Model.
+func defaultActionHints() []keyHint {
+	acts := action.DefaultPRActions()
+	hs := make([]keyHint, 0, len(actionOrder))
+	for _, k := range actionOrder {
+		if a, ok := acts[k]; ok {
+			hs = append(hs, keyHint{a.Key, a.Label})
+		}
+	}
+	return hs
+}
+
+// panelRowsFor is the panel's outer height (border + tallest column) at a given
+// interior width.
+func panelRowsFor(innerW int) int {
+	return panelContentRows(innerW) + 2
+}
+
+// batchCapable reports whether an action operates over the whole selection —
+// the copy builtins and the per-selected worktree fan-out.
+func batchCapable(a action.Action) bool {
+	return a.Scope == "per-selected" || strings.HasPrefix(a.Command.Builtin, "copy-")
+}
+
+// actionHints is the actions shown in the panel, with a column header. With a
+// selection active the panel enters batch mode: only batch-capable actions show
+// (the single-only ones act on the cursor, not the selection, so they'd mislead).
+func (m Model) actionHints() (label string, hints []keyHint) {
+	batch := m.sel.count() > 0
+	for _, k := range actionOrder {
+		a, ok := m.actions[k]
+		if !ok || (batch && !batchCapable(a)) {
+			continue
+		}
+		hints = append(hints, keyHint{a.Key, a.Label})
+	}
+	if batch {
+		return fmt.Sprintf("batch · %d", m.sel.count()), hints
+	}
+	return "actions", hints
+}
+
+// keysActionsPanel is the docked footer: a bordered box with the keybinding
+// cheatsheet and the focused view's actions, sized to the given outer width.
+func (m Model) keysActionsPanel(w int) string {
+	label, acts := m.actionHints()
+	return titledBox(panelBody(w-2, label, acts), w, panelRowsFor(w-2), "help")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:
