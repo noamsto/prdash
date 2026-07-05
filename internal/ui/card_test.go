@@ -9,7 +9,7 @@ import (
 
 func TestRenderCardShowsHeadlineAndAction(t *testing.T) {
 	c := triage.Card{Kind: triage.KindChecksFailing, Headline: "2 checks failing",
-		Lines: []string{"lint", "e2e"}, ActionKey: "r", ActionLabel: "rerun failed"}
+		Lines: []string{"lint", "e2e"}, ActionKey: "r", ActionLabel: "rerun checks"}
 	out := renderCard(c, 40)
 	if !strings.Contains(out, "2 checks failing") {
 		t.Fatalf("headline missing: %q", out)
@@ -17,7 +17,7 @@ func TestRenderCardShowsHeadlineAndAction(t *testing.T) {
 	if !strings.Contains(out, "lint") || !strings.Contains(out, "e2e") {
 		t.Fatalf("failing checks missing: %q", out)
 	}
-	if !strings.Contains(out, "r") || !strings.Contains(out, "rerun failed") {
+	if !strings.Contains(out, "r") || !strings.Contains(out, "rerun checks") {
 		t.Fatalf("suggested action missing: %q", out)
 	}
 }

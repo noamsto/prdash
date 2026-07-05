@@ -33,7 +33,7 @@ func TestSpaceTogglesSelection(t *testing.T) {
 func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-all"}})
-	c.Set(cache.Key("pr", "is:open", defaultLimit, schemaVer), raw)
+	c.Set(prKey("x", "is:open"), raw)
 
 	m := NewModel("/repo", "is:open author:@me", c)
 	m.SetRepo("x")
@@ -70,7 +70,7 @@ func TestBackgroundFetchCachesWithoutClobbering(t *testing.T) {
 	if len(ps.prs) != 1 || ps.prs[0].Number != 1 {
 		t.Fatalf("background fetch clobbered the current view: %+v", ps.prs)
 	}
-	if _, ok := c.Get(cache.Key("pr", other, defaultLimit, schemaVer)); !ok {
+	if _, ok := c.Get(prKey("x", other)); !ok {
 		t.Fatal("background fetch did not populate the cache")
 	}
 }
@@ -109,13 +109,13 @@ func TestInlineActionShowsFeedback(t *testing.T) {
 		t.Fatal("dispatching an inline action should show it running")
 	}
 
-	u, _ = m.Update(actionDoneMsg{label: "Update branch", err: nil})
+	u, _ = m.Update(actionDoneMsg{err: nil})
 	m = u.(Model)
 	if m.actionRunning() || m.actionStatus == nil {
 		t.Fatal("completion should mark the status done, not running")
 	}
-	if !strings.Contains(m.render(), "Update branch") {
-		t.Fatalf("header should surface the finished action:\n%s", m.render())
+	if !strings.Contains(m.render(), "Branch updated") {
+		t.Fatalf("header should surface the finished action in past tense:\n%s", m.render())
 	}
 
 	u, _ = m.Update(actionClearMsg{})
@@ -170,6 +170,67 @@ func TestBulkWorktreeWarnsOverFour(t *testing.T) {
 	}
 }
 
+func TestPRListCacheScopedByRepo(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "results.json"))
+	filter := "is:open author:@me"
+
+	a := NewModel("/a", filter, c)
+	a.SetRepo("owner/repo-a")
+	a.Update(prsFetchedMsg{filter: filter, raw: []byte(`[{"number":1}]`), prs: []gh.PR{{Number: 1}}})
+
+	b := NewModel("/b", filter, c)
+	b.SetRepo("owner/repo-b")
+	if prs, ok := b.cachedPRs(filter); ok {
+		t.Fatalf("repo-b must not hydrate repo-a's cached PR list; got %d rows", len(prs))
+	}
+}
+
+type recordRunner struct{ calls [][]string }
+
+func (r *recordRunner) Run(_ string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, args)
+	return []byte("[]"), nil
+}
+
+func TestBulkInlineRunsPerSelected(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	rr := &recordRunner{}
+	m.SetRunner(rr)
+	m.width, m.height = 120, 40
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
+	m.sel.toggle(0)
+	m.sel.toggle(2)
+
+	cmd := m.startBulk(m.actions["u"]) // update-branch: inline, per-selected
+	if cmd == nil {
+		t.Fatal("bulk inline action should return a command")
+	}
+	if m.actionStatus == nil || m.actionStatus.run != "Updating branch ×2" {
+		t.Fatalf("running badge run = %q, want %q", m.actionStatus.run, "Updating branch ×2")
+	}
+	if m.sel.count() != 0 {
+		t.Fatalf("bulk should consume the selection, %d left", m.sel.count())
+	}
+
+	// Drive the batched command so the runner actually fires per PR.
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c != nil {
+				c()
+			}
+		}
+	}
+	if len(rr.calls) != 2 {
+		t.Fatalf("want one gh call per selected PR (2), got %d: %v", len(rr.calls), rr.calls)
+	}
+	for _, args := range rr.calls {
+		if len(args) < 2 || args[0] != "pr" || args[1] != "update-branch" {
+			t.Fatalf("unexpected gh call: %v", args)
+		}
+	}
+}
+
 func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
@@ -185,8 +246,11 @@ func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
 	if !strings.Contains(panel, "Copy URL") {
 		t.Fatalf("batch mode should keep the copy actions:\n%s", panel)
 	}
-	if strings.Contains(panel, "Merge") {
-		t.Fatalf("batch mode should hide single-only actions like merge:\n%s", panel)
+	if !strings.Contains(panel, "Merge") {
+		t.Fatalf("batch mode should include bulk-capable merge:\n%s", panel)
+	}
+	if strings.Contains(panel, "Open in browser") {
+		t.Fatalf("batch mode should hide single-only actions like open-in-browser:\n%s", panel)
 	}
 }
 

@@ -24,7 +24,7 @@ func (m *Model) cursorVars() (action.Vars, bool) {
 	return v, true
 }
 
-// clipboardText is the payload an OSC52 copy action writes for one PR.
+// clipboardText is the payload a copy action writes for one PR.
 func clipboardText(builtin string, v action.Vars) string {
 	switch builtin {
 	case "copy-url":
@@ -36,6 +36,22 @@ func clipboardText(builtin string, v action.Vars) string {
 	default:
 		return ""
 	}
+}
+
+// copiedLabel is the status shown after a copy action: past-tense, pluralized
+// by how many rows were grabbed.
+func copiedLabel(builtin string, n int) string {
+	noun, plural := "URL", "URLs"
+	switch builtin {
+	case "copy-branch":
+		noun, plural = "branch", "branches"
+	case "copy-number":
+		noun, plural = "PR number", "PR numbers"
+	}
+	if n > 1 {
+		return fmt.Sprintf("Copied %d %s", n, plural)
+	}
+	return "Copied " + noun
 }
 
 // selectedOrCursor returns the selected row indices (sorted), or the cursor row
@@ -101,12 +117,17 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	switch a.Command.Builtin {
 	case "copy-url", "copy-branch", "copy-number":
 		text := m.copyPayload(a.Command.Builtin)
-		return func() tea.Msg { print(action.OSC52(text)); return nil }
+		ok := copiedLabel(a.Command.Builtin, len(m.selectedOrCursor()))
+		if m.sel.count() > 0 {
+			m.sel.clear() // a batch copy consumes the selection
+		}
+		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // copy is instant
+		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
 	case "rerun-failed":
-		r, dir, branch, label := m.runner, m.dir, v.HeadRefName, a.Label
-		m.actionStatus = &actionStat{label: label}
+		r, dir, branch := m.runner, m.dir, v.HeadRefName
+		m.actionStatus = statFor(a)
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{label: label, err: action.RerunFailed(r, dir, branch)}
+			return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
 		}, m.startSpinner())
 	default: // argv (e.g. gh pr merge)
 		argv, err := a.ExpandArgv(v)
@@ -114,25 +135,44 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			m.err = err
 			return nil
 		}
-		r, dir, label := m.runner, m.dir, a.Label
-		m.actionStatus = &actionStat{label: label}
+		r, dir := m.runner, m.dir
+		m.actionStatus = statFor(a)
 		return tea.Batch(func() tea.Msg {
 			_, err := r.Run(dir, argv[1:]...) // argv[0]=="gh"
-			return actionDoneMsg{label: label, err: err}
+			return actionDoneMsg{err: err}
 		}, m.startSpinner())
 	}
 }
 
-// actionStat is an inline action's transient progress, surfaced by the header.
+// actionStat is an inline action's transient progress, surfaced by the header
+// as a state-appropriate badge (gerund while running, past tense on success).
 type actionStat struct {
-	label string
-	done  bool
-	err   error
+	run     string // gerund shown while in flight
+	ok      string // past tense shown on success
+	fail    string // shown on failure
+	settled bool
+	err     error
+}
+
+// statFor builds the running status for an action, falling back to its imperative
+// label for any per-state wording the action leaves unset.
+func statFor(a action.Action) *actionStat {
+	run, ok, fail := a.Progress, a.Past, a.Fail
+	if run == "" {
+		run = a.Label
+	}
+	if ok == "" {
+		ok = a.Label
+	}
+	if fail == "" {
+		fail = a.Label
+	}
+	return &actionStat{run: run, ok: ok, fail: fail}
 }
 
 // actionRunning reports whether an inline action is still in flight.
 func (m Model) actionRunning() bool {
-	return m.actionStatus != nil && !m.actionStatus.done
+	return m.actionStatus != nil && !m.actionStatus.settled
 }
 
 // reviewerDiff compares the currently-requested reviewers against the picked
@@ -193,10 +233,11 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 // first — opening a windowful of worktrees at once is rarely intended.
 const bulkWarnThreshold = 4
 
-// startBulk runs a per-selected action, first prompting when it would open more
-// than bulkWarnThreshold worktrees.
+// startBulk runs a per-selected action, first prompting when it needs confirming
+// or when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
-	if a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold {
+	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
+	if a.Confirm || overThreshold {
 		m.pending = &a
 		return nil
 	}
@@ -204,13 +245,11 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 }
 
 // runBulk applies a per-selected action to each selected row (or the cursor row
-// if none selected), writing one handoff line each, then quits if exits-tui.
+// if none selected). Exits-tui actions write one handoff line each and quit;
+// inline gh actions run across the selection and settle to an aggregate badge.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
-	idx := m.sel.indices()
-	if len(idx) == 0 {
-		idx = []int{m.cursor}
-	}
-	for _, i := range idx {
+	var argvs [][]string
+	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
@@ -223,10 +262,44 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		}
 		if a.ExitsTUI {
 			m.queueExit(a.Key, argv)
+		} else {
+			argvs = append(argvs, argv)
 		}
 	}
 	if a.ExitsTUI {
 		return tea.Quit
 	}
-	return nil
+	if len(argvs) == 0 {
+		return nil
+	}
+	n := len(argvs)
+	m.actionStatus = statForBulk(a, n)
+	m.sel.clear() // the batch op consumes the selection
+	r, dir := m.runner, m.dir
+	return tea.Batch(func() tea.Msg {
+		var failed int
+		for _, argv := range argvs {
+			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
+				failed++
+			}
+		}
+		if failed == 0 {
+			return actionDoneMsg{}
+		}
+		return actionDoneMsg{
+			err:  fmt.Errorf("%d of %d failed", failed, n),
+			fail: fmt.Sprintf("%d of %d failed", failed, n),
+		}
+	}, m.startSpinner())
+}
+
+// statForBulk builds the running status for a bulk action, tagging the running
+// and success wording with the item count (×N) when it spans more than one PR.
+func statForBulk(a action.Action, n int) *actionStat {
+	s := statFor(a)
+	if n > 1 {
+		s.run = fmt.Sprintf("%s ×%d", s.run, n)
+		s.ok = fmt.Sprintf("%s ×%d", s.ok, n)
+	}
+	return s
 }

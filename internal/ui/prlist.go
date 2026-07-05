@@ -233,9 +233,16 @@ func (m *Model) applyFilter() {
 	m.renderList()
 }
 
+// prKey scopes the cached PR list by repo — the shared cache file holds every
+// repo's lists, and a filter like "is:open author:@me" is identical across them,
+// so without the repo they collide and bleed between repos.
+func prKey(repo, filter string) string {
+	return cache.Key("pr", repo+"\x00"+filter, defaultLimit, schemaVer)
+}
+
 // cachedPRs returns the cached PR list for a filter, if present and parseable.
 func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
-	e, ok := m.cache.Get(cache.Key("pr", filter, defaultLimit, schemaVer))
+	e, ok := m.cache.Get(prKey(m.repo, filter))
 	if !ok {
 		return nil, false
 	}
@@ -505,7 +512,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(cache.Key("pr", msg.filter, defaultLimit, schemaVer), msg.raw)
+			m.cache.Set(prKey(m.repo, msg.filter), msg.raw)
 		}
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // background prewarm of another preset: cache only
@@ -520,8 +527,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
 	case mineFetchedMsg:
 		if m.cache != nil {
-			m.cache.Set(cache.Key("pr", mineFilter, defaultLimit, schemaVer), msg.mineRaw)
-			m.cache.Set(cache.Key("pr", reviewFilter, defaultLimit, schemaVer), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, mineFilter), msg.mineRaw)
+			m.cache.Set(prKey(m.repo, reviewFilter), msg.reviewRaw)
 		}
 		if m.filter != mineFilter {
 			return m, nil // prewarm while viewing something else
@@ -575,10 +582,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, spinnerTick()
 	case actionDoneMsg:
 		// Scope the error to the status line rather than m.err, which blanks the board.
-		m.actionStatus = &actionStat{label: msg.label, done: true, err: msg.err}
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+		if m.actionStatus != nil {
+			m.actionStatus.settled = true
+			m.actionStatus.err = msg.err
+			if msg.ok != "" {
+				m.actionStatus.ok = msg.ok
+			}
+			if msg.fail != "" {
+				m.actionStatus.fail = msg.fail
+			}
+		}
+		return m, clearStatusCmd()
 	case actionClearMsg:
-		if m.actionStatus != nil && m.actionStatus.done {
+		if m.actionStatus != nil && m.actionStatus.settled {
 			m.actionStatus = nil
 		}
 		return m, nil
@@ -852,6 +868,11 @@ func (m Model) render() string {
 	return m.header() + "\n" + m.renderMain() + "\n" + foot
 }
 
+// clearStatusCmd wipes a settled action badge after its dwell time.
+func clearStatusCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+}
+
 // header is the top line: repo · filter · open count.
 func (m Model) header() string {
 	label := m.filter
@@ -861,17 +882,17 @@ func (m Model) header() string {
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-		h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" refreshing")
+		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
 	}
 	if s := m.actionStatus; s != nil {
 		switch {
-		case !s.done:
+		case !s.settled:
 			spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-			h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" "+s.label+"…")
+			h += "  " + runBadgeStyle.Render(spin+" "+s.run+"…")
 		case s.err != nil:
-			h += dimStyle.Render(" · ") + failStyle.Render("✗ "+s.label)
+			h += "  " + failBadgeStyle.Render("✗ "+s.fail)
 		default:
-			h += dimStyle.Render(" · ") + passStyle.Render("✓ "+s.label)
+			h += "  " + passBadgeStyle.Render("✓ "+s.ok)
 		}
 	}
 	if n := m.sel.count(); n > 0 {
@@ -925,7 +946,7 @@ func (m Model) legendView() string {
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "r", "u", "M", "y", "Y", "b", "o", "W"}
+var actionOrder = []string{"enter", "m", "r", "u", "M", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 

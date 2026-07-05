@@ -67,6 +67,43 @@ func TestClipboardText(t *testing.T) {
 	}
 }
 
+func TestCopiedLabel(t *testing.T) {
+	cases := []struct {
+		builtin string
+		n       int
+		want    string
+	}{
+		{"copy-url", 1, "Copied URL"},
+		{"copy-url", 3, "Copied 3 URLs"},
+		{"copy-branch", 1, "Copied branch"},
+		{"copy-branch", 2, "Copied 2 branches"},
+		{"copy-number", 1, "Copied PR number"},
+		{"copy-number", 5, "Copied 5 PR numbers"},
+	}
+	for _, c := range cases {
+		if got := copiedLabel(c.builtin, c.n); got != c.want {
+			t.Errorf("copiedLabel(%q, %d) = %q, want %q", c.builtin, c.n, got, c.want)
+		}
+	}
+}
+
+func TestCopyClearsSelection(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{{Number: 7, HeadRefName: "feat/x"}, {Number: 9, HeadRefName: "feat/y"}})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+
+	a := action.Action{Key: "b", Command: action.Command{Builtin: "copy-branch"}}
+	if cmd := m.runAction(a); cmd == nil {
+		t.Fatal("copy should return a command")
+	}
+	if m.sel.count() != 0 {
+		t.Fatalf("batch copy should clear the selection, still %d selected", m.sel.count())
+	}
+}
+
 func TestReviewerDiff(t *testing.T) {
 	add, rm := reviewerDiff([]string{"a", "c"}, map[string]bool{"b": true, "c": true})
 	if len(add) != 1 || add[0] != "b" {
