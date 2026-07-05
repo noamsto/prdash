@@ -112,5 +112,5 @@ func (m Model) pickerView() string {
 	if maxH := m.height - 2; h > maxH {
 		h = maxH
 	}
-	return modal(titledBox(body, 54, h, p.title), m.width, m.height)
+	return titledBox(body, 54, h, p.title)
 }

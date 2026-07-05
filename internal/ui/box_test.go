@@ -66,12 +66,17 @@ func TestDropLines(t *testing.T) {
 	}
 }
 
-func TestModalCentersPanel(t *testing.T) {
+func TestOverlayCentersPanelOverBase(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 11; i++ {
+		b.WriteString(strings.Repeat("x", 40) + "\n")
+	}
+	base := strings.TrimRight(b.String(), "\n")
 	panel := titledBox("body", 12, 3, "Actions")
-	out := modal(panel, 40, 11)
+	out := overlayCenter(base, panel, 40, 11)
 	lines := strings.Split(out, "\n")
 	if len(lines) != 11 {
-		t.Fatalf("modal height = %d, want 11", len(lines))
+		t.Fatalf("overlay height = %d, want 11", len(lines))
 	}
 	for i, ln := range lines {
 		if lipgloss.Width(ln) != 40 {
@@ -79,6 +84,9 @@ func TestModalCentersPanel(t *testing.T) {
 		}
 	}
 	if !strings.Contains(out, "Actions") {
-		t.Fatalf("modal should contain the panel: %q", out)
+		t.Fatalf("overlay should contain the panel: %q", out)
+	}
+	if !strings.Contains(out, "x") {
+		t.Fatalf("overlay should keep the base visible around the panel: %q", out)
 	}
 }
