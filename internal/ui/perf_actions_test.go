@@ -170,6 +170,52 @@ func TestBulkWorktreeWarnsOverFour(t *testing.T) {
 	}
 }
 
+type recordRunner struct{ calls [][]string }
+
+func (r *recordRunner) Run(_ string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, args)
+	return []byte("[]"), nil
+}
+
+func TestBulkInlineRunsPerSelected(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	rr := &recordRunner{}
+	m.SetRunner(rr)
+	m.width, m.height = 120, 40
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
+	m.sel.toggle(0)
+	m.sel.toggle(2)
+
+	cmd := m.startBulk(m.actions["u"]) // update-branch: inline, per-selected
+	if cmd == nil {
+		t.Fatal("bulk inline action should return a command")
+	}
+	if m.actionStatus == nil || m.actionStatus.run != "Updating branch ×2" {
+		t.Fatalf("running badge run = %q, want %q", m.actionStatus.run, "Updating branch ×2")
+	}
+	if m.sel.count() != 0 {
+		t.Fatalf("bulk should consume the selection, %d left", m.sel.count())
+	}
+
+	// Drive the batched command so the runner actually fires per PR.
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c != nil {
+				c()
+			}
+		}
+	}
+	if len(rr.calls) != 2 {
+		t.Fatalf("want one gh call per selected PR (2), got %d: %v", len(rr.calls), rr.calls)
+	}
+	for _, args := range rr.calls {
+		if len(args) < 2 || args[0] != "pr" || args[1] != "update-branch" {
+			t.Fatalf("unexpected gh call: %v", args)
+		}
+	}
+}
+
 func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
@@ -185,8 +231,11 @@ func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
 	if !strings.Contains(panel, "Copy URL") {
 		t.Fatalf("batch mode should keep the copy actions:\n%s", panel)
 	}
-	if strings.Contains(panel, "Merge") {
-		t.Fatalf("batch mode should hide single-only actions like merge:\n%s", panel)
+	if !strings.Contains(panel, "Merge") {
+		t.Fatalf("batch mode should include bulk-capable merge:\n%s", panel)
+	}
+	if strings.Contains(panel, "Open in browser") {
+		t.Fatalf("batch mode should hide single-only actions like open-in-browser:\n%s", panel)
 	}
 }
 

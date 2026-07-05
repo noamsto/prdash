@@ -233,10 +233,11 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 // first — opening a windowful of worktrees at once is rarely intended.
 const bulkWarnThreshold = 4
 
-// startBulk runs a per-selected action, first prompting when it would open more
-// than bulkWarnThreshold worktrees.
+// startBulk runs a per-selected action, first prompting when it needs confirming
+// or when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
-	if a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold {
+	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
+	if a.Confirm || overThreshold {
 		m.pending = &a
 		return nil
 	}
@@ -244,13 +245,11 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 }
 
 // runBulk applies a per-selected action to each selected row (or the cursor row
-// if none selected), writing one handoff line each, then quits if exits-tui.
+// if none selected). Exits-tui actions write one handoff line each and quit;
+// inline gh actions run across the selection and settle to an aggregate badge.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
-	idx := m.sel.indices()
-	if len(idx) == 0 {
-		idx = []int{m.cursor}
-	}
-	for _, i := range idx {
+	var argvs [][]string
+	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
@@ -263,10 +262,44 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		}
 		if a.ExitsTUI {
 			m.queueExit(a.Key, argv)
+		} else {
+			argvs = append(argvs, argv)
 		}
 	}
 	if a.ExitsTUI {
 		return tea.Quit
 	}
-	return nil
+	if len(argvs) == 0 {
+		return nil
+	}
+	n := len(argvs)
+	m.actionStatus = statForBulk(a, n)
+	m.sel.clear() // the batch op consumes the selection
+	r, dir := m.runner, m.dir
+	return tea.Batch(func() tea.Msg {
+		var failed int
+		for _, argv := range argvs {
+			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
+				failed++
+			}
+		}
+		if failed == 0 {
+			return actionDoneMsg{}
+		}
+		return actionDoneMsg{
+			err:  fmt.Errorf("%d of %d failed", failed, n),
+			fail: fmt.Sprintf("%d of %d failed", failed, n),
+		}
+	}, m.startSpinner())
+}
+
+// statForBulk builds the running status for a bulk action, tagging the running
+// and success wording with the item count (×N) when it spans more than one PR.
+func statForBulk(a action.Action, n int) *actionStat {
+	s := statFor(a)
+	if n > 1 {
+		s.run = fmt.Sprintf("%s ×%d", s.run, n)
+		s.ok = fmt.Sprintf("%s ×%d", s.ok, n)
+	}
+	return s
 }

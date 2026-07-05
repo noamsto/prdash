@@ -29,9 +29,11 @@ type detailDebounceMsg struct{ seq int }
 type spinnerTickMsg struct{}
 
 // actionDoneMsg reports an inline action's completion so the header can settle
-// its status badge. The wording is already held on m.actionStatus.
+// its status badge. The running wording is already held on m.actionStatus; ok
+// and fail optionally override the settled text (used by bulk aggregate counts).
 type actionDoneMsg struct {
-	err error
+	err      error
+	ok, fail string
 }
 
 // actionClearMsg wipes a settled action status after its dwell time.

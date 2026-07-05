@@ -578,6 +578,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.actionStatus != nil {
 			m.actionStatus.settled = true
 			m.actionStatus.err = msg.err
+			if msg.ok != "" {
+				m.actionStatus.ok = msg.ok
+			}
+			if msg.fail != "" {
+				m.actionStatus.fail = msg.fail
+			}
 		}
 		return m, clearStatusCmd()
 	case actionClearMsg:
@@ -933,7 +939,7 @@ func (m Model) legendView() string {
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "r", "u", "M", "y", "Y", "b", "o", "W"}
+var actionOrder = []string{"enter", "m", "r", "u", "M", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 
