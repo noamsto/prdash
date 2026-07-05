@@ -25,11 +25,16 @@ type Command struct {
 
 type Action struct {
 	Key      string
-	Label    string
+	Label    string // imperative, shown in menus/legend
 	Command  Command
 	ExitsTUI bool
 	Scope    string // "single" | "per-selected"
 	Confirm  bool
+
+	// Inline-status wording, per state. Empty fields fall back to Label.
+	Progress string // gerund while running, e.g. "Merging"
+	Past     string // past tense on success, e.g. "Merged"
+	Fail     string // on failure, e.g. "Merge failed"
 }
 
 // ExpandArgv renders each argv element as a template against v.

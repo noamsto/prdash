@@ -575,10 +575,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, spinnerTick()
 	case actionDoneMsg:
 		// Scope the error to the status line rather than m.err, which blanks the board.
-		m.actionStatus = &actionStat{label: msg.label, done: true, err: msg.err}
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+		if m.actionStatus != nil {
+			m.actionStatus.settled = true
+			m.actionStatus.err = msg.err
+		}
+		return m, clearStatusCmd()
 	case actionClearMsg:
-		if m.actionStatus != nil && m.actionStatus.done {
+		if m.actionStatus != nil && m.actionStatus.settled {
 			m.actionStatus = nil
 		}
 		return m, nil
@@ -852,6 +855,11 @@ func (m Model) render() string {
 	return m.header() + "\n" + m.renderMain() + "\n" + foot
 }
 
+// clearStatusCmd wipes a settled action badge after its dwell time.
+func clearStatusCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+}
+
 // header is the top line: repo · filter · open count.
 func (m Model) header() string {
 	label := m.filter
@@ -865,13 +873,13 @@ func (m Model) header() string {
 	}
 	if s := m.actionStatus; s != nil {
 		switch {
-		case !s.done:
+		case !s.settled:
 			spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-			h += dimStyle.Render(" · ") + accentStyle.Render(spin) + dimStyle.Render(" "+s.label+"…")
+			h += "  " + runBadgeStyle.Render(spin+" "+s.run+"…")
 		case s.err != nil:
-			h += dimStyle.Render(" · ") + failStyle.Render("✗ "+s.label)
+			h += "  " + failBadgeStyle.Render("✗ "+s.fail)
 		default:
-			h += dimStyle.Render(" · ") + passStyle.Render("✓ "+s.label)
+			h += "  " + passBadgeStyle.Render("✓ "+s.ok)
 		}
 	}
 	if n := m.sel.count(); n > 0 {

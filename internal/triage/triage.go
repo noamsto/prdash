@@ -50,7 +50,7 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 	case len(failing) > 0:
 		return Card{Kind: KindChecksFailing,
 			Headline: fmt.Sprintf("%d checks failing", len(failing)), Lines: failing,
-			ActionKey: "r", ActionLabel: "rerun failed", JumpTab: "checks"}
+			ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
 			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}

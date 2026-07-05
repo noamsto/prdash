@@ -109,13 +109,13 @@ func TestInlineActionShowsFeedback(t *testing.T) {
 		t.Fatal("dispatching an inline action should show it running")
 	}
 
-	u, _ = m.Update(actionDoneMsg{label: "Update branch", err: nil})
+	u, _ = m.Update(actionDoneMsg{err: nil})
 	m = u.(Model)
 	if m.actionRunning() || m.actionStatus == nil {
 		t.Fatal("completion should mark the status done, not running")
 	}
-	if !strings.Contains(m.render(), "Update branch") {
-		t.Fatalf("header should surface the finished action:\n%s", m.render())
+	if !strings.Contains(m.render(), "Branch updated") {
+		t.Fatalf("header should surface the finished action in past tense:\n%s", m.render())
 	}
 
 	u, _ = m.Update(actionClearMsg{})

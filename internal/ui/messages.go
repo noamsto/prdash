@@ -28,11 +28,10 @@ type detailDebounceMsg struct{ seq int }
 // fetch is in flight.
 type spinnerTickMsg struct{}
 
-// actionDoneMsg reports an inline action's completion so the header can show
-// success/failure.
+// actionDoneMsg reports an inline action's completion so the header can settle
+// its status badge. The wording is already held on m.actionStatus.
 type actionDoneMsg struct {
-	label string
-	err   error
+	err error
 }
 
 // actionClearMsg wipes a settled action status after its dwell time.

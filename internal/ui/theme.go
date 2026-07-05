@@ -25,6 +25,7 @@ type Theme struct {
 	Pending string // yellow
 	Draft   string // peach — the [draft] tag; kept out of the author rotation
 	Section string // sapphire — section/group divider labels
+	Base    string // base — dark text on filled status badges
 	Author  []string
 }
 
@@ -34,7 +35,7 @@ func Mocha() Theme {
 		Accent: "#cba6f7", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
 		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
-		Section: "#74c7ec",
+		Section: "#74c7ec", Base: "#1e1e2e",
 		// Distinct author hues — deliberately excludes mauve (accent), sky (focus),
 		// pink (select), peach (draft tag), sapphire (section labels), and the
 		// green/red/yellow state colors.
@@ -62,6 +63,13 @@ var (
 	statusBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
 	draftTagStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
+
+	// Filled status badges: dark base text on a bright role-color fill, so an
+	// action's outcome reads as a distinct chip against the dim header.
+	badgeBase      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Base)).Bold(true).Padding(0, 1)
+	runBadgeStyle  = badgeBase.Background(lipgloss.Color(theme.Accent))
+	passBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Pass))
+	failBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Fail))
 )
 
 // authorStyle gives each login a stable color so the same person reads the same

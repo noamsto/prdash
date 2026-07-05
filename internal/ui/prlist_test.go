@@ -128,7 +128,7 @@ func TestStatusBarSurfacesRecommendedFix(t *testing.T) {
 	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	m.renderList()
 	out := m.statusBar()
-	if !strings.Contains(out, "rerun failed") {
+	if !strings.Contains(out, "rerun checks") {
 		t.Fatalf("failing-checks PR should surface the rerun fix: %q", out)
 	}
 }

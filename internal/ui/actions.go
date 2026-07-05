@@ -38,6 +38,22 @@ func clipboardText(builtin string, v action.Vars) string {
 	}
 }
 
+// copiedLabel is the status shown after a copy action: past-tense, pluralized
+// by how many rows were grabbed.
+func copiedLabel(builtin string, n int) string {
+	noun, plural := "URL", "URLs"
+	switch builtin {
+	case "copy-branch":
+		noun, plural = "branch", "branches"
+	case "copy-number":
+		noun, plural = "PR number", "PR numbers"
+	}
+	if n > 1 {
+		return fmt.Sprintf("Copied %d %s", n, plural)
+	}
+	return "Copied " + noun
+}
+
 // selectedOrCursor returns the selected row indices (sorted), or the cursor row
 // when nothing is selected.
 func (m *Model) selectedOrCursor() []int {
@@ -101,12 +117,20 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	switch a.Command.Builtin {
 	case "copy-url", "copy-branch", "copy-number":
 		text := m.copyPayload(a.Command.Builtin)
-		return func() tea.Msg { print(action.OSC52(text)); return nil }
+		ok := copiedLabel(a.Command.Builtin, len(m.selectedOrCursor()))
+		if m.sel.count() > 0 {
+			m.sel.clear() // a batch copy consumes the selection
+		}
+		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // copy is instant
+		return tea.Batch(
+			func() tea.Msg { print(action.OSC52(text)); return nil },
+			clearStatusCmd(),
+		)
 	case "rerun-failed":
-		r, dir, branch, label := m.runner, m.dir, v.HeadRefName, a.Label
-		m.actionStatus = &actionStat{label: label}
+		r, dir, branch := m.runner, m.dir, v.HeadRefName
+		m.actionStatus = statFor(a)
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{label: label, err: action.RerunFailed(r, dir, branch)}
+			return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
 		}, m.startSpinner())
 	default: // argv (e.g. gh pr merge)
 		argv, err := a.ExpandArgv(v)
@@ -114,25 +138,44 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			m.err = err
 			return nil
 		}
-		r, dir, label := m.runner, m.dir, a.Label
-		m.actionStatus = &actionStat{label: label}
+		r, dir := m.runner, m.dir
+		m.actionStatus = statFor(a)
 		return tea.Batch(func() tea.Msg {
 			_, err := r.Run(dir, argv[1:]...) // argv[0]=="gh"
-			return actionDoneMsg{label: label, err: err}
+			return actionDoneMsg{err: err}
 		}, m.startSpinner())
 	}
 }
 
-// actionStat is an inline action's transient progress, surfaced by the header.
+// actionStat is an inline action's transient progress, surfaced by the header
+// as a state-appropriate badge (gerund while running, past tense on success).
 type actionStat struct {
-	label string
-	done  bool
-	err   error
+	run     string // gerund shown while in flight
+	ok      string // past tense shown on success
+	fail    string // shown on failure
+	settled bool
+	err     error
+}
+
+// statFor builds the running status for an action, falling back to its imperative
+// label for any per-state wording the action leaves unset.
+func statFor(a action.Action) *actionStat {
+	run, ok, fail := a.Progress, a.Past, a.Fail
+	if run == "" {
+		run = a.Label
+	}
+	if ok == "" {
+		ok = a.Label
+	}
+	if fail == "" {
+		fail = a.Label
+	}
+	return &actionStat{run: run, ok: ok, fail: fail}
 }
 
 // actionRunning reports whether an inline action is still in flight.
 func (m Model) actionRunning() bool {
-	return m.actionStatus != nil && !m.actionStatus.done
+	return m.actionStatus != nil && !m.actionStatus.settled
 }
 
 // reviewerDiff compares the currently-requested reviewers against the picked
