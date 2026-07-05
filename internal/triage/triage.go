@@ -49,7 +49,7 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 			ActionKey: "enter", ActionLabel: "worktree to resolve"}
 	case len(failing) > 0:
 		return Card{Kind: KindChecksFailing,
-			Headline: fmt.Sprintf("%d checks failing", len(failing)), Lines: failing,
+			Headline: ChecksFailingHeadline(len(failing)), Lines: failing,
 			ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
@@ -79,9 +79,43 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 	}
 }
 
+// Preliminary builds a best-effort card from list-only fields (no merge-state),
+// so the quick view can show something the instant the cursor lands — before the
+// per-PR detail fetch returns. Compute supersedes it once detail is cached.
+func Preliminary(pr gh.PR) Card {
+	failing := checksByState(pr, "fail")
+	switch {
+	case pr.IsDraft:
+		return Card{Kind: KindDraft, Headline: "Draft — not ready",
+			ActionKey: "M", ActionLabel: "Mark ready"}
+	case len(failing) > 0:
+		return Card{Kind: KindChecksFailing,
+			Headline: ChecksFailingHeadline(len(failing)), Lines: failing,
+			ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
+	case pr.ReviewDecision == "CHANGES_REQUESTED":
+		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
+			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}
+	case pr.CIState() == "pending":
+		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
+			Lines: checksByState(pr, "pending"), JumpTab: "checks"}
+	case pr.ReviewDecision == "REVIEW_REQUIRED":
+		return Card{Kind: KindAwaitingReview, Headline: "Awaiting review", JumpTab: "reviews"}
+	default:
+		return Card{Kind: KindFallback, Headline: ""}
+	}
+}
+
+// ChecksFailingHeadline renders the failing-checks count with correct grammar.
+func ChecksFailingHeadline(n int) string {
+	if n == 1 {
+		return "1 check failing"
+	}
+	return fmt.Sprintf("%d checks failing", n)
+}
+
 func checksByState(pr gh.PR, want string) []string {
 	var out []string
-	for _, c := range pr.StatusCheckRollup {
+	for _, c := range pr.Checks() {
 		if checkState(c) == want {
 			out = append(out, c.Label())
 		}

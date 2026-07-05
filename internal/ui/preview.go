@@ -155,17 +155,16 @@ func sectionRule(label string, w int) string {
 	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
-// previewPane renders the triage card (if available) followed by the timeline,
-// or a loading/empty hint.
+// previewPane renders the triage card followed by the timeline. Before the
+// per-PR detail loads it pre-fills the identity header and a card from list-only
+// data (triage.Preliminary) so the cursor never lands on a bare "Loading…";
+// detail enriches the card and adds the review/timeline sections in place.
 func (m Model) previewPane() string {
 	v, ok := m.cursorVars()
 	if !ok {
 		return ""
 	}
 	d, cached := m.detail[v.Number]
-	if !cached {
-		return "Loading preview…"
-	}
 	w := m.previewWidth()
 	bw := w - 2 // body width: leave room for the 2-col section indent below
 	// A section is its label (flush) + body indented one level under it; the blank
@@ -177,7 +176,10 @@ func (m Model) previewPane() string {
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
 		blocks = append(blocks, identityHeader(pr))
-		tc := triage.Compute(pr, d)
+		tc := triage.Preliminary(pr)
+		if cached {
+			tc = triage.Compute(pr, d)
+		}
 		if card := renderCard(tc, bw); card != "" {
 			blocks = append(blocks, section("blocker", card))
 		}
@@ -189,6 +191,10 @@ func (m Model) previewPane() string {
 				blocks = append(blocks, section("checks", ci))
 			}
 		}
+	}
+	if !cached {
+		blocks = append(blocks, dimStyle.Render("  loading details…"))
+		return strings.Join(blocks, "\n\n")
 	}
 	blocks = append(blocks, section("review", reviewLine(d)))
 	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
@@ -235,7 +241,7 @@ func ciLine(pr gh.PR) string {
 	switch pr.CIState() {
 	case "fail":
 		var names []string
-		for _, c := range pr.StatusCheckRollup {
+		for _, c := range pr.Checks() {
 			if c.Result() == "fail" {
 				names = append(names, c.Label())
 			}
