@@ -75,8 +75,94 @@ func TestBackgroundFetchCachesWithoutClobbering(t *testing.T) {
 	}
 }
 
+func TestStateToggleRecomputesFilter(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("x")
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 1}})
+	m.renderList()
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = u.(Model)
+	if m.state != "merged" || m.filter != "is:merged author:@me" {
+		t.Fatalf("s toggle: state=%q filter=%q", m.state, m.filter)
+	}
+	u, _ = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = u.(Model)
+	if m.state != "closed" || m.filter != "is:closed author:@me" {
+		t.Fatalf("second s toggle: state=%q filter=%q", m.state, m.filter)
+	}
+}
+
+func TestMineFetchedCachesPerState(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open author:@me", c) // mine view, open
+	m.SetRepo("x")
+	m.width, m.height = 120, 30
+	m.loaded = true
+
+	// A merged-state mine result arriving while viewing open: cache only, no repaint.
+	mineRaw, _ := json.Marshal([]gh.PR{{Number: 7}})
+	revRaw, _ := json.Marshal([]gh.PR{})
+	u, _ := m.Update(mineFetchedMsg{state: "merged", mine: []gh.PR{{Number: 7}}, mineRaw: mineRaw, reviewRaw: revRaw})
+	m = u.(Model)
+
+	if _, ok := c.Get(prKey("x", "is:merged author:@me")); !ok {
+		t.Fatal("merged mine result not cached under its per-state key")
+	}
+	if ps := m.section.(*PRSection); ps.Len() != 0 {
+		t.Fatalf("merged prewarm should not repaint the open view, got %d rows", ps.Len())
+	}
+}
+
+func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("x")
+	m.SetRunner(stubRunner{}) // returns "[]"; backgroundRefresh just needs non-nil
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 42}})
+	m.renderList()
+	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
+	m.fresh[42] = true
+	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
+
+	u, cmd := m.Update(actionDoneMsg{})
+	m = u.(Model)
+
+	if m.fresh[42] {
+		t.Fatal("successful mutating action should clear detail freshness for #42")
+	}
+	if !m.refreshing {
+		t.Fatal("successful mutating action should trigger a refetch (refreshing=true)")
+	}
+	if cmd == nil {
+		t.Fatal("expected a refetch command batch")
+	}
+}
+
+func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("x")
+	m.SetRunner(stubRunner{})
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 42}})
+	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
+	m.fresh[42] = true
+	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
+
+	u, _ := m.Update(actionDoneMsg{err: fmt.Errorf("boom")})
+	m = u.(Model)
+
+	if !m.fresh[42] {
+		t.Fatal("failed action must not clear freshness")
+	}
+	if m.refreshing {
+		t.Fatal("failed action must not refetch")
+	}
+}
+
 func TestMineViewSections(t *testing.T) {
-	m := NewModel("/repo", mineFilter, nil)
+	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("x")
 	m.width, m.height = 130, 40
 	m.setMine(

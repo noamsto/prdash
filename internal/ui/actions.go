@@ -126,6 +126,8 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	case "rerun-failed":
 		r, dir, branch := m.runner, m.dir, v.HeadRefName
 		m.actionStatus = statFor(a)
+		m.actionStatus.refresh = a.Refresh
+		m.actionStatus.nums = []int{v.Number}
 		return tea.Batch(func() tea.Msg {
 			return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
 		}, m.startSpinner())
@@ -137,6 +139,8 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		r, dir := m.runner, m.dir
 		m.actionStatus = statFor(a)
+		m.actionStatus.refresh = a.Refresh
+		m.actionStatus.nums = []int{v.Number}
 		return tea.Batch(func() tea.Msg {
 			_, err := r.Run(dir, argv[1:]...) // argv[0]=="gh"
 			return actionDoneMsg{err: err}
@@ -152,6 +156,8 @@ type actionStat struct {
 	fail    string // shown on failure
 	settled bool
 	err     error
+	refresh bool  // true when the action mutated the PR(s) → refetch on success
+	nums    []int // PR numbers the action touched, for detail-freshness invalidation
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -200,6 +206,7 @@ func (m Model) assignReviewersCmd(number int, add, remove []string) tea.Cmd {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
+	delete(m.fresh, number) // reviewer set changed → summary must revalidate
 	r, dir := m.runner, m.dir
 	args := []string{"pr", "edit", strconv.Itoa(number)}
 	if len(add) > 0 {
@@ -249,6 +256,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 // inline gh actions run across the selection and settle to an aggregate badge.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
 	var argvs [][]string
+	var nums []int
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -264,6 +272,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 			m.queueExit(a.Key, argv)
 		} else {
 			argvs = append(argvs, argv)
+			nums = append(nums, v.Number)
 		}
 	}
 	if a.ExitsTUI {
@@ -274,6 +283,8 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 	}
 	n := len(argvs)
 	m.actionStatus = statForBulk(a, n)
+	m.actionStatus.refresh = a.Refresh
+	m.actionStatus.nums = nums
 	m.sel.clear() // the batch op consumes the selection
 	r, dir := m.runner, m.dir
 	return tea.Batch(func() tea.Msg {

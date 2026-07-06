@@ -11,6 +11,7 @@ type prsFetchedMsg struct {
 // mineFetchedMsg carries both halves of the "mine" view (authored +
 // review-requested) so it can render them as two sections.
 type mineFetchedMsg struct {
+	state              string // the PR state (open/merged/closed) this result is for
 	mine, review       []gh.PR
 	mineRaw, reviewRaw []byte
 }

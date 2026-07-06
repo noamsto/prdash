@@ -289,7 +289,8 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 		return m, clearStatusCmd()
 	}
 	r, dir := m.runner, m.dir
-	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed"}
+	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
+		refresh: true, nums: []int{ps.prAt(m.cursor).Number}}
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: action.RerunCheck(r, dir, job)}
 	}, m.startSpinner())
@@ -302,7 +303,8 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	r, dir, branch := m.runner, m.dir, v.HeadRefName
-	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed"}
+	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
+		refresh: true, nums: []int{v.Number}}
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
 	}, m.startSpinner())
