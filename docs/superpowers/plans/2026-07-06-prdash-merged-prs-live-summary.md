@@ -101,7 +101,15 @@ Expected: FAIL — `undefined: searchFor` (etc.), build error.
 
 - [ ] **Step 3: Add the pure helpers**
 
-Add to `internal/ui/filter_presets.go` (top-level, below the existing consts; ensure `strings` is imported):
+`filter_presets.go` currently has no import block (line 1 is `package ui`), so first add one at the top of the file:
+
+```go
+package ui
+
+import "strings"
+```
+
+Then add the helpers (top-level, below the existing consts):
 
 ```go
 // prStates is the PR state cycle for the `s` toggle. Order = cycle order.
@@ -173,31 +181,11 @@ Flip presets/constants to bodies, add `Model.state`/`Model.body`, rewire every c
 
 - [ ] **Step 1: Write the failing behavior tests**
 
-In `internal/ui/perf_actions_test.go`, **replace** `TestBackgroundFetchCachesWithoutClobbering` (the mine-prewarm guard test) and add two new tests:
+In `internal/ui/perf_actions_test.go`, add two new tests (leave the existing
+`TestBackgroundFetchCachesWithoutClobbering` unchanged — its open-state strings resolve
+identically, and the mine-prewarm guard is now covered by `TestMineFetchedCachesPerState`):
 
 ```go
-func TestBackgroundFetchCachesWithoutClobbering(t *testing.T) {
-	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
-	m := NewModel("/repo", "is:open author:@me", c)
-	m.SetRepo("x")
-	m.width, m.height = 120, 30
-	m.setPRs([]gh.PR{{Number: 1, Title: "mine"}})
-	m.loaded = true
-
-	other := "is:open review-requested:@me"
-	raw, _ := json.Marshal([]gh.PR{{Number: 50}})
-	u, _ := m.Update(prsFetchedMsg{filter: other, prs: []gh.PR{{Number: 50}}, raw: raw})
-	m = u.(Model)
-
-	ps := m.section.(*PRSection)
-	if len(ps.prs) != 1 || ps.prs[0].Number != 1 {
-		t.Fatalf("background fetch clobbered the current view: %+v", ps.prs)
-	}
-	if _, ok := c.Get(prKey("x", other)); !ok {
-		t.Fatal("background fetch did not populate the cache")
-	}
-}
-
 func TestStateToggleRecomputesFilter(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("x")
@@ -417,9 +405,10 @@ Update the mine branch of `hydrate` (`internal/ui/prlist.go`) to read per-state 
 
 - [ ] **Step 8: Show state in the header**
 
-In `header` (`internal/ui/prlist.go`), use body for the custom-filter label and add the state segment (drop the hardcoded "open"):
+In `header` (`internal/ui/prlist.go`), use body for the custom-filter label and add the state segment (drop the hardcoded "open"). Also update the stale doc comment on the line above (`// header is the top line: repo · filter · open count.`) to drop "open count":
 
 ```go
+// header is the top line: repo · preset · state · count.
 func (m Model) header() string {
 	label := m.body
 	if m.presetIdx >= 0 {
@@ -436,6 +425,16 @@ func (m Model) header() string {
 	}
 	return h
 }
+```
+
+- [ ] **Step 8b: Make the empty-state hint state-aware**
+
+In `renderMain` (`internal/ui/prlist.go`, the `m.section.Len() == 0` branch, ~line 187), the hint hardcodes `"No open PRs."`. Make it read the state:
+
+```go
+		if m.loaded {
+			hint = fmt.Sprintf("No %s PRs.", m.state)
+		}
 ```
 
 - [ ] **Step 9: Fix the remaining `mineFilter` reference in perf_actions_test.go**
@@ -577,6 +576,7 @@ func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 42}})
 	m.renderList()
+	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
 	m.fresh[42] = true
 	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
 
@@ -600,6 +600,7 @@ func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
 	m.SetRunner(stubRunner{})
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 42}})
+	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
 	m.fresh[42] = true
 	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
 
