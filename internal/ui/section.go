@@ -398,6 +398,40 @@ func truncate(s string, w int) string {
 	return string(r[:w-1]) + "…"
 }
 
+// renderChips renders labels as rounded color pills, packed into maxW cells and
+// summarised with a "+N" when they don't all fit.
+func renderChips(labels []gh.Label, maxW int) string {
+	if len(labels) == 0 || maxW < 3 {
+		return ""
+	}
+	var b strings.Builder
+	used, shown := 0, 0
+	for _, l := range labels {
+		chip := labelChip(l.Name, l.Color)
+		cw := lipgloss.Width(chip)
+		sep := 0
+		if shown > 0 {
+			sep = 1
+		}
+		if used+sep+cw > maxW {
+			break
+		}
+		if shown > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(chip)
+		used += sep + cw
+		shown++
+	}
+	if shown == 0 {
+		return ""
+	}
+	if shown < len(labels) {
+		b.WriteString(dimStyle.Render(fmt.Sprintf(" +%d", len(labels)-shown)))
+	}
+	return b.String()
+}
+
 // reviewDot is the single-rune review-decision glyph for the dense board row.
 func reviewDot(decision string) string {
 	switch decision {

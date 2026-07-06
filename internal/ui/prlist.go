@@ -49,6 +49,7 @@ type Model struct {
 	previewN        int
 	expanded        bool
 	expandedTab     int
+	checkCursor     int         // hovered check on the expanded Checks tab
 	loaded          bool        // first live fetch has returned; distinguishes empty from loading
 	refreshing      bool        // a list fetch for the current filter is in flight
 	spinning        bool        // the refresh spinner tick loop is running
@@ -907,21 +908,30 @@ func (m Model) header() string {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
 	}
-	if s := m.actionStatus; s != nil {
-		switch {
-		case !s.settled:
-			spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-			h += "  " + runBadgeStyle.Render(spin+" "+s.run+"…")
-		case s.err != nil:
-			h += "  " + failBadgeStyle.Render("✗ "+s.fail)
-		default:
-			h += "  " + passBadgeStyle.Render("✓ "+s.ok)
-		}
-	}
+	h += m.statusBadge()
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
 	return h
+}
+
+// statusBadge renders the transient inline-action badge (spinner while running,
+// ✓/✗ once settled), or "" when idle. Shared by the list header and the
+// expanded view, which otherwise wouldn't surface a rerun's outcome.
+func (m Model) statusBadge() string {
+	s := m.actionStatus
+	if s == nil {
+		return ""
+	}
+	switch {
+	case !s.settled:
+		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		return "  " + runBadgeStyle.Render(spin+" "+s.run+"…")
+	case s.err != nil:
+		return "  " + failBadgeStyle.Render("✗ "+s.fail)
+	default:
+		return "  " + passBadgeStyle.Render("✓ "+s.ok)
+	}
 }
 
 // listTitle is the list pane's border title: the section kind + shown count.

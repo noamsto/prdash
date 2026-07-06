@@ -39,6 +39,26 @@ func TestLadderPriority(t *testing.T) {
 	}
 }
 
+func TestPreliminary(t *testing.T) {
+	cases := []struct {
+		name string
+		p    gh.PR
+		want Kind
+	}{
+		{"draft", gh.PR{IsDraft: true}, KindDraft},
+		{"failing", pr(gh.Check{State: "FAILURE", Name: "lint"}), KindChecksFailing},
+		{"changes", gh.PR{ReviewDecision: "CHANGES_REQUESTED", StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}, KindChangesRequested},
+		{"running", pr(gh.Check{State: "PENDING"}), KindChecksRunning},
+		{"awaiting", gh.PR{ReviewDecision: "REVIEW_REQUIRED", StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}, KindAwaitingReview},
+		{"clean fallback", pr(gh.Check{State: "SUCCESS"}), KindFallback},
+	}
+	for _, c := range cases {
+		if got := Preliminary(c.p).Kind; got != c.want {
+			t.Errorf("%s: Kind = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestFailingChecksListed(t *testing.T) {
 	card := Compute(pr(gh.Check{State: "FAILURE", Name: "lint"}, gh.Check{State: "SUCCESS", Name: "build"}),
 		gh.PRDetail{MergeStateStatus: "BLOCKED"})

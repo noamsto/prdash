@@ -150,6 +150,26 @@ func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
 	}
 }
 
+func TestPreviewPrefillsBeforeDetailLoads(t *testing.T) {
+	ansi := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.renderList() // no m.detail[1]: detail not yet fetched
+	out := ansi.ReplaceAllString(m.previewPane(), "")
+	if strings.Contains(out, "Loading preview…") {
+		t.Fatalf("uncached preview should pre-fill from list data, not bare loading:\n%s", out)
+	}
+	if !strings.Contains(out, "1 check failing") {
+		t.Fatalf("pre-fill should surface the failing-checks blocker:\n%s", out)
+	}
+	if !strings.Contains(out, "loading details…") {
+		t.Fatalf("pre-fill should still flag that detail is loading:\n%s", out)
+	}
+}
+
 func TestPreviewWidthSubtractsBorder(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 150, 40 // wide: side pane shows

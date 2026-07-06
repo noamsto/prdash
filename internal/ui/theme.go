@@ -2,6 +2,7 @@ package ui
 
 import (
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +126,46 @@ func reviewStateLabel(state string) string {
 	default:
 		return dimStyle.Render(state)
 	}
+}
+
+// lightText reports whether a label background (6-hex, no '#') is dark enough to
+// need light text. Uses perceptual luminance; unparsable colors default to
+// light text (safe on the dim fallback chip).
+func lightText(hex string) bool {
+	if len(hex) != 6 {
+		return true
+	}
+	r, e1 := strconv.ParseInt(hex[0:2], 16, 0)
+	g, e2 := strconv.ParseInt(hex[2:4], 16, 0)
+	b, e3 := strconv.ParseInt(hex[4:6], 16, 0)
+	if e1 != nil || e2 != nil || e3 != nil {
+		return true
+	}
+	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+	return lum < 150
+}
+
+// Rounded chip end-caps: Powerline half-circles drawn in the chip's own color on
+// the pane background, so a label reads as a rounded pill. Both are Nerd Font
+// glyphs (ple-left/right-half-circle-thick); swap if your font maps them out.
+const (
+	chipCapLeft  = "\ue0b6" // nerd: ple-left-half-circle-thick
+	chipCapRight = "\ue0b4" // nerd: ple-right-half-circle-thick
+)
+
+// labelChip renders one rounded label pill: GitHub hex as the fill with auto
+// black/white text by luminance; empty/invalid colors fall back to a dim chip.
+func labelChip(name, hex string) string {
+	fg, bg := lipgloss.Color(theme.Base), lipgloss.Color("#"+hex)
+	switch {
+	case len(hex) != 6:
+		fg, bg = lipgloss.Color(theme.Text), lipgloss.Color(theme.RowBg)
+	case lightText(hex):
+		fg = lipgloss.Color(theme.Text)
+	}
+	caps := lipgloss.NewStyle().Foreground(bg)
+	body := lipgloss.NewStyle().Foreground(fg).Background(bg)
+	return caps.Render(chipCapLeft) + body.Render(name) + caps.Render(chipCapRight)
 }
 
 // ciGlyph maps a CIState() value to a colored single-rune glyph.
