@@ -65,7 +65,61 @@ func TestFailingChecksListed(t *testing.T) {
 	if card.ActionKey != "r" {
 		t.Errorf("failing-checks action = %q, want r", card.ActionKey)
 	}
-	if len(card.Lines) == 0 || card.Lines[0] != "lint" {
-		t.Errorf("expected failing check 'lint' listed: %+v", card.Lines)
+	if len(card.Failing) == 0 || card.Failing[0] != "lint" {
+		t.Errorf("expected failing check 'lint' listed: %+v", card.Failing)
+	}
+}
+
+func TestChecksCardShowsFailingAndRunningTogether(t *testing.T) {
+	p := pr(
+		gh.Check{State: "FAILURE", Name: "lint"},
+		gh.Check{State: "PENDING", Name: "build"},
+		gh.Check{State: "PENDING", Name: "e2e"},
+	)
+	c := Compute(p, gh.PRDetail{MergeStateStatus: "BLOCKED"})
+	if c.Kind != KindChecksFailing {
+		t.Fatalf("Kind = %v, want KindChecksFailing", c.Kind)
+	}
+	if got := c.Failing; len(got) != 1 || got[0] != "lint" {
+		t.Fatalf("Failing = %v, want [lint]", got)
+	}
+	if got := c.Running; len(got) != 2 {
+		t.Fatalf("Running = %v, want 2 entries", got)
+	}
+	if c.Headline != "1 failing · 2 running" {
+		t.Fatalf("Headline = %q, want %q", c.Headline, "1 failing · 2 running")
+	}
+}
+
+func TestChecksFailingOnlyHeadlineUnchanged(t *testing.T) {
+	c := Compute(pr(gh.Check{State: "FAILURE", Name: "lint"}), gh.PRDetail{MergeStateStatus: "BLOCKED"})
+	if c.Headline != "1 check failing" {
+		t.Fatalf("Headline = %q, want %q", c.Headline, "1 check failing")
+	}
+	if len(c.Running) != 0 {
+		t.Fatalf("Running = %v, want empty", c.Running)
+	}
+}
+
+func TestChecksRunningCardPopulatesRunning(t *testing.T) {
+	c := Compute(pr(gh.Check{State: "PENDING", Name: "build"}), gh.PRDetail{MergeStateStatus: "UNSTABLE"})
+	if c.Kind != KindChecksRunning {
+		t.Fatalf("Kind = %v, want KindChecksRunning", c.Kind)
+	}
+	if got := c.Running; len(got) != 1 || got[0] != "build" {
+		t.Fatalf("Running = %v, want [build]", got)
+	}
+}
+
+func TestPreliminaryFoldsRunningIntoFailingCard(t *testing.T) {
+	c := Preliminary(pr(
+		gh.Check{State: "FAILURE", Name: "lint"},
+		gh.Check{State: "PENDING", Name: "build"},
+	))
+	if c.Kind != KindChecksFailing {
+		t.Fatalf("Kind = %v, want KindChecksFailing", c.Kind)
+	}
+	if len(c.Failing) != 1 || len(c.Running) != 1 {
+		t.Fatalf("Failing=%v Running=%v, want one each", c.Failing, c.Running)
 	}
 }

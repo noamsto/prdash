@@ -9,7 +9,7 @@ import (
 
 func TestRenderCardShowsHeadlineAndAction(t *testing.T) {
 	c := triage.Card{Kind: triage.KindChecksFailing, Headline: "2 checks failing",
-		Lines: []string{"lint", "e2e"}, ActionKey: "r", ActionLabel: "rerun checks"}
+		Failing: []string{"lint", "e2e"}, ActionKey: "r", ActionLabel: "rerun checks"}
 	out := renderCard(c, 40)
 	if !strings.Contains(out, "2 checks failing") {
 		t.Fatalf("headline missing: %q", out)
@@ -19,6 +19,31 @@ func TestRenderCardShowsHeadlineAndAction(t *testing.T) {
 	}
 	if !strings.Contains(out, "r") || !strings.Contains(out, "rerun checks") {
 		t.Fatalf("suggested action missing: %q", out)
+	}
+}
+
+func TestRenderCardShowsFailingAndRunningGlyphs(t *testing.T) {
+	c := triage.Card{Kind: triage.KindChecksFailing, Headline: "1 failing · 1 running",
+		Failing: []string{"lint"}, Running: []string{"build"},
+		ActionKey: "r", ActionLabel: "rerun checks"}
+	out := renderCard(c, 40)
+	if !strings.Contains(out, "✗ lint") {
+		t.Fatalf("failing glyph/label missing: %q", out)
+	}
+	if !strings.Contains(out, "● build") {
+		t.Fatalf("running glyph/label missing: %q", out)
+	}
+}
+
+func TestRenderCardRunningOnlyHasNoFailGlyph(t *testing.T) {
+	c := triage.Card{Kind: triage.KindChecksRunning, Headline: "Checks running…",
+		Running: []string{"build"}}
+	out := renderCard(c, 40)
+	if !strings.Contains(out, "● build") {
+		t.Fatalf("running glyph/label missing: %q", out)
+	}
+	if strings.Contains(out, "✗") {
+		t.Fatalf("unexpected fail glyph on running-only card: %q", out)
 	}
 }
 

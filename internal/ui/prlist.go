@@ -54,6 +54,7 @@ type Model struct {
 	refreshing      bool        // a list fetch for the current filter is in flight
 	spinning        bool        // the refresh spinner tick loop is running
 	spinnerFrame    int         // advancing index into spinnerFrames
+	polling         bool        // the live-checks poll tick loop is running
 	actionStatus    *actionStat // transient inline-action progress shown by the header
 	presetIdx       int         // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax      bool        // z: preview takes full width, list hidden
@@ -402,6 +403,57 @@ func (m *Model) startSpinner() tea.Cmd {
 	return spinnerTick()
 }
 
+const pollInterval = 30 * time.Second
+
+func checksPollTick() tea.Cmd {
+	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return checksPollMsg{} })
+}
+
+// anyChecksRunning reports whether any shown PR row has an in-flight check.
+// It scans individual checks rather than PR.CIState(), which collapses to
+// "fail" when any check failed and would hide checks still running behind it.
+func (m Model) anyChecksRunning() bool {
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return false
+	}
+	for i := 0; i < ps.Len(); i++ {
+		for _, c := range ps.prAt(i).Checks() {
+			if c.Result() == "pending" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pollBusy reports whether a user interaction or an in-flight fetch should defer
+// this poll beat, so the background refresh never reorders rows under the user.
+func (m Model) pollBusy() bool {
+	return m.refreshing || m.filtering || m.showPicker || m.pending != nil || m.actionRunning()
+}
+
+// maybeStartPoll kicks the poll loop when a fetch reveals running checks, unless
+// it is already running (one loop only, like the spinner).
+func (m *Model) maybeStartPoll() tea.Cmd {
+	if m.polling || !m.anyChecksRunning() {
+		return nil
+	}
+	m.polling = true
+	return checksPollTick()
+}
+
+// backgroundRefresh silently reconciles the current view without clearing rows —
+// the same fetch path as a filter switch, minus the row reset.
+func (m *Model) backgroundRefresh() tea.Cmd {
+	m.refreshing = true
+	fetch := m.fetchCmd(m.filter)
+	if m.isMineView() {
+		fetch = m.mineFetchCmd()
+	}
+	return tea.Batch(fetch, m.startSpinner())
+}
+
 // switchToFilter repoints the model at m.filter: it paints cached rows instantly
 // when the preset is warm (else clears stale rows), flags a refresh, and returns
 // the live fetch to reconcile.
@@ -531,7 +583,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case mineFetchedMsg:
 		if m.cache != nil {
 			m.cache.Set(prKey(m.repo, mineFilter), msg.mineRaw)
@@ -547,7 +599,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // a background prewarm failed; the current view is unaffected
@@ -587,6 +639,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinning = true
 		m.spinnerFrame++
 		return m, spinnerTick()
+	case checksPollMsg:
+		if !m.anyChecksRunning() {
+			m.polling = false
+			return m, nil
+		}
+		if m.pollBusy() {
+			return m, checksPollTick() // skip this beat, keep the loop alive
+		}
+		return m, tea.Batch(m.backgroundRefresh(), checksPollTick())
 	case actionDoneMsg:
 		// Scope the error to the status line rather than m.err, which blanks the board.
 		if m.actionStatus != nil {
