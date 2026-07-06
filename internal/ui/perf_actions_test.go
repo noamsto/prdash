@@ -115,6 +115,52 @@ func TestMineFetchedCachesPerState(t *testing.T) {
 	}
 }
 
+func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("x")
+	m.SetRunner(stubRunner{}) // returns "[]"; backgroundRefresh just needs non-nil
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 42}})
+	m.renderList()
+	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
+	m.fresh[42] = true
+	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
+
+	u, cmd := m.Update(actionDoneMsg{})
+	m = u.(Model)
+
+	if m.fresh[42] {
+		t.Fatal("successful mutating action should clear detail freshness for #42")
+	}
+	if !m.refreshing {
+		t.Fatal("successful mutating action should trigger a refetch (refreshing=true)")
+	}
+	if cmd == nil {
+		t.Fatal("expected a refetch command batch")
+	}
+}
+
+func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.SetRepo("x")
+	m.SetRunner(stubRunner{})
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 42}})
+	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
+	m.fresh[42] = true
+	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
+
+	u, _ := m.Update(actionDoneMsg{err: fmt.Errorf("boom")})
+	m = u.(Model)
+
+	if !m.fresh[42] {
+		t.Fatal("failed action must not clear freshness")
+	}
+	if m.refreshing {
+		t.Fatal("failed action must not refetch")
+	}
+}
+
 func TestMineViewSections(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("x")

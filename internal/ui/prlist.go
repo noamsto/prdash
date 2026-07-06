@@ -658,17 +658,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.backgroundRefresh(), checksPollTick())
 	case actionDoneMsg:
 		// Scope the error to the status line rather than m.err, which blanks the board.
-		if m.actionStatus != nil {
-			m.actionStatus.settled = true
-			m.actionStatus.err = msg.err
-			if msg.ok != "" {
-				m.actionStatus.ok = msg.ok
-			}
-			if msg.fail != "" {
-				m.actionStatus.fail = msg.fail
-			}
+		if m.actionStatus == nil {
+			return m, clearStatusCmd()
 		}
-		return m, clearStatusCmd()
+		m.actionStatus.settled = true
+		m.actionStatus.err = msg.err
+		if msg.ok != "" {
+			m.actionStatus.ok = msg.ok
+		}
+		if msg.fail != "" {
+			m.actionStatus.fail = msg.fail
+		}
+		cmds := []tea.Cmd{clearStatusCmd()}
+		if msg.err == nil && m.actionStatus.refresh {
+			for _, n := range m.actionStatus.nums {
+				delete(m.fresh, n) // force the detail/summary to revalidate
+			}
+			cmds = append(cmds, m.backgroundRefresh())
+		}
+		return m, tea.Batch(cmds...)
 	case actionClearMsg:
 		if m.actionStatus != nil && m.actionStatus.settled {
 			m.actionStatus = nil
