@@ -27,7 +27,8 @@ const (
 type Card struct {
 	Kind        Kind
 	Headline    string
-	Lines       []string // e.g. the failing check names
+	Failing     []string // failing check labels
+	Running     []string // in-progress check labels
 	ActionKey   string   // key the user presses to act ("" if none)
 	ActionLabel string
 	JumpTab     string // "" | "checks" | "reviews" | "conversation"
@@ -48,9 +49,7 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 		return Card{Kind: KindConflict, Headline: "Conflicts with base",
 			ActionKey: "enter", ActionLabel: "worktree to resolve"}
 	case len(failing) > 0:
-		return Card{Kind: KindChecksFailing,
-			Headline: ChecksFailingHeadline(len(failing)), Lines: failing,
-			ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
+		return checksFailingCard(failing, pending)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
 			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}
@@ -68,7 +67,7 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 			JumpTab: "reviews"}
 	case len(pending) > 0 || mss == "UNSTABLE":
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
-			Lines: pending, JumpTab: "checks"}
+			Running: pending, JumpTab: "checks"}
 	case mss == "CLEAN" || mss == "HAS_HOOKS":
 		return Card{Kind: KindReady, Headline: "Ready to merge",
 			ActionKey: "m", ActionLabel: "merge (squash)"}
@@ -84,25 +83,36 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 // per-PR detail fetch returns. Compute supersedes it once detail is cached.
 func Preliminary(pr gh.PR) Card {
 	failing := checksByState(pr, "fail")
+	pending := checksByState(pr, "pending")
 	switch {
 	case pr.IsDraft:
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
 			ActionKey: "M", ActionLabel: "Mark ready"}
 	case len(failing) > 0:
-		return Card{Kind: KindChecksFailing,
-			Headline: ChecksFailingHeadline(len(failing)), Lines: failing,
-			ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
+		return checksFailingCard(failing, pending)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
 			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}
 	case pr.CIState() == "pending":
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
-			Lines: checksByState(pr, "pending"), JumpTab: "checks"}
+			Running: pending, JumpTab: "checks"}
 	case pr.ReviewDecision == "REVIEW_REQUIRED":
 		return Card{Kind: KindAwaitingReview, Headline: "Awaiting review", JumpTab: "reviews"}
 	default:
 		return Card{Kind: KindFallback, Headline: ""}
 	}
+}
+
+// checksFailingCard builds the failing-checks card, folding any still-running
+// checks in as a second group so the summary shows both at once.
+func checksFailingCard(failing, pending []string) Card {
+	headline := ChecksFailingHeadline(len(failing))
+	if len(pending) > 0 {
+		headline = fmt.Sprintf("%d failing · %d running", len(failing), len(pending))
+	}
+	return Card{Kind: KindChecksFailing, Headline: headline,
+		Failing: failing, Running: pending,
+		ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
 }
 
 // ChecksFailingHeadline renders the failing-checks count with correct grammar.
