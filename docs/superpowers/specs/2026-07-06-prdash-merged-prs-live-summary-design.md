@@ -115,6 +115,10 @@ The other filter mutation sites set `m.body` and recompute `m.filter` the same w
 The mine view fetches two searches; make both state-aware:
 
 - `mineFetchCmd` lists `searchFor(m.state, mineBody)` and `searchFor(m.state, reviewBody)`.
+  Its `fetchFailedMsg` error tags must use `searchFor(m.state, mineBody)` too — today
+  they are hardcoded to `mineFilter`, so under a non-open state the `fetchFailedMsg`
+  guard (`msg.filter != m.filter`) would misclassify the failure as a background
+  prewarm, swallow the error, and leave the spinner stuck (`m.refreshing` never clears).
 - `mineFetchedMsg` carries the `state` it was fetched under; the handler caches each
   half under `searchFor(msg.state, …)` and only repaints when
   `m.isMineView() && msg.state == m.state` (otherwise it is a background prewarm →
@@ -124,7 +128,10 @@ The mine view fetches two searches; make both state-aware:
 ### Header + help
 
 - Header shows the state: `repo   mine · merged · 12` (drop the hardcoded "open" in
-  the count suffix — the count is now state-relative).
+  the count suffix — the count is now state-relative). For a custom author filter
+  (`presetIdx == -1`), the label must switch from `m.filter` to `m.body`, else the
+  state renders twice (once in the resolved filter string, once in the new state
+  segment).
 - Add `s  cycle state (open/merged/closed)` to the `?` legend and, if space allows,
   the status bar.
 
@@ -147,6 +154,13 @@ Add `Refresh bool` to `action.Action`. Set `true` in `DefaultPRActions` for:
 
 Copy / open-in-browser / worktree actions leave it `false`.
 
+**Expanded Checks-tab rerun paths.** `rerunSelectedCheck` and `rerunAllFailedChecks`
+(`internal/ui/expanded.go`) build `actionStat{…}` literals directly and emit
+`actionDoneMsg`, bypassing `runAction`/`runBulk`. They must set `refresh: true` and
+`nums: [cursor PR number]` on their `actionStat` too, or rerunning from the Checks tab
+won't refresh while `r` from the list would. Route both through a shared helper that
+stamps `refresh`/`nums`, or set the fields inline in each.
+
 ### Carry affected PRs through the action lifecycle
 
 `actionStat` gains `refresh bool` and `nums []int` (the PR numbers the action touched):
@@ -160,7 +174,7 @@ Add a cursor-preserving refetch (unlike `switchToFilter`, which resets cursor +
 selection):
 
 ```go
-// refreshCurrent refetches the active view in place, keeping cursor/selection.
+// refreshCurrent refetches the active view in place, keeping the cursor.
 func (m *Model) refreshCurrent() tea.Cmd {
     m.refreshing = true
     fetch := m.fetchCmd(m.filter)
@@ -170,6 +184,12 @@ func (m *Model) refreshCurrent() tea.Cmd {
     return tea.Batch(fetch, m.startSpinner())
 }
 ```
+
+Note: `refreshCurrent` preserves the **cursor** (`setPRs` only clamps it), but the
+selection is dropped regardless — both `prsFetchedMsg` and `mineFetchedMsg`
+unconditionally `m.sel.clear()` on arrival. That is fine here: bulk actions already
+clear the selection in `runBulk`, and after a mutating action a stale selection is
+undesirable anyway.
 
 In the `actionDoneMsg` handler, after settling the badge, when `err == nil &&
 m.actionStatus.refresh`:
@@ -198,6 +218,15 @@ so the summary updates too.
 - Continuous polling of in-flight CI after a rerun — one refetch on completion, not a
   live tail.
 
+## Assumption to smoke-test
+
+`PRListArgs` (`internal/gh/prs.go`) never passes `--state`; state lives entirely in the
+`--search` string, so swapping the token to `is:merged`/`is:closed` is consistent with
+the existing contract. This can't be unit-tested here (private repo, no auth), so verify
+manually that `gh pr list --search "is:merged author:@me"` returns merged PRs before
+relying on it — if `gh` ever injects a default `is:open`, merged views would come back
+empty.
+
 ## Testing
 
 - `filter_presets_test.go`: `searchFor`, `splitState`, `nextState`, `presetIndexFor`
@@ -208,3 +237,8 @@ so the summary updates too.
 - Action refresh: a mutating action success clears `m.fresh` for the affected numbers
   and issues a refetch; a non-mutating action (copy) does not; a failed mutating action
   does not refetch.
+- Rewrite the existing mine-prewarm guard test (`internal/ui/perf_actions_test.go`,
+  the `m.filter != mineFilter` case): the guard becomes `isMineView() && msg.state ==
+  m.state`, and `mineFetchedMsg` gains a `state` field. Other filter-string assertions
+  (e.g. `picker_test.go`, open-state `perf_actions_test.go` cases) survive unchanged
+  because open-state resolved strings are identical.
