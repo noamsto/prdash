@@ -22,6 +22,8 @@ import (
 type Model struct {
 	dir             string
 	filter          string
+	state           string // open | merged | closed; the s-toggle dimension
+	body            string // state-agnostic qualifier (e.g. "author:@me", "")
 	cache           *cache.Cache
 	runner          gh.Runner
 	vp              viewport.Model
@@ -71,11 +73,14 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	ti.Prompt = "/"
 	af := textinput.New()
 	af.Prompt = "› "
+	state, body := splitState(filter)
+	resolved := searchFor(state, body)
 	return Model{
-		dir: dir, filter: filter, cache: c, section: NewPRSection(filter),
+		dir: dir, filter: resolved, state: state, body: body,
+		cache: c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, fresh: map[int]bool{}, previewN: 2,
-		presetIdx: presetIndexFor(filter), refreshing: true,
+		presetIdx: presetIndexFor(body), refreshing: true,
 	}
 }
 
@@ -185,7 +190,7 @@ func (m *Model) renderList() {
 		m.cursorLine = 0
 		hint := "Loading…"
 		if m.loaded {
-			hint = "No open PRs."
+			hint = fmt.Sprintf("No %s PRs.", m.state)
 		}
 		content = dimStyle.Render(hint)
 	}
@@ -269,8 +274,8 @@ func (m *Model) hydrate() bool {
 		return false
 	}
 	if m.isMineView() {
-		mine, ok1 := m.cachedPRs(mineFilter)
-		rev, ok2 := m.cachedPRs(reviewFilter)
+		mine, ok1 := m.cachedPRs(searchFor(m.state, mineBody))
+		rev, ok2 := m.cachedPRs(searchFor(m.state, reviewBody))
 		if !ok1 && !ok2 {
 			return false
 		}
@@ -366,6 +371,8 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 // under its own filter key. Sequential (not parallel) — two quick gh calls.
 func (m Model) mineFetchCmd() tea.Cmd {
 	r, dir := m.runner, m.dir
+	state := m.state
+	mineF, reviewF := searchFor(state, mineBody), searchFor(state, reviewBody)
 	list := func(filter string) ([]gh.PR, []byte, error) {
 		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
 		if err != nil {
@@ -375,15 +382,15 @@ func (m Model) mineFetchCmd() tea.Cmd {
 		return prs, raw, err
 	}
 	return func() tea.Msg {
-		mine, mineRaw, err := list(mineFilter)
+		mine, mineRaw, err := list(mineF)
 		if err != nil {
-			return fetchFailedMsg{err: err, filter: mineFilter}
+			return fetchFailedMsg{err: err, filter: mineF}
 		}
-		rev, revRaw, err := list(reviewFilter)
+		rev, revRaw, err := list(reviewF)
 		if err != nil {
-			return fetchFailedMsg{err: err, filter: mineFilter}
+			return fetchFailedMsg{err: err, filter: mineF}
 		}
-		return mineFetchedMsg{mine: mine, mineRaw: mineRaw, review: rev, reviewRaw: revRaw}
+		return mineFetchedMsg{state: state, mine: mine, mineRaw: mineRaw, review: rev, reviewRaw: revRaw}
 	}
 }
 
@@ -525,7 +532,8 @@ func (m *Model) confirmPicker() tea.Cmd {
 			return nil // empty selection: keep the current filter
 		}
 		slices.Sort(terms)
-		m.filter = "is:open " + strings.Join(terms, " ")
+		m.body = strings.Join(terms, " ")
+		m.filter = searchFor(m.state, m.body)
 		m.presetIdx = -1
 		return m.switchToFilter()
 	case "reviewer":
@@ -586,11 +594,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case mineFetchedMsg:
 		if m.cache != nil {
-			m.cache.Set(prKey(m.repo, mineFilter), msg.mineRaw)
-			m.cache.Set(prKey(m.repo, reviewFilter), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, searchFor(msg.state, mineBody)), msg.mineRaw)
+			m.cache.Set(prKey(m.repo, searchFor(msg.state, reviewBody)), msg.reviewRaw)
 		}
-		if m.filter != mineFilter {
-			return m, nil // prewarm while viewing something else
+		if !m.isMineView() || msg.state != m.state {
+			return m, nil // prewarm while viewing another preset/state
 		}
 		m.refreshing = false
 		m.loaded = true
@@ -782,7 +790,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f":
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			m.presetIdx = nextPreset(max(m.presetIdx, 0))
-			m.filter = defaultPresets[m.presetIdx].search
+			m.body = defaultPresets[m.presetIdx].search
+			m.filter = searchFor(m.state, m.body)
+			return m, m.switchToFilter()
+		case "s":
+			m.state = nextState(m.state)
+			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
 		case "z":
 			m.previewMax = !m.previewMax
@@ -958,13 +971,13 @@ func clearStatusCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
 }
 
-// header is the top line: repo · filter · open count.
+// header is the top line: repo · preset · state · count.
 func (m Model) header() string {
-	label := m.filter
+	label := m.body
 	if m.presetIdx >= 0 {
 		label = defaultPresets[m.presetIdx].name
 	}
-	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %d open", label, m.section.Len()))
+	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
@@ -1030,7 +1043,7 @@ func (m Model) legendView() string {
 		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
 		"",
 		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
-		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
+		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("s") + statusBarStyle.Render(" state   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
 		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
 	}
 	body := strings.Join(rows, "\n")
@@ -1046,7 +1059,7 @@ type keyHint struct{ key, label string }
 // navHints is the keybinding cheatsheet shown in the docked panel's top section.
 var navHints = []keyHint{
 	{"↑↓", "move"}, {"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
-	{"f", "filter"}, {"F", "author"}, {"R", "reviewers"}, {"/", "find"},
+	{"f", "filter"}, {"s", "state"}, {"F", "author"}, {"R", "reviewers"}, {"/", "find"},
 	{"space", "select"}, {"V", "all"}, {"D", "drafts"}, {"q", "quit"},
 }
 
