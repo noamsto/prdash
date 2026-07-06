@@ -30,6 +30,7 @@ type Action struct {
 	ExitsTUI bool
 	Scope    string // "single" | "per-selected"
 	Confirm  bool
+	Refresh  bool // action mutates the PR; the UI refetches list+detail on success
 
 	// Inline-status wording, per state. Empty fields fall back to Label.
 	Progress string // gerund while running, e.g. "Merging"

@@ -38,6 +38,20 @@ func TestCopyActionsRebound(t *testing.T) {
 	}
 }
 
+func TestMutatingActionsMarkedRefresh(t *testing.T) {
+	a := DefaultPRActions()
+	for _, k := range []string{"m", "u", "M", "r"} {
+		if !a[k].Refresh {
+			t.Errorf("action %q should be Refresh:true", k)
+		}
+	}
+	for _, k := range []string{"y", "Y", "b", "o", "enter"} {
+		if a[k].Refresh {
+			t.Errorf("non-mutating action %q should not be Refresh", k)
+		}
+	}
+}
+
 func TestDefaultsHaveUpdateAndReady(t *testing.T) {
 	d := DefaultPRActions()
 	u := d["u"]
