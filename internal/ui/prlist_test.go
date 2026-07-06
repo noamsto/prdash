@@ -332,3 +332,72 @@ func TestStatusBarHasTopRule(t *testing.T) {
 		t.Fatalf("status bar should have a top rule separating it: %q", m.statusBar())
 	}
 }
+
+func TestAnyChecksRunningDetectsPending(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{
+		{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}},
+		{Number: 2, StatusCheckRollup: []gh.Check{{State: "PENDING"}}},
+	})
+	if !m.anyChecksRunning() {
+		t.Fatal("expected a running check to be detected")
+	}
+}
+
+func TestAnyChecksRunningFalseWhenAllSettled(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}})
+	if m.anyChecksRunning() {
+		t.Fatal("did not expect any running checks")
+	}
+}
+
+func TestFetchStartsPollLoopWhenChecksRunning(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	u, _ := m.Update(prsFetchedMsg{prs: []gh.PR{
+		{Number: 1, StatusCheckRollup: []gh.Check{{State: "PENDING"}}},
+	}})
+	if !u.(Model).polling {
+		t.Fatal("expected poll loop to start after a fetch with running checks")
+	}
+}
+
+func TestFetchDoesNotStartPollWhenAllSettled(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	u, _ := m.Update(prsFetchedMsg{prs: []gh.PR{
+		{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}},
+	}})
+	if u.(Model).polling {
+		t.Fatal("did not expect poll loop with no running checks")
+	}
+}
+
+func TestPollTickStopsWhenChecksSettle(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.polling = true
+	m.setPRs([]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}})
+	u, cmd := m.Update(checksPollMsg{})
+	if u.(Model).polling {
+		t.Fatal("expected poll loop to stop when nothing is running")
+	}
+	if cmd != nil {
+		t.Fatal("expected no reschedule after the loop stops")
+	}
+}
+
+func TestPollBusySkipsFetchButStaysAlive(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.polling = true
+	m.refreshing = true // a fetch is already in flight
+	m.setPRs([]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "PENDING"}}}})
+	if !m.pollBusy() {
+		t.Fatal("expected pollBusy while refreshing")
+	}
+	u, cmd := m.Update(checksPollMsg{})
+	if !u.(Model).polling {
+		t.Fatal("poll loop should stay alive while busy")
+	}
+	if cmd == nil {
+		t.Fatal("expected the loop to reschedule even when it skips a fetch")
+	}
+}

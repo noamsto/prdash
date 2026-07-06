@@ -38,3 +38,7 @@ type actionDoneMsg struct {
 
 // actionClearMsg wipes a settled action status after its dwell time.
 type actionClearMsg struct{}
+
+// checksPollMsg fires the live-checks poll beat; the loop runs only while some
+// shown PR has a running check.
+type checksPollMsg struct{}
