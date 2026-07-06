@@ -816,13 +816,13 @@ func (m Model) render() string {
 	board := m.board()
 	switch {
 	case m.pending != nil:
-		return overlayCenter(board, m.confirmPanel(), m.width, m.height)
+		return overlayTop(board, m.confirmPanel(), m.width, m.height)
 	case m.showPicker:
-		return overlayCenter(board, m.pickerView(), m.width, m.height)
+		return overlayTop(board, m.pickerView(), m.width, m.height)
 	case m.showLegend:
-		return overlayCenter(board, m.legendView(), m.width, m.height)
+		return overlayTop(board, m.legendView(), m.width, m.height)
 	case m.showActions:
-		return overlayCenter(board, m.actionsPanel(), m.width, m.height)
+		return overlayTop(board, m.actionsPanel(), m.width, m.height)
 	}
 	return board
 }

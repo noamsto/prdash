@@ -66,14 +66,14 @@ func TestDropLines(t *testing.T) {
 	}
 }
 
-func TestOverlayCentersPanelOverBase(t *testing.T) {
+func TestOverlayAnchorsPanelToFixedTop(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 11; i++ {
 		b.WriteString(strings.Repeat("x", 40) + "\n")
 	}
 	base := strings.TrimRight(b.String(), "\n")
 	panel := titledBox("body", 12, 3, "Actions")
-	out := overlayCenter(base, panel, 40, 11)
+	out := overlayTop(base, panel, 40, 11)
 	lines := strings.Split(out, "\n")
 	if len(lines) != 11 {
 		t.Fatalf("overlay height = %d, want 11", len(lines))
@@ -88,5 +88,15 @@ func TestOverlayCentersPanelOverBase(t *testing.T) {
 	}
 	if !strings.Contains(out, "x") {
 		t.Fatalf("overlay should keep the base visible around the panel: %q", out)
+	}
+	// Anchored at h/5 = row 2, not centered (which would be row 4) — the rows
+	// above stay pure base so the panel top never drifts with panel height.
+	for _, i := range []int{0, 1} {
+		if strings.Contains(lines[i], "Actions") {
+			t.Fatalf("row %d should be clear base above the fixed-top anchor: %q", i, lines[i])
+		}
+	}
+	if !strings.Contains(lines[2], "Actions") {
+		t.Fatalf("panel top should sit at the fixed-top row 2: %q", lines[2])
 	}
 }

@@ -65,13 +65,17 @@ func titledBox(content string, w, h int, title string) string {
 	return top + "\n" + body
 }
 
-// overlayCenter composites panel centered on top of base, leaving base visible
-// around it — a true floating dialog. Layer.Draw ignores its own x/y, so the
-// positioning has to go through a Compositor, which draws each layer at its
-// absolute bounds.
-func overlayCenter(base, panel string, w, h int) string {
+// overlayTop composites panel horizontally centered over base, anchored to a
+// fixed row near the top so overlays of differing height don't jump vertically
+// as their content changes. Tall panels are pulled up only as far as needed to
+// stay on screen. Layer.Draw ignores its own x/y, so the positioning has to go
+// through a Compositor, which draws each layer at its absolute bounds.
+func overlayTop(base, panel string, w, h int) string {
 	pw, ph := lipgloss.Width(panel), lipgloss.Height(panel)
-	px, py := (w-pw)/2, (h-ph)/2
+	px, py := (w-pw)/2, h/5
+	if py+ph > h {
+		py = h - ph
+	}
 	if px < 0 {
 		px = 0
 	}
