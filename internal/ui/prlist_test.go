@@ -352,6 +352,30 @@ func TestAnyChecksRunningFalseWhenAllSettled(t *testing.T) {
 	}
 }
 
+func TestAnyChecksRunningDetectsPendingBehindAFailure(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	// CIState() collapses this rollup to "fail", but a check is still running —
+	// the poll must fire so those running checks refresh on their own.
+	m.setPRs([]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "lint"},
+		{State: "PENDING", Name: "build"},
+	}}})
+	if !m.anyChecksRunning() {
+		t.Fatal("expected a running check to be detected behind a failing one")
+	}
+}
+
+func TestAnyChecksRunningScansMineViewBothHalves(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil) // the mine preset
+	m.setMine(
+		[]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}},
+		[]gh.PR{{Number: 2, StatusCheckRollup: []gh.Check{{State: "PENDING"}}}},
+	)
+	if !m.anyChecksRunning() {
+		t.Fatal("expected a running check in the review-requested half to be detected")
+	}
+}
+
 func TestFetchStartsPollLoopWhenChecksRunning(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	u, _ := m.Update(prsFetchedMsg{prs: []gh.PR{

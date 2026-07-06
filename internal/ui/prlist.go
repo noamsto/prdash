@@ -410,14 +410,18 @@ func checksPollTick() tea.Cmd {
 }
 
 // anyChecksRunning reports whether any shown PR row has an in-flight check.
+// It scans individual checks rather than PR.CIState(), which collapses to
+// "fail" when any check failed and would hide checks still running behind it.
 func (m Model) anyChecksRunning() bool {
 	ps, ok := m.section.(*PRSection)
 	if !ok {
 		return false
 	}
 	for i := 0; i < ps.Len(); i++ {
-		if ps.prAt(i).CIState() == "pending" {
-			return true
+		for _, c := range ps.prAt(i).Checks() {
+			if c.Result() == "pending" {
+				return true
+			}
 		}
 	}
 	return false
