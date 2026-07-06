@@ -154,12 +154,17 @@ Add `Refresh bool` to `action.Action`. Set `true` in `DefaultPRActions` for:
 
 Copy / open-in-browser / worktree actions leave it `false`.
 
-**Expanded Checks-tab rerun paths.** `rerunSelectedCheck` and `rerunAllFailedChecks`
+**Expanded Checks-tab rerun paths.** `rerunHoveredCheck` and `rerunAllFailedChecks`
 (`internal/ui/expanded.go`) build `actionStat{…}` literals directly and emit
 `actionDoneMsg`, bypassing `runAction`/`runBulk`. They must set `refresh: true` and
 `nums: [cursor PR number]` on their `actionStat` too, or rerunning from the Checks tab
-won't refresh while `r` from the list would. Route both through a shared helper that
-stamps `refresh`/`nums`, or set the fields inline in each.
+won't refresh while `r` from the list would. Set the fields inline in each.
+
+**Overlap with the auto-poll (commit #14).** `maybeStartPoll`/`checksPollMsg` already
+refetch the view (`backgroundRefresh`) on a timer *while any check is pending*. After a
+rerun that overlap covers the tail; Part 2's immediate refetch still matters because
+(a) it fires at once rather than after a poll interval, and (b) merge / update-branch /
+mark-ready don't necessarily leave a pending check, so the poll never kicks in for them.
 
 ### Carry affected PRs through the action lifecycle
 
@@ -170,22 +175,11 @@ stamps `refresh`/`nums`, or set the fields inline in each.
 
 ### Refetch on success
 
-Add a cursor-preserving refetch (unlike `switchToFilter`, which resets cursor +
-selection):
+Reuse the existing `backgroundRefresh()` (added in commit #14) — it already refetches
+the active view in place without clearing rows (`fetchCmd`/`mineFetchCmd` + spinner),
+which is exactly the cursor-preserving refetch we need. No new method required.
 
-```go
-// refreshCurrent refetches the active view in place, keeping the cursor.
-func (m *Model) refreshCurrent() tea.Cmd {
-    m.refreshing = true
-    fetch := m.fetchCmd(m.filter)
-    if m.isMineView() {
-        fetch = m.mineFetchCmd()
-    }
-    return tea.Batch(fetch, m.startSpinner())
-}
-```
-
-Note: `refreshCurrent` preserves the **cursor** (`setPRs` only clamps it), but the
+Note: `backgroundRefresh` preserves the **cursor** (`setPRs` only clamps it), but the
 selection is dropped regardless — both `prsFetchedMsg` and `mineFetchedMsg`
 unconditionally `m.sel.clear()` on arrival. That is fine here: bulk actions already
 clear the selection in `runBulk`, and after a mutating action a stale selection is
@@ -198,7 +192,7 @@ m.actionStatus.refresh`:
 for _, n := range m.actionStatus.nums {
     delete(m.fresh, n) // force the detail/summary to revalidate
 }
-cmds = append(cmds, m.refreshCurrent())
+cmds = append(cmds, m.backgroundRefresh())
 ```
 
 The resulting `prsFetchedMsg` already fans out `detailCmdForCursor` + `prefetchCmd`,
