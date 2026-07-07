@@ -128,12 +128,20 @@ read `theme` / the style globals **at call time**, so they pick up the new palet
 automatically — no signature or call-site changes anywhere.
 
 - `Model` gains `themeMode string` and `themeModTime time.Time` (seeds the watch).
-  `NewModel` calls `detectTheme()` → `applyTheme(themeFor(mode))`, sets
-  `themeMode`, and stats the state file for the initial mtime.
+- Bootstrap lives in a new `func (m *Model) InitTheme()` — `detectTheme()`,
+  `applyTheme(themeFor(mode))`, `preview.SetMode(mode)`, set `m.themeMode`, and stat
+  the state file for the initial mtime. `main.go` calls it before `Run()` (next to
+  the existing `SetRunner`/`SetRepo`/`Hydrate` calls), so it applies synchronously —
+  no first-frame flash. **`NewModel` does not detect** — it stays theme-neutral, so
+  `init()`'s default Mocha globals hold in tests and existing ANSI-exact tests are
+  unaffected by the machine's live theme.
+- `theme.go` gets `func init() { applyTheme(Mocha()) }` so the style globals are
+  populated at package load (they become bare `var` declarations that `applyTheme`
+  fills).
 
 **Concurrency.** `applyTheme` mutates package globals, but Bubble Tea runs `Update`
-and `View` on a single goroutine and `applyTheme` is only ever called from
-`NewModel` (before the program starts) and the `Update` `themeChangedMsg` handler.
+and `View` on a single goroutine and `applyTheme` is only ever called from `init()`,
+`InitTheme` (before the program starts), and the `Update` `themePollMsg` handler.
 There is no concurrent read, so no lock is needed. This is called out because the
 globals are otherwise write-once.
 
@@ -152,9 +160,6 @@ tick, modeled on the existing `spinnerTick`/`checksPollTick`:
 // armed so the handler can skip the read when nothing changed.
 type themePollMsg struct{ lastMod time.Time }
 
-// themeChangedMsg is emitted only when the parsed mode actually flips.
-type themeChangedMsg struct{ mode string }
-
 // themeWatchTick re-arms ~every second, carrying the last-seen mtime forward.
 func themeWatchTick(lastMod time.Time) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg {
@@ -163,23 +168,19 @@ func themeWatchTick(lastMod time.Time) tea.Cmd {
 }
 ```
 
-`Init()` starts the watch via `themeWatchTick(m.themeModTime)` (the mtime
-`NewModel` stat'd at construction). On `themePollMsg`, `Update` `os.Stat`s the
-file:
+`Init()` starts the watch via `themeWatchTick(m.themeModTime)` (the mtime seeded
+by `InitTheme`). A single `themePollMsg` handler does both detection and
+application inline — there is no separate "changed" message, since nothing else
+triggers a theme change (an override key is out of scope). On `themePollMsg`:
 
-- stat error or unchanged mtime → re-arm `themeWatchTick(msg.lastMod)`, nothing
+- stat error, or mtime unchanged → re-arm `themeWatchTick(msg.lastMod)`, nothing
   else. (A deleted state file therefore *keeps the last mode* rather than reverting
   to dark — intended: a momentary gap during the toggle's atomic `mv` must not flash
   the board.)
-- mtime changed → store the new mtime on the Model; `detectTheme()`; if the mode
-  differs from `m.themeMode`, also dispatch a `themeChangedMsg{mode}`; re-arm the
-  tick with the new mtime.
-
-On `themeChangedMsg`, `Update`:
-1. `m.themeMode = mode`
-2. `applyTheme(themeFor(mode))` — rebuilds the ui style globals
-3. `preview.SetMode(mode)` — swaps the glamour style + flushes the render caches
-4. `m.renderList()`
+- mtime changed → store the new mtime; `detectTheme()`; and if the mode differs
+  from `m.themeMode`, apply it inline: `m.themeMode = mode`,
+  `applyTheme(themeFor(mode))`, `preview.SetMode(mode)`, `m.renderList()`. Re-arm
+  the tick with the new mtime either way.
 
 ### Why poll, not fsnotify or OSC 11
 
