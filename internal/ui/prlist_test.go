@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
@@ -473,5 +474,39 @@ func TestThemePollNoChangeWhenMtimeSame(t *testing.T) {
 	}
 	if theme.Accent != Mocha().Accent {
 		t.Errorf("globals should stay Mocha, accent=%q", theme.Accent)
+	}
+}
+
+func TestThemePollWhileExpandedKeepsExpandedBody(t *testing.T) {
+	t.Cleanup(func() { applyTheme(Mocha()); preview.SetMode("dark") })
+	writeState(t, `{"theme":"light","version":1}`)
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 30
+	m.themeMode = "dark"
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{} // empty detail -> Reviews tab renders "No reviews"
+	m.enterExpanded()
+	if !m.expanded {
+		t.Fatal("precondition: should be expanded")
+	}
+	m.expandedTab = 1 // Reviews tab: deterministic, non-empty body regardless of theme
+	m.renderExpanded()
+
+	// What the (buggy) list repaint would have produced, for contrast.
+	listCopy := m
+	listCopy.renderList()
+	listContent := ansi.Strip(listCopy.vp.View())
+
+	u, _ := m.Update(themePollMsg{lastMod: time.Time{}})
+	m = u.(Model)
+	if !m.expanded {
+		t.Fatal("theme poll should not exit expanded mode")
+	}
+	got := ansi.Strip(m.vp.View())
+	if !strings.Contains(got, "No reviews") {
+		t.Errorf("theme poll while expanded should repaint the expanded body, got: %q", got)
+	}
+	if got == listContent {
+		t.Fatal("expanded body should not match the PR-list rendering")
 	}
 }

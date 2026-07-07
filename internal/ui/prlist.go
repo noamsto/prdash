@@ -693,7 +693,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.themeMode = mode
 			applyTheme(themeFor(mode))
 			preview.SetMode(mode)
-			m.renderList()
+			if m.expanded {
+				m.renderExpanded()
+			} else {
+				m.renderList()
+			}
 		}
 		return m, themeWatchTick(mod)
 	case actionDoneMsg:
