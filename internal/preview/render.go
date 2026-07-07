@@ -34,7 +34,7 @@ func Render(md string, width int) (string, error) {
 	if !ok {
 		var err error
 		r, err = glamour.NewTermRenderer(
-			glamour.WithStyles(darkStyle),
+			glamour.WithStyles(activeStyle),
 			glamour.WithWordWrap(width),
 		)
 		if err != nil {
@@ -49,4 +49,17 @@ func Render(md string, width int) (string, error) {
 	}
 	outputByKey[key] = out
 	return out, nil
+}
+
+// SetMode swaps the active glamour style and flushes the memoized renderers and
+// output, so the next Render rebuilds against the new palette. Same single
+// goroutine as Render (the bubbletea View loop), so no lock.
+func SetMode(mode string) {
+	if mode == "light" {
+		activeStyle = lightStyle
+	} else {
+		activeStyle = darkStyle
+	}
+	rendererByWidth = map[int]*glamour.TermRenderer{}
+	outputByKey = map[string]string{}
 }

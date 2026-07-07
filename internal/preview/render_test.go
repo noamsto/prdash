@@ -18,3 +18,28 @@ func TestRenderInlineCodeAndTable(t *testing.T) {
 		t.Fatalf("table content stripped: %q", out)
 	}
 }
+
+func TestSetModeChangesOutputAndFlushes(t *testing.T) {
+	t.Cleanup(func() { SetMode("dark") })
+	const md = "# Hello\n\nsome **bold** text"
+
+	SetMode("dark")
+	dark, err := Render(md, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := renderMisses
+
+	SetMode("light")
+	light, err := Render(md, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dark == light {
+		t.Error("light and dark render of the same markdown must differ")
+	}
+	if renderMisses != before+1 {
+		t.Errorf("SetMode should flush caches so Render misses once: misses=%d want=%d",
+			renderMisses, before+1)
+	}
+}
