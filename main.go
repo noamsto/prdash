@@ -38,6 +38,7 @@ func main() {
 	m := ui.NewModel(dir, "is:open author:@me", c)
 	m.SetRunner(runner)
 	m.SetRepo(repo)
+	m.InitTheme()
 	m.Hydrate()
 
 	final, err := tea.NewProgram(m).Run()
