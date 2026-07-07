@@ -114,27 +114,48 @@ type Styles struct {
 func newStyles(t Theme) Styles { /* build every style from t */ }
 ```
 
-- `Model` gains `styles Styles` and `themeMode string`. `NewModel` calls
-  `detectTheme()` → `newStyles(themeFor(mode))`.
+- `Model` gains `styles Styles`, `themeMode string`, and `themeModTime time.Time`
+  (seeds the watch — see live-follow). `NewModel` calls `detectTheme()` →
+  `newStyles(themeFor(mode))` and stats the file for the initial mtime.
 - The theme-reading free functions become methods on `Styles`:
   `authorStyle(login)`, `labelChip(name, hex)`, `ciGlyph(state)`, `metaLine(...)`,
   `reviewStateLabel(state)`. `lightText` stays a pure free function (no theme).
-- Render call sites in `card.go`, `section.go`, `expanded.go`, `preview.go`,
-  `prlist.go`, `actionview.go` switch from `titleStyle` → `m.styles.title`, etc.
-  Render helpers that don't already receive the model take `Styles` (or a
-  `*Styles`) as a parameter.
+
+**Call sites that reference the deleted globals** (verified — every one must be
+updated or the build breaks):
+
+- `card.go`, `section.go`, `expanded.go`, `preview.go`, `prlist.go`, `picker.go`
+  switch from `titleStyle` → `m.styles.title`, etc.
+- `box.go`: `titledBox` is a free function that reads `theme.Rule` (box.go:51,54)
+  and `accentStyle` (box.go:63) for every box/overlay border and its mauve title.
+  It gains a `Styles` parameter, and its ~10 callers pass `m.styles`
+  (`preview.go`, `prlist.go` overlay/pane sites, `picker.go:115`). Without this,
+  every box border and title stays Mocha in light mode.
+- **Not** `actionview.go` — it contains only `filterActions` (fuzzy matching), no
+  styling. The actions *overlay* is rendered via `titledBox` from `prlist.go`, so
+  it's covered by the `box.go` change.
+
+**Row rendering (the `Section` interface).** `Section.RenderRow(i int, o RowOpts)`
+is the row render path (`PRSection`, `IssueSection`). Rather than change the
+interface signature, add a `Styles` field to the existing `RowOpts` struct
+(section.go:17) — the Model already builds `RowOpts` when it calls `RenderRow`, so
+`m.styles` reaches every row with no new plumbing and no `Styles` stored on the
+section types. This is the least-invasive route and keeps the "can this render
+path reach the theme?" question answered by construction.
 
 This removes all mutable global theme state; `Styles` is a value threaded from the
-Model. Larger diff than reassigning globals, but fully testable and isolation-clean.
+Model.
 
-### Section rendering note
+### Why a Styles struct rather than reassigning the globals
 
-`PRSection` and the other `section.go` renderers currently reach for the package
-globals. They gain a `Styles` parameter on their render entry points (the Model
-passes `m.styles`). Where a type stores rendered strings, rendering happens in the
-Model's `renderList()` path where `m.styles` is in scope, so no `Styles` needs to
-be stored on `PRSection` itself — confirm during implementation and, if a stored
-`Styles` is unavoidable, set it in the same place `SetHideDrafts` is called.
+The cheaper alternative — keep the package globals and add `applyTheme(Theme)` that
+reassigns each style var in the `themeChangedMsg` handler — is race-free here
+(`Update`/`View` share one Bubble Tea goroutine). It was considered and
+**deliberately rejected** in favor of the struct: no mutable global state, styles
+are an explicit input to every renderer (testable in isolation, e.g.
+`newStyles(Latte())` in a table test), and it matches prdash's existing direction
+of passing state down rather than reaching for globals. The cost is a larger diff;
+that trade was accepted up front.
 
 ## Live-follow trigger — mtime-guarded poll tick
 
@@ -142,10 +163,14 @@ be stored on `PRSection` itself — confirm during implementation and, if a stor
 tick, modeled on the existing `spinnerTick`/`checksPollTick`:
 
 ```go
+// themePollMsg fires each tick, carrying the mtime observed when the tick was
+// armed so the handler can skip the read when nothing changed.
+type themePollMsg struct{ lastMod time.Time }
+
+// themeChangedMsg is emitted only when the parsed mode actually flips.
 type themeChangedMsg struct{ mode string }
 
-// themeWatchTick re-arms ~every second. It carries the last-seen mtime so a tick
-// only re-reads the file when it actually changed.
+// themeWatchTick re-arms ~every second, carrying the last-seen mtime forward.
 func themeWatchTick(lastMod time.Time) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg {
 		return themePollMsg{lastMod: lastMod}
@@ -153,12 +178,17 @@ func themeWatchTick(lastMod time.Time) tea.Cmd {
 }
 ```
 
-`Init()` starts the watch (seeded with the mtime read at construction). On
-`themePollMsg`, `Update` `os.Stat`s the file:
+`Init()` starts the watch via `themeWatchTick(m.themeModTime)` (the mtime
+`NewModel` stat'd at construction). On `themePollMsg`, `Update` `os.Stat`s the
+file:
 
-- stat error or unchanged mtime → re-arm `themeWatchTick(lastMod)`, nothing else.
-- mtime changed → `detectTheme()`; if the mode differs from `m.themeMode`, emit /
-  handle `themeChangedMsg{mode}`; always re-arm with the new mtime.
+- stat error or unchanged mtime → re-arm `themeWatchTick(msg.lastMod)`, nothing
+  else. (A deleted state file therefore *keeps the last mode* rather than reverting
+  to dark — intended: a momentary gap during the toggle's atomic `mv` must not flash
+  the board.)
+- mtime changed → store the new mtime on the Model; `detectTheme()`; if the mode
+  differs from `m.themeMode`, also dispatch a `themeChangedMsg{mode}`; re-arm the
+  tick with the new mtime.
 
 On `themeChangedMsg`, `Update`:
 1. `m.themeMode = mode`
@@ -192,8 +222,12 @@ renderers by width only. Make the mode an explicit input (no global theme state)
   by `(mode, width)` and `outputByKey` by `(mode, width, body)`. A mode flip simply
   misses into fresh cache keys — no flush needed. `renderMisses` accounting
   unchanged.
-- `timeline.go` and the `internal/ui` callers thread `mode` through (from
-  `m.themeMode`).
+- The two `internal/ui` callers of `preview.Render` thread `mode` through (from
+  `m.themeMode`): `renderTimeline` (ui/preview.go) and `renderReviews`
+  (ui/expanded.go). `timeline.go` has no `Render` call, so it is untouched.
+  `renderTimeline` renders both markdown bodies *and* `metaLine` headers, so it
+  needs **both** `mode` (for `preview.Render`) and `Styles` (for `metaLine`)
+  threaded in.
 
 ## Testing
 
@@ -205,8 +239,11 @@ renderers by width only. Make the mode an explicit input (no global theme state)
   set; a `themePollMsg` with unchanged mtime does not.
 - Preview: `Render` with `"light"` vs `"dark"` produces different ANSI and both are
   cached independently (miss count increments once per new key).
-- Existing snapshot/render tests gain the `mode` parameter (default `"dark"` keeps
-  current expectations).
+- Existing snapshot/render tests are updated for the new signatures: tests that
+  call the free render funcs directly — `box_test.go` (`titledBox`),
+  `expanded_test.go` (`renderReviews`), `section_test.go` (`RenderRow`/`RowOpts`)
+  — pass a `Styles` (`newStyles(Mocha())`) and, where relevant, `mode: "dark"`, so
+  current expectations hold.
 
 ## Rollout
 
