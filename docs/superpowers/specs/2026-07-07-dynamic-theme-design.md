@@ -98,64 +98,49 @@ bright fills, light base text on Latte's darkened fills.
 
 `themeFor(mode string) Theme` returns `Latte()` for `"light"`, else `Mocha()`.
 
-## Styles struct on the Model
+## Switching the palette: applyTheme reassigns the globals
 
-Collapse the package-global `theme` var and the ~18 `lipgloss.Style` vars into a
-`Styles` struct built from a `Theme`:
+The theme globals are referenced at ~80 call sites across 7 files (`box.go`,
+`section.go`, `prlist.go`, `picker.go`, `card.go`, `expanded.go`, `preview.go`),
+including shared free helpers (`authorStyle`, `metaLine`, `ciGlyph`, `labelChip`,
+`cardGlyph`, `reviewDot`, `renderTimeline`, `renderReviews`). Threading a `Styles`
+value through all of them is a large, risky mechanical change for a cosmetic
+feature.
+
+Instead, **keep the package globals and reassign them in place**. `theme.go` gains
+one function:
 
 ```go
-type Styles struct {
-	title, accent, dim, sep, pass, fail, pend, selMark, focusBar,
-	header, statusBar, sectionLabel, draftTag, refresh,
-	runBadge, passBadge, failBadge lipgloss.Style
-	theme Theme // retained for authorStyle/labelChip/ciGlyph lookups
+// applyTheme swaps the active palette and rebuilds every derived style var.
+// Called once at construction and again on every live theme change.
+func applyTheme(t Theme) {
+	theme = t
+	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
+	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
+	// ...every other style var, plus the badgeBase-derived run/pass/fail badges...
 }
-
-func newStyles(t Theme) Styles { /* build every style from t */ }
 ```
 
-- `Model` gains `styles Styles`, `themeMode string`, and `themeModTime time.Time`
-  (seeds the watch — see live-follow). `NewModel` calls `detectTheme()` →
-  `newStyles(themeFor(mode))` and stats the file for the initial mtime.
-- The theme-reading free functions become methods on `Styles`:
-  `authorStyle(login)`, `labelChip(name, hex)`, `ciGlyph(state)`, `metaLine(...)`,
-  `reviewStateLabel(state)`. `lightText` stays a pure free function (no theme).
+The ~18 style vars stay package-level `var`s (kept as declarations so zero call
+sites change); `applyTheme` overwrites them. The theme-reading free helpers
+(`authorStyle`, `labelChip`, `ciGlyph`, `metaLine`, `reviewStateLabel`) already
+read `theme` / the style globals **at call time**, so they pick up the new palette
+automatically — no signature or call-site changes anywhere.
 
-**Call sites that reference the deleted globals** (verified — every one must be
-updated or the build breaks):
+- `Model` gains `themeMode string` and `themeModTime time.Time` (seeds the watch).
+  `NewModel` calls `detectTheme()` → `applyTheme(themeFor(mode))`, sets
+  `themeMode`, and stats the state file for the initial mtime.
 
-- `card.go`, `section.go`, `expanded.go`, `preview.go`, `prlist.go`, `picker.go`
-  switch from `titleStyle` → `m.styles.title`, etc.
-- `box.go`: `titledBox` is a free function that reads `theme.Rule` (box.go:51,54)
-  and `accentStyle` (box.go:63) for every box/overlay border and its mauve title.
-  It gains a `Styles` parameter, and its ~10 callers pass `m.styles`
-  (`preview.go`, `prlist.go` overlay/pane sites, `picker.go:115`). Without this,
-  every box border and title stays Mocha in light mode.
-- **Not** `actionview.go` — it contains only `filterActions` (fuzzy matching), no
-  styling. The actions *overlay* is rendered via `titledBox` from `prlist.go`, so
-  it's covered by the `box.go` change.
+**Concurrency.** `applyTheme` mutates package globals, but Bubble Tea runs `Update`
+and `View` on a single goroutine and `applyTheme` is only ever called from
+`NewModel` (before the program starts) and the `Update` `themeChangedMsg` handler.
+There is no concurrent read, so no lock is needed. This is called out because the
+globals are otherwise write-once.
 
-**Row rendering (the `Section` interface).** `Section.RenderRow(i int, o RowOpts)`
-is the row render path (`PRSection`, `IssueSection`). Rather than change the
-interface signature, add a `Styles` field to the existing `RowOpts` struct
-(section.go:17) — the Model already builds `RowOpts` when it calls `RenderRow`, so
-`m.styles` reaches every row with no new plumbing and no `Styles` stored on the
-section types. This is the least-invasive route and keeps the "can this render
-path reach the theme?" question answered by construction.
-
-This removes all mutable global theme state; `Styles` is a value threaded from the
-Model.
-
-### Why a Styles struct rather than reassigning the globals
-
-The cheaper alternative — keep the package globals and add `applyTheme(Theme)` that
-reassigns each style var in the `themeChangedMsg` handler — is race-free here
-(`Update`/`View` share one Bubble Tea goroutine). It was considered and
-**deliberately rejected** in favor of the struct: no mutable global state, styles
-are an explicit input to every renderer (testable in isolation, e.g.
-`newStyles(Latte())` in a table test), and it matches prdash's existing direction
-of passing state down rather than reaching for globals. The cost is a larger diff;
-that trade was accepted up front.
+**Test hygiene.** Because `applyTheme` mutates process-global state, any test that
+calls it (or asserts on the globals) must restore Mocha afterward:
+`t.Cleanup(func() { applyTheme(Mocha()) })`. State-file tests use a temp
+`XDG_STATE_HOME` via `t.Setenv`.
 
 ## Live-follow trigger — mtime-guarded poll tick
 
@@ -192,8 +177,8 @@ file:
 
 On `themeChangedMsg`, `Update`:
 1. `m.themeMode = mode`
-2. `m.styles = newStyles(themeFor(mode))`
-3. tell `internal/preview` the mode (so its next render uses the right style)
+2. `applyTheme(themeFor(mode))` — rebuilds the ui style globals
+3. `preview.SetMode(mode)` — swaps the glamour style + flushes the render caches
 4. `m.renderList()`
 
 ### Why poll, not fsnotify or OSC 11
@@ -214,39 +199,59 @@ the program (the theme can change at any time).
 ## Preview / glamour theme-awareness
 
 `internal/preview` currently pins `darkStyle = styles.DarkStyleConfig` and caches
-renderers by width only. Make the mode an explicit input (no global theme state):
+renderers by width only. Mirror the ui package's global-reassignment approach so
+`preview.Render`'s signature and its two ui callers stay untouched:
 
-- `theme.go`: expose both `styles.DarkStyleConfig` and `styles.LightStyleConfig`
-  via a `styleFor(mode string) ansi.StyleConfig` lookup.
-- `render.go`: `Render(md string, width int, mode string)`. Key `rendererByWidth`
-  by `(mode, width)` and `outputByKey` by `(mode, width, body)`. A mode flip simply
-  misses into fresh cache keys — no flush needed. `renderMisses` accounting
-  unchanged.
-- The two `internal/ui` callers of `preview.Render` thread `mode` through (from
-  `m.themeMode`): `renderTimeline` (ui/preview.go) and `renderReviews`
-  (ui/expanded.go). `timeline.go` has no `Render` call, so it is untouched.
-  `renderTimeline` renders both markdown bodies *and* `metaLine` headers, so it
-  needs **both** `mode` (for `preview.Render`) and `Styles` (for `metaLine`)
-  threaded in.
+- `theme.go`: `var activeStyle = styles.DarkStyleConfig` plus a `lightStyle =
+  styles.LightStyleConfig`, and:
+
+  ```go
+  // SetMode swaps the glamour style and flushes the memoized renderers/output,
+  // so the next Render rebuilds against the new palette. Same single goroutine
+  // as Render (bubbletea View loop), so no lock.
+  func SetMode(mode string) {
+      if mode == "light" {
+          activeStyle = lightStyle
+      } else {
+          activeStyle = darkStyle
+      }
+      rendererByWidth = map[int]*glamour.TermRenderer{}
+      outputByKey = map[string]string{}
+  }
+  ```
+- `render.go`: `Render` keeps its `(md string, width int)` signature but builds the
+  renderer from `activeStyle` instead of the `darkStyle` constant. No call-site
+  changes in `ui/preview.go` (`renderTimeline`) or `ui/expanded.go`
+  (`renderReviews`); `metaLine` there already reads the ui globals reassigned by
+  `applyTheme`.
+
+Ordering matters: the `themeChangedMsg` handler calls `preview.SetMode(mode)`
+(flushes caches) **before** `renderList()`, so the re-render repopulates them under
+the new palette.
 
 ## Testing
 
-- `theme_test.go`: `newStyles(Latte())` differs from `newStyles(Mocha())` on
-  representative roles; `themeFor` maps `"light"→Latte`, everything else→Mocha.
+- `theme_test.go`: `Latte()` differs from `Mocha()` on representative roles
+  (`Accent`, `Text`, `Base`, `Author[0]`); `themeFor` maps `"light"→Latte`,
+  everything else→Mocha. `applyTheme(Latte())` then rendering with `accentStyle`
+  produces different ANSI than under Mocha; each such test ends with
+  `t.Cleanup(func(){ applyTheme(Mocha()) })`.
 - `detectTheme` table: missing file → `"dark"`; malformed JSON → `"dark"`; empty
-  `theme` → `"dark"`; `"light"`/`"dark"` parse through. Use a temp `XDG_STATE_HOME`.
-- `Update` handling: a `themeChangedMsg{"light"}` rebuilds `m.styles` to the Latte
-  set; a `themePollMsg` with unchanged mtime does not.
-- Preview: `Render` with `"light"` vs `"dark"` produces different ANSI and both are
-  cached independently (miss count increments once per new key).
-- Existing snapshot/render tests are updated for the new signatures: tests that
-  call the free render funcs directly — `box_test.go` (`titledBox`),
-  `expanded_test.go` (`renderReviews`), `section_test.go` (`RenderRow`/`RowOpts`)
-  — pass a `Styles` (`newStyles(Mocha())`) and, where relevant, `mode: "dark"`, so
-  current expectations hold.
+  `theme` → `"dark"`; `"light"`/`"dark"` parse through. Use `t.Setenv` to point
+  `XDG_STATE_HOME` at a temp dir with a written state file.
+- Watcher: a `themeChangedMsg{"light"}` through `Update` leaves `m.themeMode ==
+  "light"` and the globals rebuilt to Latte (assert via `theme.Accent`); a
+  `themePollMsg` whose `lastMod` equals the file's current mtime produces no
+  `themeChangedMsg` (mode unchanged). Restore Mocha in cleanup.
+- Preview: `SetMode("light")` then `Render` yields different ANSI than
+  `SetMode("dark")` + `Render` for the same input, and `SetMode` flushes the cache
+  (a subsequent identical `Render` is a miss — `renderMisses` increments). Restore
+  `SetMode("dark")` in cleanup.
+- No existing render tests change signatures — nothing is threaded, so
+  `box_test.go`, `section_test.go`, `expanded_test.go` compile and pass unchanged.
+  (Tests that assert exact ANSI still run under the default Mocha globals.)
 
 ## Rollout
 
-Single PR against `main` from `feat/16-dynamic-theme`. The refactor (Styles struct)
-and the feature (detect + follow + Latte) land together since the struct is a
-prerequisite for a clean toggle.
+Single PR against `main` from `feat/16-dynamic-theme`: `Latte()` + `applyTheme`,
+the `preview.SetMode` swap, and the detect+watch wiring land together.
