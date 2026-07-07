@@ -75,6 +75,12 @@ var (
 	runBadgeStyle  = badgeBase.Background(lipgloss.Color(theme.Accent))
 	passBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Pass))
 	failBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Fail))
+
+	// Expanded-view tab bar, notched into the box's top border: the active tab
+	// reuses the filled accent badge; the rest are dim names, same padding so the
+	// tabs keep an even width.
+	tabActiveStyle   = badgeBase.Background(lipgloss.Color(theme.Accent))
+	tabInactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta)).Padding(0, 1)
 )
 
 // authorStyle gives each login a stable color so the same person reads the same

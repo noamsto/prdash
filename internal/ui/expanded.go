@@ -29,18 +29,6 @@ func jumpTabIndex(jump string) int {
 	}
 }
 
-func tabStrip(active int) string {
-	parts := make([]string, len(expandedTabs))
-	for i, t := range expandedTabs {
-		if i == active {
-			parts[i] = headerStyle.Render(t)
-		} else {
-			parts[i] = dimStyle.Render(t)
-		}
-	}
-	return "  " + strings.Join(parts, "   ")
-}
-
 func renderReviews(d gh.PRDetail, w int) string {
 	if len(d.LatestReviews) == 0 {
 		return dimStyle.Render("  No reviews yet.")
@@ -151,17 +139,41 @@ func (m Model) expandedBody(w int) string {
 	}
 }
 
-// renderExpanded fills the viewport with the active tab's content, scroll reset.
-func (m *Model) renderExpanded() {
-	l := computeLayout(m.width, m.height)
-	rows := l.ContentHeight - 1 // tab strip takes one row
+// expandedChromeRows counts the fixed lines around the boxed body: the header,
+// the footer, and — for a PR — the at-a-glance metadata line.
+func (m Model) expandedChromeRows() int {
+	rows := 2 // header + footer
 	if _, ok := m.section.(*PRSection); ok {
-		rows-- // metadata line under the header
+		rows++ // metadata line under the header
 	}
-	m.vp.SetWidth(m.width)
+	return rows
+}
+
+// expandedBoxHeight is the OUTER height of the tabbed content box: the frame
+// minus the fixed chrome around it.
+func (m Model) expandedBoxHeight() int {
+	h := m.height - m.expandedChromeRows()
+	if h < 3 {
+		h = 3
+	}
+	return h
+}
+
+// renderExpanded fills the viewport with the active tab's content, scroll reset.
+// The viewport is the box interior — two columns/rows in from the border.
+func (m *Model) renderExpanded() {
+	w := m.width - 2
+	rows := m.expandedBoxHeight() - 2
+	if w < 1 {
+		w = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	m.vp.SetWidth(w)
 	m.vp.SetHeight(rows)
 	m.vp.SetHorizontalStep(8) // < / > pan wide content (tables, diffs) instead of wrapping
-	m.vp.SetContent(m.expandedBody(m.width))
+	m.vp.SetContent(m.expandedBody(w))
 	m.vp.SetYOffset(0)
 }
 
@@ -356,8 +368,9 @@ func (m Model) expandedFooter() string {
 	return "  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back"
 }
 
-// expandedView is the full-screen detail: header, metadata line, tab strip,
-// scrollable body, keys.
+// expandedView is the full-screen detail: header, metadata line, then the
+// active tab's content framed in a tabbed box — the same rounded chrome as the
+// board's titled boxes — with the keys hint beneath.
 func (m Model) expandedView() string {
 	n := 0
 	if v, ok := m.cursorVars(); ok {
@@ -377,6 +390,7 @@ func (m Model) expandedView() string {
 	if ps, ok := m.section.(*PRSection); ok {
 		lines = append(lines, m.expandedMeta(ps.prAt(m.cursor), m.width-2))
 	}
-	lines = append(lines, tabStrip(m.expandedTab), m.vp.View(), foot)
+	box := tabbedBox(m.vp.View(), m.width, m.expandedBoxHeight(), expandedTabs, m.expandedTab)
+	lines = append(lines, box, foot)
 	return strings.Join(lines, "\n")
 }
