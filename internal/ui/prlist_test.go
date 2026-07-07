@@ -5,10 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/preview"
 )
 
 func TestSetPRsBuildsRows(t *testing.T) {
@@ -423,5 +426,87 @@ func TestPollBusySkipsFetchButStaysAlive(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected the loop to reschedule even when it skips a fetch")
+	}
+}
+
+func TestInitThemeAppliesMode(t *testing.T) {
+	t.Cleanup(func() { applyTheme(Mocha()); preview.SetMode("dark") })
+	writeState(t, `{"theme":"light","version":1}`)
+	m := NewModel("/repo", "is:open", nil)
+	m.InitTheme()
+	if m.themeMode != "light" {
+		t.Errorf("themeMode = %q, want light", m.themeMode)
+	}
+	if theme.Accent != Latte().Accent {
+		t.Errorf("InitTheme should apply Latte globals, accent=%q", theme.Accent)
+	}
+}
+
+func TestThemePollAppliesChange(t *testing.T) {
+	t.Cleanup(func() { applyTheme(Mocha()); preview.SetMode("dark") })
+	writeState(t, `{"theme":"light","version":1}`)
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 30
+	m.themeMode = "dark" // pretend we started dark
+	// zero lastMod differs from the file's real mtime → forces a re-read.
+	u, _ := m.Update(themePollMsg{lastMod: time.Time{}})
+	if got := u.(Model).themeMode; got != "light" {
+		t.Errorf("poll should flip mode to light, got %q", got)
+	}
+	if theme.Accent != Latte().Accent {
+		t.Errorf("poll should apply Latte globals, accent=%q", theme.Accent)
+	}
+}
+
+func TestThemePollNoChangeWhenMtimeSame(t *testing.T) {
+	t.Cleanup(func() { applyTheme(Mocha()) })
+	writeState(t, `{"theme":"light","version":1}`)
+	mod, err := statModTime(themeStatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 30
+	m.themeMode = "dark"
+	u, _ := m.Update(themePollMsg{lastMod: mod}) // same mtime → skip the read
+	if got := u.(Model).themeMode; got != "dark" {
+		t.Errorf("poll with unchanged mtime must not change mode, got %q", got)
+	}
+	if theme.Accent != Mocha().Accent {
+		t.Errorf("globals should stay Mocha, accent=%q", theme.Accent)
+	}
+}
+
+func TestThemePollWhileExpandedKeepsExpandedBody(t *testing.T) {
+	t.Cleanup(func() { applyTheme(Mocha()); preview.SetMode("dark") })
+	writeState(t, `{"theme":"light","version":1}`)
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 30
+	m.themeMode = "dark"
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{} // empty detail -> Reviews tab renders "No reviews"
+	m.enterExpanded()
+	if !m.expanded {
+		t.Fatal("precondition: should be expanded")
+	}
+	m.expandedTab = 1 // Reviews tab: deterministic, non-empty body regardless of theme
+	m.renderExpanded()
+
+	// What the (buggy) list repaint would have produced, for contrast.
+	listCopy := m
+	listCopy.renderList()
+	listContent := ansi.Strip(listCopy.vp.View())
+
+	u, _ := m.Update(themePollMsg{lastMod: time.Time{}})
+	m = u.(Model)
+	if !m.expanded {
+		t.Fatal("theme poll should not exit expanded mode")
+	}
+	got := ansi.Strip(m.vp.View())
+	if !strings.Contains(got, "No reviews") {
+		t.Errorf("theme poll while expanded should repaint the expanded body, got: %q", got)
+	}
+	if got == listContent {
+		t.Fatal("expanded body should not match the PR-list rendering")
 	}
 }

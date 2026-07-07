@@ -16,6 +16,7 @@ import (
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/preview"
 	"github.com/noamsto/prdash/internal/triage"
 )
 
@@ -66,6 +67,8 @@ type Model struct {
 	pick            picker
 	members         []gh.User  // cached assignable users for this repo
 	pendingExec     [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
+	themeMode       string     // "light"|"dark"; active palette mode
+	themeModTime    time.Time  // last-seen mtime of the theme-state file
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -416,6 +419,29 @@ func checksPollTick() tea.Cmd {
 	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return checksPollMsg{} })
 }
 
+// InitTheme reads the system theme mode, applies the matching palette, and seeds
+// the watch mtime. Called from main before the program starts, so the first frame
+// paints in the right palette. NOT called from NewModel, so tests keep the default
+// Mocha globals regardless of the machine's live theme.
+func (m *Model) InitTheme() {
+	m.themeMode = detectTheme()
+	applyTheme(themeFor(m.themeMode))
+	preview.SetMode(m.themeMode)
+	m.themeModTime, _ = statModTime(themeStatePath())
+}
+
+// themePollMsg fires the theme-watch beat. lastMod is the state-file mtime seen
+// when the tick was armed, so the handler skips the read when nothing changed.
+type themePollMsg struct{ lastMod time.Time }
+
+// themeWatchTick re-arms ~every second. Unlike the other ticks it runs for the
+// program's lifetime — the system theme can change at any time.
+func themeWatchTick(lastMod time.Time) tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return themePollMsg{lastMod: lastMod}
+	})
+}
+
 // anyChecksRunning reports whether any shown PR row has an in-flight check.
 // It scans individual checks rather than PR.CIState(), which collapses to
 // "fail" when any check failed and would hide checks still running behind it.
@@ -563,6 +589,7 @@ func (m Model) Init() tea.Cmd {
 		m.fetchCmd("is:open"),
 		m.fetchMembersCmd(),
 		spinnerTick(),
+		themeWatchTick(m.themeModTime),
 	)
 }
 
@@ -656,6 +683,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, checksPollTick() // skip this beat, keep the loop alive
 		}
 		return m, tea.Batch(m.backgroundRefresh(), checksPollTick())
+	case themePollMsg:
+		mod, err := statModTime(themeStatePath())
+		if err != nil || mod.Equal(msg.lastMod) {
+			return m, themeWatchTick(msg.lastMod) // gone or unchanged: keep watching
+		}
+		m.themeModTime = mod
+		if mode := detectTheme(); mode != m.themeMode {
+			m.themeMode = mode
+			applyTheme(themeFor(mode))
+			preview.SetMode(mode)
+			if m.expanded {
+				m.renderExpanded()
+			} else {
+				m.renderList()
+			}
+		}
+		return m, themeWatchTick(mod)
 	case actionDoneMsg:
 		// Scope the error to the status line rather than m.err, which blanks the board.
 		if m.actionStatus == nil {
