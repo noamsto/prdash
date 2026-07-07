@@ -34,20 +34,60 @@ func TestRerunCheck(t *testing.T) {
 	}
 }
 
-func TestRerunFailedResolvesRunID(t *testing.T) {
+func TestRerunFailedRerunsFailedSibling(t *testing.T) {
+	// One push fans out into sibling runs sharing a head SHA; the latest-listed
+	// one passed while another failed. The failed one must be rerun, not the
+	// arbitrary latest sibling.
 	r := &seqRunner{outs: [][]byte{
-		[]byte(`[{"databaseId":555}]`), // gh run list
-		[]byte(``),                     // gh run rerun
+		[]byte(`[
+			{"databaseId":100,"conclusion":"success","headSha":"abc123"},
+			{"databaseId":200,"conclusion":"failure","headSha":"abc123"}
+		]`),
+		[]byte(``), // gh run rerun
 	}}
-	err := RerunFailed(r, "/repo", "feat/x")
-	if err != nil {
+	if err := RerunFailed(r, "/repo", "feat/x"); err != nil {
 		t.Fatal(err)
 	}
 	if r.calls[0][0] != "run" || r.calls[0][1] != "list" {
 		t.Fatalf("first call not run list: %v", r.calls[0])
 	}
+	if len(r.calls) != 2 {
+		t.Fatalf("expected 1 rerun, got calls: %v", r.calls[1:])
+	}
 	last := r.calls[1]
-	if last[0] != "run" || last[1] != "rerun" || last[2] != "555" {
+	if last[0] != "run" || last[1] != "rerun" || last[2] != "200" || last[3] != "--failed" {
 		t.Fatalf("rerun call wrong: %v", last)
+	}
+}
+
+func TestRerunFailedScopesToHeadSHA(t *testing.T) {
+	// A failed run from an earlier push (older SHA) must not be swept in.
+	r := &seqRunner{outs: [][]byte{
+		[]byte(`[
+			{"databaseId":100,"conclusion":"failure","headSha":"newsha"},
+			{"databaseId":200,"conclusion":"failure","headSha":"oldsha"}
+		]`),
+		[]byte(``),
+	}}
+	if err := RerunFailed(r, "/repo", "feat/x"); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls) != 2 {
+		t.Fatalf("expected exactly 1 rerun (head SHA only), got calls: %v", r.calls[1:])
+	}
+	if r.calls[1][2] != "100" {
+		t.Fatalf("reran wrong run: %v", r.calls[1])
+	}
+}
+
+func TestRerunFailedNoFailures(t *testing.T) {
+	r := &seqRunner{outs: [][]byte{
+		[]byte(`[{"databaseId":100,"conclusion":"success","headSha":"abc123"}]`),
+	}}
+	if err := RerunFailed(r, "/repo", "feat/x"); err == nil {
+		t.Fatal("expected error when no runs failed")
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("expected only the list call, got: %v", r.calls)
 	}
 }
