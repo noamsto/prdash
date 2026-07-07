@@ -86,3 +86,44 @@ func TestRenderChipsFitsAll(t *testing.T) {
 		t.Errorf("chip text missing, got %q", out)
 	}
 }
+
+func TestLattePaletteIsLight(t *testing.T) {
+	l := Latte()
+	if l.Accent != "#8839ef" {
+		t.Errorf("latte accent = %q, want #8839ef", l.Accent)
+	}
+	if l.Base != "#eff1f5" {
+		t.Errorf("latte base = %q, want light #eff1f5", l.Base)
+	}
+	if l.Text == Mocha().Text {
+		t.Error("latte text must differ from mocha text")
+	}
+	if len(l.Author) != len(Mocha().Author) {
+		t.Errorf("latte author rotation len = %d, want %d", len(l.Author), len(Mocha().Author))
+	}
+}
+
+func TestThemeFor(t *testing.T) {
+	if themeFor("light").Accent != Latte().Accent {
+		t.Error(`themeFor("light") should be Latte`)
+	}
+	if themeFor("dark").Accent != Mocha().Accent {
+		t.Error(`themeFor("dark") should be Mocha`)
+	}
+	if themeFor("").Accent != Mocha().Accent {
+		t.Error(`themeFor("") should default to Mocha`)
+	}
+}
+
+func TestApplyThemeReassignsGlobals(t *testing.T) {
+	t.Cleanup(func() { applyTheme(Mocha()) })
+	applyTheme(Latte())
+	if theme.Accent != Latte().Accent {
+		t.Errorf("applyTheme did not swap the active palette: %q", theme.Accent)
+	}
+	latteRender := accentStyle.Render("x")
+	applyTheme(Mocha())
+	if latteRender == accentStyle.Render("x") {
+		t.Error("accentStyle must render differently under Latte vs Mocha")
+	}
+}

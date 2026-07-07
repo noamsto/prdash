@@ -47,41 +47,87 @@ func Mocha() Theme {
 	}
 }
 
-// theme is the active palette. A future toggle reassigns this.
-var theme = Mocha()
+// Latte is the Catppuccin Latte flavor — light mode. Accents are the WCAG-AA
+// adjusted values from nix-config palette.nix, so prdash matches the desktop.
+func Latte() Theme {
+	return Theme{
+		Accent: "#8839ef", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
+		Text: "#4c4f69", Meta: "#6c6f85", Rule: "#acb0be", RowBg: "#ccd0da",
+		Pass: "#358023", Fail: "#d20f39", Pending: "#996b00", Draft: "#c24b00",
+		Section: "#1a7d8f", Base: "#eff1f5",
+		Author: []string{
+			"#5a6ad4", "#147076", "#c0364a",
+			"#a85847", "#b54545", "#1e66f5",
+		},
+	}
+}
+
+// themeFor maps a mode string ("light"/"dark") to its palette; unknown → Mocha.
+func themeFor(mode string) Theme {
+	if mode == "light" {
+		return Latte()
+	}
+	return Mocha()
+}
+
+// theme is the active palette; applyTheme reassigns it and every derived style.
+var theme Theme
 
 var (
-	titleStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
-	accentStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
-	dimStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
-	sepStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
-	passStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))
-	failStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Fail))
-	pendStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pending))
-	selMarkStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Select))
-	focusBarStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
-	headerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
-	statusBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	titleStyle        lipgloss.Style
+	accentStyle       lipgloss.Style
+	dimStyle          lipgloss.Style
+	sepStyle          lipgloss.Style
+	passStyle         lipgloss.Style
+	failStyle         lipgloss.Style
+	pendStyle         lipgloss.Style
+	selMarkStyle      lipgloss.Style
+	focusBarStyle     lipgloss.Style
+	headerStyle       lipgloss.Style
+	statusBarStyle    lipgloss.Style
+	sectionLabelStyle lipgloss.Style
+	draftTagStyle     lipgloss.Style
+	refreshStyle      lipgloss.Style // ambient revalidation; brighter than dim, unfilled
+	badgeBase         lipgloss.Style // dark base text on a bright role-color fill
+	runBadgeStyle     lipgloss.Style
+	passBadgeStyle    lipgloss.Style
+	failBadgeStyle    lipgloss.Style
+	tabActiveStyle    lipgloss.Style
+	tabInactiveStyle  lipgloss.Style
+)
+
+// applyTheme swaps the active palette and rebuilds every derived style var. Safe
+// without a lock: only called from init(), InitTheme (before the program runs),
+// and the single-goroutine Update loop.
+func applyTheme(t Theme) {
+	theme = t
+	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
+	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
+	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
+	sepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
+	passStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))
+	failStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Fail))
+	pendStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pending))
+	selMarkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Select))
+	focusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
+	headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
+	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
-	draftTagStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
-
-	// refreshStyle marks ambient background revalidation — brighter than dim but
-	// unfilled, so it stays distinct from the mauve running-action badge.
+	draftTagStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
 	refreshStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
-
-	// Filled status badges: dark base text on a bright role-color fill, so an
-	// action's outcome reads as a distinct chip against the dim header.
-	badgeBase      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Base)).Bold(true).Padding(0, 1)
-	runBadgeStyle  = badgeBase.Background(lipgloss.Color(theme.Accent))
+	badgeBase = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Base)).Bold(true).Padding(0, 1)
+	runBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Accent))
 	passBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Pass))
 	failBadgeStyle = badgeBase.Background(lipgloss.Color(theme.Fail))
 
 	// Expanded-view tab bar, notched into the box's top border: the active tab
 	// reuses the filled accent badge; the rest are dim names, same padding so the
 	// tabs keep an even width.
-	tabActiveStyle   = badgeBase.Background(lipgloss.Color(theme.Accent))
+	tabActiveStyle = badgeBase.Background(lipgloss.Color(theme.Accent))
 	tabInactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta)).Padding(0, 1)
-)
+}
+
+func init() { applyTheme(Mocha()) }
 
 // authorStyle gives each login a stable color so the same person reads the same
 // everywhere. Bots are muted — they're noise, not people.
