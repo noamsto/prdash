@@ -69,6 +69,11 @@ var (
 	// unfilled, so it stays distinct from the mauve running-action badge.
 	refreshStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
 
+	// Expanded-view tab bar, notched into the box's top border: the active tab is
+	// an accent pill (matching the filled status badges), the rest dim names.
+	tabActiveStyle   = badgeBase.Background(lipgloss.Color(theme.Accent))
+	tabInactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta)).Padding(0, 1)
+
 	// Filled status badges: dark base text on a bright role-color fill, so an
 	// action's outcome reads as a distinct chip against the dim header.
 	badgeBase      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Base)).Bold(true).Padding(0, 1)

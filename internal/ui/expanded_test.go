@@ -62,12 +62,20 @@ func TestRenderReviewsEmpty(t *testing.T) {
 	}
 }
 
-func TestTabStripMarksActive(t *testing.T) {
-	out := tabStrip(2)
+func TestTabSegmentMarksActive(t *testing.T) {
+	out := tabSegment(expandedTabs, 2)
+	if !strings.Contains(ansi.Strip(out), "Checks") {
+		t.Fatalf("active tab missing from segment: %q", out)
+	}
 	for _, name := range expandedTabs {
-		if !strings.Contains(out, name) {
-			t.Fatalf("tab %q missing from strip: %q", name, out)
+		if !strings.Contains(ansi.Strip(out), name) {
+			t.Fatalf("tab %q missing from segment: %q", name, out)
 		}
+	}
+	// The active tab carries the accent-pill background; the raw (styled) output
+	// must therefore differ from the plain names, or nothing marks the current tab.
+	if out == strings.Join(expandedTabs, "") {
+		t.Fatalf("active tab not styled distinctly: %q", out)
 	}
 }
 

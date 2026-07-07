@@ -36,10 +36,35 @@ func dropLines(s string, n int) string {
 	return strings.Join(lines[n:], "\n")
 }
 
+// boxBody renders content inside a rounded left/right/bottom border of OUTER
+// width w and OUTER height h; the top edge is drawn separately by the caller so
+// a label or tab bar can be set into it. Content is clipped to the interior.
+func boxBody(content string, w, h int) string {
+	rb := lipgloss.RoundedBorder()
+	return lipgloss.NewStyle().
+		Border(rb, false, true, true, true).
+		BorderForeground(lipgloss.Color(theme.Rule)).
+		Width(w).Height(h - 1).MaxWidth(w).MaxHeight(h - 1).
+		Render(clipLines(content, h-2))
+}
+
+// boxTop builds the rounded top edge of OUTER width w with a pre-rendered
+// segment (carrying its own colors, display width segW) set into it just past
+// the left corner, padding the remainder with the border rule.
+func boxTop(segment string, segW, w int) string {
+	rb := lipgloss.RoundedBorder()
+	rule := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
+	rest := w - 3 - segW
+	if rest < 0 {
+		rest = 0
+	}
+	return rule.Render(rb.TopLeft+rb.Top) + segment +
+		rule.Render(strings.Repeat(rb.Top, rest)+rb.TopRight)
+}
+
 // titledBox wraps content in a rounded border of OUTER size w × h, with title
-// set into the top edge. lipgloss has no native border title, so the body is
-// rendered with left/right/bottom borders only and a hand-built top line is
-// prepended. Content is clipped to the interior so it never overflows the box.
+// set into the top edge. lipgloss has no native border title, so the top line
+// is hand-built and prepended to a top-less bordered body.
 func titledBox(content string, w, h int, title string) string {
 	if w < 4 {
 		w = 4
@@ -47,22 +72,42 @@ func titledBox(content string, w, h int, title string) string {
 	if h < 2 {
 		h = 2
 	}
-	rb := lipgloss.RoundedBorder()
-	rule := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
-	body := lipgloss.NewStyle().
-		Border(rb, false, true, true, true).
-		BorderForeground(lipgloss.Color(theme.Rule)).
-		Width(w).Height(h - 1).MaxWidth(w).MaxHeight(h - 1).
-		Render(clipLines(content, h-2))
 	label := " " + truncate(title, w-4) + " "
 	if lipgloss.Width(label) > w-3 { // cap the label so the top line stays exactly w wide
 		label = truncate(label, w-3)
 	}
-	rest := w - 3 - lipgloss.Width(label)
-	top := rule.Render(rb.TopLeft+rb.Top) +
-		accentStyle.Render(label) +
-		rule.Render(strings.Repeat(rb.Top, rest)+rb.TopRight)
-	return top + "\n" + body
+	return boxTop(accentStyle.Render(label), lipgloss.Width(label), w) + "\n" + boxBody(content, w, h)
+}
+
+// tabbedBox is a titledBox whose top edge carries a tab bar instead of a single
+// title: the active tab reads accent-bold, the rest dim — the same accent/dim
+// contrast the board's box titles use, so the expanded view frames its content
+// with matching chrome.
+func tabbedBox(content string, w, h int, tabs []string, active int) string {
+	if w < 4 {
+		w = 4
+	}
+	if h < 2 {
+		h = 2
+	}
+	seg := tabSegment(tabs, active)
+	return boxTop(seg, lipgloss.Width(seg), w) + "\n" + boxBody(content, w, h)
+}
+
+// tabSegment renders the tab labels as pill-padded names notched into the border
+// rule: one rule tick flanks each side and joins adjacent tabs, so the labels
+// sit on the top edge rather than floating above it.
+func tabSegment(tabs []string, active int) string {
+	tick := sepStyle.Render(lipgloss.RoundedBorder().Top)
+	parts := make([]string, len(tabs))
+	for i, t := range tabs {
+		st := tabInactiveStyle
+		if i == active {
+			st = tabActiveStyle
+		}
+		parts[i] = st.Render(t)
+	}
+	return tick + strings.Join(parts, tick) + tick
 }
 
 // overlayTop composites panel horizontally centered over base, anchored to a
