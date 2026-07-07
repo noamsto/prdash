@@ -80,9 +80,8 @@ func titledBox(content string, w, h int, title string) string {
 }
 
 // tabbedBox is a titledBox whose top edge carries a tab bar instead of a single
-// title: the active tab reads accent-bold, the rest dim — the same accent/dim
-// contrast the board's box titles use, so the expanded view frames its content
-// with matching chrome.
+// title: the active tab is an accent pill, the rest dim — the same accent chrome
+// the board's boxes use, so the expanded view frames its content to match.
 func tabbedBox(content string, w, h int, tabs []string, active int) string {
 	if w < 4 {
 		w = 4
