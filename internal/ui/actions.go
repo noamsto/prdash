@@ -121,7 +121,17 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		if m.sel.count() > 0 {
 			m.sel.clear() // a batch copy consumes the selection
 		}
-		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // copy is instant
+		// Prefer a native clipboard tool: tmux 3.6 drops OSC 52 sent from a popup
+		// (prdash's prefix+p launch), so tea.SetClipboard silently fails there.
+		// Fixed in tmux 3.7 (issue 4797) — revert to OSC 52 only once upgraded, as
+		// it's the sole path that reaches the *local* clipboard over SSH. See #20.
+		if argv := clipboardArgv(); argv != nil {
+			m.actionStatus = &actionStat{run: "Copying", ok: ok, fail: "Copy failed"}
+			return tea.Batch(func() tea.Msg {
+				return actionDoneMsg{err: writeClipboard(argv, text)}
+			}, m.startSpinner())
+		}
+		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // OSC 52 is fire-and-forget
 		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
 	case "rerun-failed":
 		r, dir, branch := m.runner, m.dir, v.HeadRefName
