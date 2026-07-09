@@ -580,6 +580,32 @@ func TestPROnlyKeysInertInIssueMode(t *testing.T) {
 	}
 }
 
+func TestChecksPollInertInIssueMode(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.polling = true
+	u, cmd := m.Update(checksPollMsg{})
+	if u.(Model).polling {
+		t.Error("expected poll loop to stop in issue mode")
+	}
+	if cmd != nil {
+		t.Error("expected no reschedule (and no background refresh) in issue mode")
+	}
+	if u.(Model).mode != "issue" {
+		t.Error("checksPollMsg must not switch section in issue mode")
+	}
+}
+
+func TestIsMineViewFalseInIssueMode(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.presetIdx = 0 // issuePresets[0] is also named "mine"
+	if m.isMineView() {
+		t.Error("isMineView should be false in issue mode, even at the issue 'mine' preset")
+	}
+}
+
 func TestModeSegmentsHighlightsActive(t *testing.T) {
 	pr := modeSegments("pr")
 	is := modeSegments("issue")

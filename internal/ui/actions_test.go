@@ -71,18 +71,21 @@ func TestCopiedLabel(t *testing.T) {
 	cases := []struct {
 		builtin string
 		n       int
+		kind    string
 		want    string
 	}{
-		{"copy-url", 1, "Copied URL"},
-		{"copy-url", 3, "Copied 3 URLs"},
-		{"copy-branch", 1, "Copied branch"},
-		{"copy-branch", 2, "Copied 2 branches"},
-		{"copy-number", 1, "Copied number"},
-		{"copy-number", 5, "Copied 5 numbers"},
+		{"copy-url", 1, "pr", "Copied URL"},
+		{"copy-url", 3, "issue", "Copied 3 URLs"},
+		{"copy-branch", 1, "pr", "Copied branch"},
+		{"copy-branch", 2, "issue", "Copied 2 branches"},
+		{"copy-number", 1, "pr", "Copied PR number"},
+		{"copy-number", 5, "pr", "Copied 5 PR numbers"},
+		{"copy-number", 1, "issue", "Copied issue number"},
+		{"copy-number", 5, "issue", "Copied 5 issue numbers"},
 	}
 	for _, c := range cases {
-		if got := copiedLabel(c.builtin, c.n); got != c.want {
-			t.Errorf("copiedLabel(%q, %d) = %q, want %q", c.builtin, c.n, got, c.want)
+		if got := copiedLabel(c.builtin, c.n, c.kind); got != c.want {
+			t.Errorf("copiedLabel(%q, %d, %q) = %q, want %q", c.builtin, c.n, c.kind, got, c.want)
 		}
 	}
 }

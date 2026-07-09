@@ -1480,16 +1480,23 @@ func (m Model) statusBar() string {
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
 		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
 	}
-	drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
-	if m.hideDrafts {
-		drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
+	parts = append(parts,
+		hint("↵", "worktree"), hint("a", "actions"), hint("i", "PRs/Issues"),
+	)
+	if m.mode == "pr" {
+		parts = append(parts, hint("→", "expand"))
 	}
 	parts = append(parts,
-		hint("↵", "worktree"), hint("a", "actions"), hint("→", "expand"),
 		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
-		accentStyle.Render("D")+statusBarStyle.Render(":")+drafts,
-		hint("q", "quit"),
 	)
+	if m.mode == "pr" {
+		drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
+		if m.hideDrafts {
+			drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
+		}
+		parts = append(parts, accentStyle.Render("D")+statusBarStyle.Render(":")+drafts)
+	}
+	parts = append(parts, hint("q", "quit"))
 	rule := sepStyle.Render(strings.Repeat("─", max(m.width, 1)))
 	return rule + "\n  " + strings.Join(parts, "  ")
 }
