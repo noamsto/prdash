@@ -45,6 +45,30 @@ func TestHydrateFromCache(t *testing.T) {
 	}
 }
 
+func TestIssueKeyDistinctFromPRKey(t *testing.T) {
+	if issueKey("r", "is:open") == prKey("r", "is:open") {
+		t.Error("issue and pr cache keys collide")
+	}
+}
+
+func TestIssuesFetchedPopulatesRows(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.filter = "is:open"
+	out, _ := m.Update(issuesFetchedMsg{
+		filter: "is:open",
+		issues: []gh.Issue{{Number: 7, Title: "bug"}, {Number: 9, Title: "feat"}},
+	})
+	got := out.(Model)
+	if got.section.Len() != 2 {
+		t.Errorf("rows = %d, want 2", got.section.Len())
+	}
+	if got.refreshing {
+		t.Error("refreshing should clear after fetch")
+	}
+}
+
 func TestEmptyResultShowsEmptyStateNotLoading(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("noamsto/prdash")

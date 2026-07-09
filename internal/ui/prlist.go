@@ -20,11 +20,22 @@ import (
 	"github.com/noamsto/prdash/internal/triage"
 )
 
+// boardView is the per-mode selection saved across an i-toggle so flipping back
+// lands on the same state/preset the user left.
+type boardView struct {
+	state, body, filter string
+	presetIdx           int
+}
+
 type Model struct {
 	dir             string
 	filter          string
-	state           string // open | merged | closed; the s-toggle dimension
-	body            string // state-agnostic qualifier (e.g. "author:@me", "")
+	state           string    // open | merged | closed; the s-toggle dimension
+	body            string    // state-agnostic qualifier (e.g. "author:@me", "")
+	mode            string    // "pr" | "issue"; the i-toggle dimension
+	other           boardView // the inactive board's saved state/preset (restored on toggle-back)
+	issueDetail     map[int]gh.IssueDetail
+	issueFresh      map[int]bool // issue numbers whose body was refetched this session
 	cache           *cache.Cache
 	runner          gh.Runner
 	vp              viewport.Model
@@ -79,10 +90,17 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	state, body := splitState(filter, prStates)
 	resolved := searchFor(state, body)
 	return Model{
-		dir: dir, filter: resolved, state: state, body: body,
+		dir: dir, filter: resolved, state: state, body: body, mode: "pr",
+		other: boardView{
+			state: "open", body: assigneeBody, filter: searchFor("open", assigneeBody),
+			presetIdx: 0, // issuePresets[0] == "mine"
+		},
 		cache: c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
-		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, fresh: map[int]bool{}, previewN: 2,
+		actions: action.DefaultPRActions(),
+		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
+		previewN:  2,
 		presetIdx: presetIndexFor(body, defaultPresets), refreshing: true,
 	}
 }
@@ -99,6 +117,16 @@ func (m *Model) setPRs(prs []gh.PR) {
 	}
 	m.applyFilter()
 	if n := m.section.Len(); m.cursor >= n { // a refetch may shrink the shown set
+		m.cursor = max(0, n-1)
+	}
+}
+
+func (m *Model) setIssues(is []gh.Issue) {
+	if s, ok := m.section.(*IssueSection); ok {
+		s.SetIssues(is)
+	}
+	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n {
 		m.cursor = max(0, n-1)
 	}
 }
@@ -270,11 +298,42 @@ func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
 	return prs, true
 }
 
+// issueSchemaVer is bumped whenever issueFields changes shape.
+const issueSchemaVer = "v1"
+
+// issueKey scopes the cached issue list by repo, kind-prefixed "issue" so it can
+// never collide with the "pr" list cache for the same filter.
+func issueKey(repo, filter string) string {
+	return cache.Key("issue", repo+"\x00"+filter, defaultLimit, issueSchemaVer)
+}
+
+func (m *Model) cachedIssues(filter string) ([]gh.Issue, bool) {
+	e, ok := m.cache.Get(issueKey(m.repo, filter))
+	if !ok {
+		return nil, false
+	}
+	var is []gh.Issue
+	if err := json.Unmarshal(e.Rows, &is); err != nil {
+		slog.Debug("issue cache unmarshal failed", "err", err)
+		return nil, false
+	}
+	return is, true
+}
+
 // hydrate paints rows for the current view from the cache, reporting whether it
 // hit. The mine view combines the two cached searches into its sections.
 func (m *Model) hydrate() bool {
 	if m.cache == nil {
 		return false
+	}
+	if m.mode == "issue" {
+		is, ok := m.cachedIssues(m.filter)
+		if !ok {
+			return false
+		}
+		m.setIssues(is)
+		m.hydrateIssueDetail()
+		return true
 	}
 	if m.isMineView() {
 		mine, ok1 := m.cachedPRs(searchFor(m.state, mineBody))
@@ -324,6 +383,10 @@ func (m *Model) hydrateDetail() {
 	}
 }
 
+// hydrateIssueDetail paints each shown issue's body from the disk cache so the
+// preview never opens on a bare Loading…. Filled in with the detail cache in Task 5.
+func (m *Model) hydrateIssueDetail() {}
+
 // membersSchemaVer is bumped whenever the assignable-users field set changes.
 const membersSchemaVer = "v1"
 
@@ -367,6 +430,22 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 			return fetchFailedMsg{err: err, filter: filter}
 		}
 		return prsFetchedMsg{filter: filter, prs: prs, raw: raw}
+	}
+}
+
+// issueFetchCmd runs `gh issue list` for filter (gh excludes PRs by default).
+func (m Model) issueFetchCmd(filter string) tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		raw, err := r.Run(dir, gh.IssueListArgs(filter, defaultLimit)...)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: filter}
+		}
+		is, err := gh.ParseIssues(raw)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: filter}
+		}
+		return issuesFetchedMsg{filter: filter, issues: is, raw: raw}
 	}
 }
 
@@ -496,6 +575,12 @@ func (m *Model) switchToFilter() tea.Cmd {
 	m.refreshing = true
 	hit := m.hydrate()
 	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
+	if m.mode == "issue" {
+		if !hit {
+			m.setIssues(nil)
+		}
+		return tea.Batch(m.issueFetchCmd(m.filter), m.startSpinner())
+	}
 	if !hit {
 		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
 	}
@@ -619,6 +704,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+	case issuesFetchedMsg:
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(issueKey(m.repo, msg.filter), msg.raw)
+		}
+		if msg.filter != "" && msg.filter != m.filter {
+			return m, nil // background prewarm of another issue filter
+		}
+		m.refreshing = false
+		m.loaded = true
+		m.sel.clear()
+		m.setIssues(msg.issues)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
+		}
+		return m, m.detailCmdForCursor()
 	case mineFetchedMsg:
 		if m.cache != nil {
 			m.cache.Set(prKey(m.repo, searchFor(msg.state, mineBody)), msg.mineRaw)
@@ -841,13 +941,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.actionFilter.Focus()
 		case "f":
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
-			ps := presetsFor("pr") // TODO(task3): use m.mode
+			ps := presetsFor(m.mode)
 			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
 			m.body = ps[m.presetIdx].search
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
 		case "s":
-			m.state = nextState(m.state, statesFor("pr")) // TODO(task3): use m.mode
+			m.state = nextState(m.state, statesFor(m.mode))
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
 		case "z":
@@ -1028,7 +1128,7 @@ func clearStatusCmd() tea.Cmd {
 func (m Model) header() string {
 	label := m.body
 	if m.presetIdx >= 0 {
-		label = presetsFor("pr")[m.presetIdx].name // TODO(task3): use m.mode
+		label = presetsFor(m.mode)[m.presetIdx].name
 	}
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
 	if m.refreshing {
@@ -1072,7 +1172,7 @@ func (m Model) listTitle() string {
 // isMineView reports whether the active view is the "mine" preset, where every
 // PR is the author's own — so grouping by author would be noise.
 func (m Model) isMineView() bool {
-	return m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine" // TODO(task3): use m.mode
+	return m.mode == "pr" && m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.

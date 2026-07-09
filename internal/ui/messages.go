@@ -8,6 +8,12 @@ type prsFetchedMsg struct {
 	raw    []byte
 }
 
+type issuesFetchedMsg struct {
+	filter string // the search this result is for; "" means the current foreground fetch
+	issues []gh.Issue
+	raw    []byte
+}
+
 // mineFetchedMsg carries both halves of the "mine" view (authored +
 // review-requested) so it can render them as two sections.
 type mineFetchedMsg struct {
