@@ -138,7 +138,7 @@ func TestPRRankApprovedFailingIsNotReady(t *testing.T) {
 func TestSetShownOrderedGroupsByAuthorWhenMultiple(t *testing.T) {
 	a := gh.PR{Number: 1, ReviewDecision: "REVIEW_REQUIRED"} // alice, rank waiting
 	a.Author.Login = "alice"
-	b := gh.PR{Number: 2, ReviewDecision: "APPROVED",          // bob, rank ready
+	b := gh.PR{Number: 2, ReviewDecision: "APPROVED", // bob, rank ready
 		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
 	b.Author.Login = "bob"
 	a2 := gh.PR{Number: 3, ReviewDecision: "CHANGES_REQUESTED"} // alice, rank changes

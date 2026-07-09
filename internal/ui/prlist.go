@@ -731,6 +731,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.mineFetchCmd(),
 		m.fetchCmd("is:open"),
+		m.issueFetchCmd(searchFor("open", assigneeBody)),
 		m.fetchMembersCmd(),
 		spinnerTick(),
 		themeWatchTick(m.themeModTime),
