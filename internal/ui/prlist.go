@@ -384,8 +384,33 @@ func (m *Model) hydrateDetail() {
 }
 
 // hydrateIssueDetail paints each shown issue's body from the disk cache so the
-// preview never opens on a bare Loading…. Filled in with the detail cache in Task 5.
-func (m *Model) hydrateIssueDetail() {}
+// preview never opens on a bare Loading… (leaves it non-fresh, so the live
+// fetch still revalidates).
+func (m *Model) hydrateIssueDetail() {
+	if m.cache == nil {
+		return
+	}
+	is, ok := m.section.(*IssueSection)
+	if !ok {
+		return
+	}
+	for i := 0; i < is.Len(); i++ {
+		num := is.issueAt(i).Number
+		if _, ok := m.issueDetail[num]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(issueDetailKey(m.repo, num))
+		if !hit {
+			continue
+		}
+		var d gh.IssueDetail
+		if err := json.Unmarshal(e.Rows, &d); err != nil {
+			slog.Debug("issue detail cache unmarshal failed", "err", err)
+			continue
+		}
+		m.issueDetail[num] = d
+	}
+}
 
 // membersSchemaVer is bumped whenever the assignable-users field set changes.
 const membersSchemaVer = "v1"
@@ -788,6 +813,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fresh[msg.number] = true
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+		}
+		m.renderList()
+		return m, nil
+	case issueDetailMsg:
+		m.issueDetail[msg.number] = msg.detail
+		m.issueFresh[msg.number] = true
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(issueDetailKey(m.repo, msg.number), msg.raw)
 		}
 		m.renderList()
 		return m, nil
