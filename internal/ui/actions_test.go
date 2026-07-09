@@ -77,8 +77,8 @@ func TestCopiedLabel(t *testing.T) {
 		{"copy-url", 3, "Copied 3 URLs"},
 		{"copy-branch", 1, "Copied branch"},
 		{"copy-branch", 2, "Copied 2 branches"},
-		{"copy-number", 1, "Copied PR number"},
-		{"copy-number", 5, "Copied 5 PR numbers"},
+		{"copy-number", 1, "Copied number"},
+		{"copy-number", 5, "Copied 5 numbers"},
 	}
 	for _, c := range cases {
 		if got := copiedLabel(c.builtin, c.n); got != c.want {

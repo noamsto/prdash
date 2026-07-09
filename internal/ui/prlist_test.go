@@ -579,3 +579,26 @@ func TestPROnlyKeysInertInIssueMode(t *testing.T) {
 		t.Error("D toggled drafts in issue mode")
 	}
 }
+
+func TestModeSegmentsHighlightsActive(t *testing.T) {
+	pr := modeSegments("pr")
+	is := modeSegments("issue")
+	if pr == is {
+		t.Error("segments identical across modes")
+	}
+	if !strings.Contains(pr, "PRs") || !strings.Contains(pr, "Issues") {
+		t.Errorf("segments missing a label: %q", pr)
+	}
+}
+
+func TestEmptyStateSaysIssues(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.width, m.height = 120, 40
+	m.loaded = true
+	m.renderList()
+	if !strings.Contains(m.vp.View(), "issues") {
+		t.Errorf("empty state should mention issues:\n%s", m.vp.View())
+	}
+}

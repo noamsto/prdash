@@ -221,7 +221,11 @@ func (m *Model) renderList() {
 		m.cursorLine = 0
 		hint := "Loading…"
 		if m.loaded {
-			hint = fmt.Sprintf("No %s PRs.", m.state)
+			noun := "PRs"
+			if m.section.Kind() == "issue" {
+				noun = "issues"
+			}
+			hint = fmt.Sprintf("No %s %s.", m.state, noun)
 		}
 		content = dimStyle.Render(hint)
 	}
@@ -1201,13 +1205,25 @@ func clearStatusCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
 }
 
-// header is the top line: repo · preset · state · count.
+// modeSegments renders the "PRs │ Issues" board switch, the active one lit.
+func modeSegments(active string) string {
+	seg := func(name, mode string) string {
+		if mode == active {
+			return accentStyle.Bold(true).Render(name)
+		}
+		return dimStyle.Render(name)
+	}
+	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
+}
+
+// header is the top line: repo · mode segments · preset · state · count.
 func (m Model) header() string {
 	label := m.body
 	if m.presetIdx >= 0 {
 		label = presetsFor(m.mode)[m.presetIdx].name
 	}
-	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
+	h := headerStyle.Render("  "+m.repo) + "  " + modeSegments(m.mode) +
+		dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
@@ -1272,9 +1288,14 @@ func (m Model) legendView() string {
 		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
 		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
 		"",
-		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
-		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("s") + statusBarStyle.Render(" state   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
-		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
+		accentStyle.Render("i") + statusBarStyle.Render(" PRs/Issues   ") + accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
+		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("s") + statusBarStyle.Render(" state"),
+	}
+	if m.mode == "pr" {
+		rows = append(rows,
+			accentStyle.Render("F")+statusBarStyle.Render(" author   ")+accentStyle.Render("R")+statusBarStyle.Render(" reviewers   ")+accentStyle.Render("D")+statusBarStyle.Render(" drafts"),
+			accentStyle.Render("ctrl+j/k")+statusBarStyle.Render(" scroll preview   ")+accentStyle.Render("z")+statusBarStyle.Render(" maximize   ")+accentStyle.Render("esc")+statusBarStyle.Render(" close"),
+		)
 	}
 	body := strings.Join(rows, "\n")
 	return titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
@@ -1286,11 +1307,21 @@ var actionOrder = []string{"enter", "m", "r", "u", "M", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 
-// navHints is the keybinding cheatsheet shown in the docked panel's top section.
-var navHints = []keyHint{
-	{"↑↓", "move"}, {"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
-	{"f", "filter"}, {"s", "state"}, {"F", "author"}, {"R", "reviewers"}, {"/", "find"},
-	{"space", "select"}, {"V", "all"}, {"D", "drafts"}, {"q", "quit"},
+// navHintsFor is the docked-panel cheatsheet for the active board. Issue mode
+// drops the PR-only author/reviewer/drafts hints; both modes show the i-toggle.
+func navHintsFor(mode string) []keyHint {
+	base := []keyHint{
+		{"↑↓", "move"}, {"i", "PRs/Issues"}, {"f", "filter"}, {"s", "state"},
+		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
+	}
+	if mode == "pr" {
+		pr := []keyHint{
+			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+			{"F", "author"}, {"R", "reviewers"}, {"D", "drafts"},
+		}
+		return append(base, pr...)
+	}
+	return base
 }
 
 // gridHints lays hints into aligned columns: every cell is padded to the widest
@@ -1364,9 +1395,9 @@ func panelColumn(label string, hints []keyHint, w int, alignKeys bool) string {
 // panelBody lays keys on the left and actions on the right, split by a vertical
 // rule. Narrow columns collapse each side to a single vertical stack. Action
 // labels are column-aligned; keys aren't (their widths vary too much).
-func panelBody(innerW int, actionsLabel string, acts []keyHint) string {
+func panelBody(innerW int, keyHints []keyHint, actionsLabel string, acts []keyHint) string {
 	lw, rw := panelSplit(innerW)
-	left := panelColumn("keys", navHints, lw, false)
+	left := panelColumn("keys", keyHints, lw, false)
 	right := panelColumn(actionsLabel, acts, rw, true)
 	h := max(lipgloss.Height(left), lipgloss.Height(right))
 	// Each separator line must carry its own padding — wrapping the whole
@@ -1378,11 +1409,12 @@ func panelBody(innerW int, actionsLabel string, acts []keyHint) string {
 }
 
 // panelContentRows is the tallest of the two columns (each = header + grid).
-// Reserved against the full action set so the height is stable when batch mode
-// hides the single-only actions.
+// Reserved against the full action set (PR mode, the superset of nav hints) so
+// the height is stable when batch mode hides the single-only actions, and
+// doesn't jump when switching to issue mode's shorter hint list.
 func panelContentRows(innerW int) int {
 	lw, rw := panelSplit(innerW)
-	return max(1+len(gridHints(navHints, lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
+	return max(1+len(gridHints(navHintsFor("pr"), lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
@@ -1432,7 +1464,7 @@ func (m Model) actionHints() (label string, hints []keyHint) {
 // cheatsheet and the focused view's actions, sized to the given outer width.
 func (m Model) keysActionsPanel(w int) string {
 	label, acts := m.actionHints()
-	return titledBox(panelBody(w-2, label, acts), w, panelRowsFor(w-2), "help")
+	return titledBox(panelBody(w-2, navHintsFor(m.mode), label, acts), w, panelRowsFor(w-2), "help")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:

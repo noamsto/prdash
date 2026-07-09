@@ -46,7 +46,7 @@ func copiedLabel(builtin string, n int) string {
 	case "copy-branch":
 		noun, plural = "branch", "branches"
 	case "copy-number":
-		noun, plural = "PR number", "PR numbers"
+		noun, plural = "number", "numbers"
 	}
 	if n > 1 {
 		return fmt.Sprintf("Copied %d %s", n, plural)

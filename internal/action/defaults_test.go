@@ -52,6 +52,15 @@ func TestMutatingActionsMarkedRefresh(t *testing.T) {
 	}
 }
 
+func TestIssueActionsHaveCopy(t *testing.T) {
+	a := DefaultIssueActions()
+	for _, k := range []string{"y", "Y", "b"} {
+		if _, ok := a[k]; !ok {
+			t.Errorf("issue actions missing copy key %q", k)
+		}
+	}
+}
+
 func TestDefaultsHaveUpdateAndReady(t *testing.T) {
 	d := DefaultPRActions()
 	u := d["u"]
