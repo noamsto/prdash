@@ -534,3 +534,48 @@ func TestThemePollWhileExpandedKeepsExpandedBody(t *testing.T) {
 		t.Fatal("expanded body should not match the PR-list rendering")
 	}
 }
+
+func TestToggleModeSwapsBoard(t *testing.T) {
+	m := NewModel(".", "is:open author:@me", nil)
+	m.cursor = 3
+	m.previewExpanded = true
+	m.previewMax = true
+	m.hideDrafts = true
+
+	out, _ := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	got := out.(Model)
+
+	if got.mode != "issue" {
+		t.Fatalf("mode = %q, want issue", got.mode)
+	}
+	if got.section.Kind() != "issue" {
+		t.Errorf("section kind = %q", got.section.Kind())
+	}
+	if _, ok := got.actions["m"]; ok {
+		t.Error("issue actions should not contain merge key 'm'")
+	}
+	if got.cursor != 0 || got.previewExpanded || got.previewMax || got.hideDrafts {
+		t.Error("view state not reset on toggle")
+	}
+
+	back, _ := got.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	b := back.(Model)
+	if b.mode != "pr" || b.section.Kind() != "pr" {
+		t.Errorf("toggle back failed: mode=%q kind=%q", b.mode, b.section.Kind())
+	}
+	if b.filter != "is:open author:@me" {
+		t.Errorf("pr filter not restored: %q", b.filter)
+	}
+}
+
+func TestPROnlyKeysInertInIssueMode(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.hideDrafts = false
+	// D must not flip hideDrafts in issue mode.
+	out, _ := m.Update(tea.KeyPressMsg{Code: 'D', Text: "D"})
+	if out.(Model).hideDrafts {
+		t.Error("D toggled drafts in issue mode")
+	}
+}

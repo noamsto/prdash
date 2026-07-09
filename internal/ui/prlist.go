@@ -591,6 +591,36 @@ func (m *Model) switchToFilter() tea.Cmd {
 	return tea.Batch(fetch, m.startSpinner())
 }
 
+// toggleMode flips the board between PRs and issues: it saves the active board's
+// selection, restores the other's, swaps the section + action set, resets all
+// per-item/preview view state, and re-fetches (cached → instant).
+func (m *Model) toggleMode() tea.Cmd {
+	cur := boardView{state: m.state, body: m.body, filter: m.filter, presetIdx: m.presetIdx}
+	m.state, m.body, m.filter, m.presetIdx = m.other.state, m.other.body, m.other.filter, m.other.presetIdx
+	m.other = cur
+
+	if m.mode == "pr" {
+		m.mode = "issue"
+		m.section = NewIssueSection(m.filter)
+		m.actions = action.DefaultIssueActions()
+	} else {
+		m.mode = "pr"
+		m.section = NewPRSection(m.filter)
+		m.actions = action.DefaultPRActions()
+	}
+
+	// Reset view state so nothing from the other board leaks through.
+	m.previewExpanded = false
+	m.previewMax = false
+	m.previewOffset = 0
+	m.hideDrafts = false
+	m.expanded = false
+	m.err = nil
+	m.detailSeq++ // cancel any in-flight detail debounce/fetch for the old board
+
+	return m.switchToFilter() // resets cursor + selection, hydrates, fetches
+}
+
 // openPicker shows the member picker in the given mode, pre-checking the right
 // set, and fetches the member list if it isn't cached yet.
 func (m *Model) openPicker(mode string) tea.Cmd {
@@ -950,6 +980,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = nextState(m.state, statesFor(m.mode))
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
+		case "i":
+			return m, m.toggleMode()
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
@@ -960,6 +992,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewScrollBy(-1)
 			return m, nil
 		case "D":
+			if m.mode != "pr" {
+				return m, nil
+			}
 			m.hideDrafts = !m.hideDrafts
 			if ps, ok := m.section.(*PRSection); ok {
 				ps.SetHideDrafts(m.hideDrafts)
@@ -968,8 +1003,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 			return m, nil
 		case "F":
+			if m.mode != "pr" {
+				return m, nil
+			}
 			return m, m.openPicker("author")
 		case "R":
+			if m.mode != "pr" {
+				return m, nil
+			}
 			if _, ok := m.cursorVars(); ok {
 				return m, m.openPicker("reviewer")
 			}
@@ -1007,6 +1048,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
 		case "right", "l":
+			if m.mode != "pr" {
+				return m, nil // expanded view is PR-only in v1
+			}
 			m.enterExpanded()
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
