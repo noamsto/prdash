@@ -76,14 +76,14 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	ti.Prompt = "/"
 	af := textinput.New()
 	af.Prompt = "› "
-	state, body := splitState(filter)
+	state, body := splitState(filter, prStates)
 	resolved := searchFor(state, body)
 	return Model{
 		dir: dir, filter: resolved, state: state, body: body,
 		cache: c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, fresh: map[int]bool{}, previewN: 2,
-		presetIdx: presetIndexFor(body), refreshing: true,
+		presetIdx: presetIndexFor(body, defaultPresets), refreshing: true,
 	}
 }
 
@@ -841,12 +841,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.actionFilter.Focus()
 		case "f":
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
-			m.presetIdx = nextPreset(max(m.presetIdx, 0))
-			m.body = defaultPresets[m.presetIdx].search
+			ps := presetsFor("pr") // TODO(task3): use m.mode
+			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
+			m.body = ps[m.presetIdx].search
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
 		case "s":
-			m.state = nextState(m.state)
+			m.state = nextState(m.state, statesFor("pr")) // TODO(task3): use m.mode
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
 		case "z":
@@ -1027,7 +1028,7 @@ func clearStatusCmd() tea.Cmd {
 func (m Model) header() string {
 	label := m.body
 	if m.presetIdx >= 0 {
-		label = defaultPresets[m.presetIdx].name
+		label = presetsFor("pr")[m.presetIdx].name // TODO(task3): use m.mode
 	}
 	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
 	if m.refreshing {
@@ -1071,7 +1072,7 @@ func (m Model) listTitle() string {
 // isMineView reports whether the active view is the "mine" preset, where every
 // PR is the author's own — so grouping by author would be noise.
 func (m Model) isMineView() bool {
-	return m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
+	return m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine" // TODO(task3): use m.mode
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.
