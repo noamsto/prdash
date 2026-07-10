@@ -1206,13 +1206,39 @@ func clearStatusCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
 }
 
-// modeSegments renders the "PRs │ Issues" board switch, the active one lit.
+// prGlyph / issueGlyph mark each board. Set to your Nerd Font's glyphs.
+var (
+	prGlyph    = "\uf407" // nerd: nf-oct-git_pull_request
+	issueGlyph = "\uf41b" // nerd: nf-oct-issue_opened
+)
+
+// modeGlyph returns the board's marker glyph.
+func modeGlyph(mode string) string {
+	if mode == "issue" {
+		return issueGlyph
+	}
+	return prGlyph
+}
+
+// accentFor is the per-board accent: mauve for PRs, teal for Issues. Used for the
+// active header segment and the list/preview box titles so each board reads as a
+// distinct color at a glance.
+func accentFor(mode string) lipgloss.Style {
+	if mode == "issue" {
+		return issueAccentStyle
+	}
+	return accentStyle
+}
+
+// modeSegments renders the "󰓎 PRs │ 󰝖 Issues" board switch: each segment carries
+// its board glyph, and the active one is lit in that board's accent color.
 func modeSegments(active string) string {
 	seg := func(name, mode string) string {
+		label := modeGlyph(mode) + " " + name
 		if mode == active {
-			return accentStyle.Bold(true).Render(name)
+			return accentFor(mode).Bold(true).Render(label)
 		}
-		return dimStyle.Render(name)
+		return dimStyle.Render(label)
 	}
 	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
 }
@@ -1255,12 +1281,12 @@ func (m Model) statusBadge() string {
 	}
 }
 
-// listTitle is the list pane's border title: the section kind + shown count.
+// listTitle is the list pane's border title: the board glyph + kind + shown count.
 func (m Model) listTitle() string {
 	if m.section.Kind() == "issue" {
-		return fmt.Sprintf("Issues · %d", m.section.Len())
+		return fmt.Sprintf("%s Issues · %d", issueGlyph, m.section.Len())
 	}
-	return fmt.Sprintf("PRs · %d", m.section.Len())
+	return fmt.Sprintf("%s PRs · %d", prGlyph, m.section.Len())
 }
 
 // isMineView reports whether the active view is the "mine" preset, where every
