@@ -39,14 +39,19 @@ func clipboardText(builtin string, v action.Vars) string {
 }
 
 // copiedLabel is the status shown after a copy action: past-tense, pluralized
-// by how many rows were grabbed.
-func copiedLabel(builtin string, n int) string {
+// by how many rows were grabbed. kind ("pr"/"issue") disambiguates copy-number
+// so the label reads "PR number" or "issue number".
+func copiedLabel(builtin string, n int, kind string) string {
 	noun, plural := "URL", "URLs"
 	switch builtin {
 	case "copy-branch":
 		noun, plural = "branch", "branches"
 	case "copy-number":
-		noun, plural = "PR number", "PR numbers"
+		if kind == "issue" {
+			noun, plural = "issue number", "issue numbers"
+		} else {
+			noun, plural = "PR number", "PR numbers"
+		}
 	}
 	if n > 1 {
 		return fmt.Sprintf("Copied %d %s", n, plural)
@@ -117,7 +122,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	switch a.Command.Builtin {
 	case "copy-url", "copy-branch", "copy-number":
 		text := m.copyPayload(a.Command.Builtin)
-		ok := copiedLabel(a.Command.Builtin, len(m.selectedOrCursor()))
+		ok := copiedLabel(a.Command.Builtin, len(m.selectedOrCursor()), m.section.Kind())
 		if m.sel.count() > 0 {
 			m.sel.clear() // a batch copy consumes the selection
 		}

@@ -236,6 +236,9 @@ func (s *IssueSection) SetIssues(is []gh.Issue)   { s.issues = is; s.shown = all
 func (s *IssueSection) Len() int                  { return len(s.shown) }
 func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
 
+// issueAt returns the gh.Issue at shown-row i (mirrors prAt).
+func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
+
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, fmt.Sprintf("#%d", is.Number), is.Title,

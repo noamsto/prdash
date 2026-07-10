@@ -30,6 +30,13 @@ func detailKey(repo string, number int) string {
 	return cache.Key("prdetail", repo+"#"+strconv.Itoa(number), 0, detailSchemaVer)
 }
 
+// issueDetailSchemaVer is bumped whenever IssueViewArgs' --json field set changes.
+const issueDetailSchemaVer = "v1"
+
+func issueDetailKey(repo string, number int) string {
+	return cache.Key("issuedetail", repo+"#"+strconv.Itoa(number), 0, issueDetailSchemaVer)
+}
+
 // fetchDetailCmd lazily loads the selected PR's comments/reviews.
 func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	r, dir := m.runner, m.dir
@@ -46,20 +53,45 @@ func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	}
 }
 
-// detailCmdForCursor refetches the cursor PR's detail unless it was already
+// fetchIssueDetailCmd lazily loads the selected issue's body.
+func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		raw, err := r.Run(dir, gh.IssueViewArgs(number)...)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		d, err := gh.ParseIssueDetail(raw)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return issueDetailMsg{number: number, detail: d, raw: raw}
+	}
+}
+
+// detailCmdForCursor refetches the cursor row's detail unless it was already
 // refreshed this session; disk-cached (stale) detail still triggers a refetch.
 func (m *Model) detailCmdForCursor() tea.Cmd {
-	if m.runner == nil || m.section.Kind() != "pr" {
+	if m.runner == nil {
 		return nil
 	}
 	v, ok := m.cursorVars()
 	if !ok {
 		return nil
 	}
-	if m.fresh[v.Number] {
-		return nil
+	switch m.section.Kind() {
+	case "issue":
+		if m.issueFresh[v.Number] {
+			return nil
+		}
+		return m.fetchIssueDetailCmd(v.Number)
+	case "pr":
+		if m.fresh[v.Number] {
+			return nil
+		}
+		return m.fetchDetailCmd(v.Number)
 	}
-	return m.fetchDetailCmd(v.Number)
+	return nil
 }
 
 // prefetchWindow bounds how many uncached PR details we fan out per settle.
@@ -164,7 +196,6 @@ func (m Model) previewPane() string {
 	if !ok {
 		return ""
 	}
-	d, cached := m.detail[v.Number]
 	w := m.previewWidth()
 	bw := w - 2 // body width: leave room for the 2-col section indent below
 	// A section is its label (flush) + body indented one level under it; the blank
@@ -172,6 +203,10 @@ func (m Model) previewPane() string {
 	section := func(label, body string) string {
 		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
 	}
+	if is, ok := m.section.(*IssueSection); ok {
+		return m.issuePreviewPane(is, w, bw)
+	}
+	d, cached := m.detail[v.Number]
 	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
@@ -199,6 +234,32 @@ func (m Model) previewPane() string {
 	blocks = append(blocks, section("review", reviewLine(d)))
 	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
 	return strings.Join(blocks, "\n\n")
+}
+
+// issuePreviewPane renders the issue identity header + its markdown body. The
+// body is the whole v1 story; the comments timeline lands in a later milestone.
+func (m Model) issuePreviewPane(is *IssueSection, w, bw int) string {
+	iss := is.issueAt(m.cursor)
+	blocks := []string{identityHeaderIssue(iss)}
+	d, cached := m.issueDetail[iss.Number]
+	if !cached {
+		blocks = append(blocks, dimStyle.Render("  loading details…"))
+		return strings.Join(blocks, "\n\n")
+	}
+	body, err := preview.Render(d.Body, bw)
+	if err != nil {
+		body = d.Body
+	}
+	blocks = append(blocks, sectionRule("body", w)+"\n"+indentLines(strings.TrimRight(body, "\n"), 2))
+	return strings.Join(blocks, "\n\n")
+}
+
+// identityHeaderIssue mirrors identityHeader for issues (no branch/head ref line).
+func identityHeaderIssue(is gh.Issue) string {
+	line1 := accentStyle.Render(fmt.Sprintf("#%d", is.Number)) + " " + headerStyle.Render(is.Title)
+	line2 := authorStyle(is.Author.Login).Render(is.Author.Login) +
+		dimStyle.Render(" · "+ageString(is.UpdatedAt))
+	return line1 + "\n" + line2
 }
 
 // previewTitle is the side pane's border title.

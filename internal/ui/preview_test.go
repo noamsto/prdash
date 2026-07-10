@@ -242,3 +242,32 @@ func TestPreviewScrollNoOpWhenContentFits(t *testing.T) {
 		t.Fatalf("scrolling when content fits must stay at 0, got %d", m.previewOffset)
 	}
 }
+
+func TestIssuePreviewRendersBody(t *testing.T) {
+	ansi := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.width, m.height = 120, 40
+	sec := NewIssueSection("is:open")
+	sec.SetIssues([]gh.Issue{{Number: 5, Title: "Crash on save", Author: struct {
+		Login string `json:"login"`
+	}{Login: "octocat"}}})
+	m.section = sec
+	m.issueDetail[5] = gh.IssueDetail{Body: "Steps to reproduce"}
+
+	pane := ansi.ReplaceAllString(m.previewPane(), "")
+	if !strings.Contains(pane, "#5") || !strings.Contains(pane, "Steps to reproduce") {
+		t.Errorf("issue preview missing number/body:\n%s", pane)
+	}
+}
+
+func TestIssueDetailMsgStores(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	out, _ := m.Update(issueDetailMsg{number: 5, detail: gh.IssueDetail{Body: "b"}})
+	got := out.(Model)
+	if got.issueDetail[5].Body != "b" || !got.issueFresh[5] {
+		t.Error("issue detail not stored / not marked fresh")
+	}
+}

@@ -2,9 +2,23 @@ package ui
 
 import "github.com/noamsto/prdash/internal/gh"
 
+// issueDetailMsg carries a fetched issue body, cached to disk so the preview
+// paints instantly next launch (mirrors prDetailMsg).
+type issueDetailMsg struct {
+	number int
+	detail gh.IssueDetail
+	raw    []byte
+}
+
 type prsFetchedMsg struct {
 	filter string // the search this result is for; "" means the current foreground fetch
 	prs    []gh.PR
+	raw    []byte
+}
+
+type issuesFetchedMsg struct {
+	filter string // the search this result is for; "" means the current foreground fetch
+	issues []gh.Issue
 	raw    []byte
 }
 

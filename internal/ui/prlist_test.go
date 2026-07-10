@@ -45,6 +45,30 @@ func TestHydrateFromCache(t *testing.T) {
 	}
 }
 
+func TestIssueKeyDistinctFromPRKey(t *testing.T) {
+	if issueKey("r", "is:open") == prKey("r", "is:open") {
+		t.Error("issue and pr cache keys collide")
+	}
+}
+
+func TestIssuesFetchedPopulatesRows(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.filter = "is:open"
+	out, _ := m.Update(issuesFetchedMsg{
+		filter: "is:open",
+		issues: []gh.Issue{{Number: 7, Title: "bug"}, {Number: 9, Title: "feat"}},
+	})
+	got := out.(Model)
+	if got.section.Len() != 2 {
+		t.Errorf("rows = %d, want 2", got.section.Len())
+	}
+	if got.refreshing {
+		t.Error("refreshing should clear after fetch")
+	}
+}
+
 func TestEmptyResultShowsEmptyStateNotLoading(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("noamsto/prdash")
@@ -508,5 +532,99 @@ func TestThemePollWhileExpandedKeepsExpandedBody(t *testing.T) {
 	}
 	if got == listContent {
 		t.Fatal("expanded body should not match the PR-list rendering")
+	}
+}
+
+func TestToggleModeSwapsBoard(t *testing.T) {
+	m := NewModel(".", "is:open author:@me", nil)
+	m.cursor = 3
+	m.previewExpanded = true
+	m.previewMax = true
+	m.hideDrafts = true
+
+	out, _ := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	got := out.(Model)
+
+	if got.mode != "issue" {
+		t.Fatalf("mode = %q, want issue", got.mode)
+	}
+	if got.section.Kind() != "issue" {
+		t.Errorf("section kind = %q", got.section.Kind())
+	}
+	if _, ok := got.actions["m"]; ok {
+		t.Error("issue actions should not contain merge key 'm'")
+	}
+	if got.cursor != 0 || got.previewExpanded || got.previewMax || got.hideDrafts {
+		t.Error("view state not reset on toggle")
+	}
+
+	back, _ := got.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	b := back.(Model)
+	if b.mode != "pr" || b.section.Kind() != "pr" {
+		t.Errorf("toggle back failed: mode=%q kind=%q", b.mode, b.section.Kind())
+	}
+	if b.filter != "is:open author:@me" {
+		t.Errorf("pr filter not restored: %q", b.filter)
+	}
+}
+
+func TestPROnlyKeysInertInIssueMode(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.hideDrafts = false
+	// D must not flip hideDrafts in issue mode.
+	out, _ := m.Update(tea.KeyPressMsg{Code: 'D', Text: "D"})
+	if out.(Model).hideDrafts {
+		t.Error("D toggled drafts in issue mode")
+	}
+}
+
+func TestChecksPollInertInIssueMode(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.polling = true
+	u, cmd := m.Update(checksPollMsg{})
+	if u.(Model).polling {
+		t.Error("expected poll loop to stop in issue mode")
+	}
+	if cmd != nil {
+		t.Error("expected no reschedule (and no background refresh) in issue mode")
+	}
+	if u.(Model).mode != "issue" {
+		t.Error("checksPollMsg must not switch section in issue mode")
+	}
+}
+
+func TestIsMineViewFalseInIssueMode(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.presetIdx = 0 // issuePresets[0] is also named "mine"
+	if m.isMineView() {
+		t.Error("isMineView should be false in issue mode, even at the issue 'mine' preset")
+	}
+}
+
+func TestModeSegmentsHighlightsActive(t *testing.T) {
+	pr := modeSegments("pr")
+	is := modeSegments("issue")
+	if pr == is {
+		t.Error("segments identical across modes")
+	}
+	if !strings.Contains(pr, "PRs") || !strings.Contains(pr, "Issues") {
+		t.Errorf("segments missing a label: %q", pr)
+	}
+}
+
+func TestEmptyStateSaysIssues(t *testing.T) {
+	m := NewModel(".", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.width, m.height = 120, 40
+	m.loaded = true
+	m.renderList()
+	if !strings.Contains(m.vp.View(), "issues") {
+		t.Errorf("empty state should mention issues:\n%s", m.vp.View())
 	}
 }

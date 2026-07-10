@@ -42,5 +42,11 @@ func DefaultIssueActions() map[string]Action {
 			ExitsTUI: true, Scope: "per-selected"},
 		"o": {Key: "o", Label: "Open in browser",
 			Command: Command{Argv: []string{"gh", "issue", "view", "{{.Number}}", "--web"}}, Scope: "single"},
+		"y": {Key: "y", Label: "Copy issue #",
+			Command: Command{Builtin: "copy-number"}, Scope: "single"},
+		"Y": {Key: "Y", Label: "Copy URL",
+			Command: Command{Builtin: "copy-url"}, Scope: "single"},
+		"b": {Key: "b", Label: "Copy branch",
+			Command: Command{Builtin: "copy-branch"}, Scope: "single"},
 	}
 }

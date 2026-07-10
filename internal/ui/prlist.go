@@ -20,11 +20,22 @@ import (
 	"github.com/noamsto/prdash/internal/triage"
 )
 
+// boardView is the per-mode selection saved across an i-toggle so flipping back
+// lands on the same state/preset the user left.
+type boardView struct {
+	state, body, filter string
+	presetIdx           int
+}
+
 type Model struct {
 	dir             string
 	filter          string
-	state           string // open | merged | closed; the s-toggle dimension
-	body            string // state-agnostic qualifier (e.g. "author:@me", "")
+	state           string    // open | merged | closed; the s-toggle dimension
+	body            string    // state-agnostic qualifier (e.g. "author:@me", "")
+	mode            string    // "pr" | "issue"; the i-toggle dimension
+	other           boardView // the inactive board's saved state/preset (restored on toggle-back)
+	issueDetail     map[int]gh.IssueDetail
+	issueFresh      map[int]bool // issue numbers whose body was refetched this session
 	cache           *cache.Cache
 	runner          gh.Runner
 	vp              viewport.Model
@@ -76,14 +87,21 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	ti.Prompt = "/"
 	af := textinput.New()
 	af.Prompt = "› "
-	state, body := splitState(filter)
+	state, body := splitState(filter, prStates)
 	resolved := searchFor(state, body)
 	return Model{
-		dir: dir, filter: resolved, state: state, body: body,
+		dir: dir, filter: resolved, state: state, body: body, mode: "pr",
+		other: boardView{
+			state: "open", body: assigneeBody, filter: searchFor("open", assigneeBody),
+			presetIdx: 0, // issuePresets[0] == "mine"
+		},
 		cache: c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
-		actions: action.DefaultPRActions(), detail: map[int]gh.PRDetail{}, fresh: map[int]bool{}, previewN: 2,
-		presetIdx: presetIndexFor(body), refreshing: true,
+		actions: action.DefaultPRActions(),
+		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
+		previewN:  2,
+		presetIdx: presetIndexFor(body, defaultPresets), refreshing: true,
 	}
 }
 
@@ -99,6 +117,16 @@ func (m *Model) setPRs(prs []gh.PR) {
 	}
 	m.applyFilter()
 	if n := m.section.Len(); m.cursor >= n { // a refetch may shrink the shown set
+		m.cursor = max(0, n-1)
+	}
+}
+
+func (m *Model) setIssues(is []gh.Issue) {
+	if s, ok := m.section.(*IssueSection); ok {
+		s.SetIssues(is)
+	}
+	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n {
 		m.cursor = max(0, n-1)
 	}
 }
@@ -193,7 +221,11 @@ func (m *Model) renderList() {
 		m.cursorLine = 0
 		hint := "Loading…"
 		if m.loaded {
-			hint = fmt.Sprintf("No %s PRs.", m.state)
+			noun := "PRs"
+			if m.section.Kind() == "issue" {
+				noun = "issues"
+			}
+			hint = fmt.Sprintf("No %s %s.", m.state, noun)
 		}
 		content = dimStyle.Render(hint)
 	}
@@ -270,11 +302,42 @@ func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
 	return prs, true
 }
 
+// issueSchemaVer is bumped whenever issueFields changes shape.
+const issueSchemaVer = "v1"
+
+// issueKey scopes the cached issue list by repo, kind-prefixed "issue" so it can
+// never collide with the "pr" list cache for the same filter.
+func issueKey(repo, filter string) string {
+	return cache.Key("issue", repo+"\x00"+filter, defaultLimit, issueSchemaVer)
+}
+
+func (m *Model) cachedIssues(filter string) ([]gh.Issue, bool) {
+	e, ok := m.cache.Get(issueKey(m.repo, filter))
+	if !ok {
+		return nil, false
+	}
+	var is []gh.Issue
+	if err := json.Unmarshal(e.Rows, &is); err != nil {
+		slog.Debug("issue cache unmarshal failed", "err", err)
+		return nil, false
+	}
+	return is, true
+}
+
 // hydrate paints rows for the current view from the cache, reporting whether it
 // hit. The mine view combines the two cached searches into its sections.
 func (m *Model) hydrate() bool {
 	if m.cache == nil {
 		return false
+	}
+	if m.mode == "issue" {
+		is, ok := m.cachedIssues(m.filter)
+		if !ok {
+			return false
+		}
+		m.setIssues(is)
+		m.hydrateIssueDetail()
+		return true
 	}
 	if m.isMineView() {
 		mine, ok1 := m.cachedPRs(searchFor(m.state, mineBody))
@@ -324,6 +387,35 @@ func (m *Model) hydrateDetail() {
 	}
 }
 
+// hydrateIssueDetail paints each shown issue's body from the disk cache so the
+// preview never opens on a bare Loading… (leaves it non-fresh, so the live
+// fetch still revalidates).
+func (m *Model) hydrateIssueDetail() {
+	if m.cache == nil {
+		return
+	}
+	is, ok := m.section.(*IssueSection)
+	if !ok {
+		return
+	}
+	for i := 0; i < is.Len(); i++ {
+		num := is.issueAt(i).Number
+		if _, ok := m.issueDetail[num]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(issueDetailKey(m.repo, num))
+		if !hit {
+			continue
+		}
+		var d gh.IssueDetail
+		if err := json.Unmarshal(e.Rows, &d); err != nil {
+			slog.Debug("issue detail cache unmarshal failed", "err", err)
+			continue
+		}
+		m.issueDetail[num] = d
+	}
+}
+
 // membersSchemaVer is bumped whenever the assignable-users field set changes.
 const membersSchemaVer = "v1"
 
@@ -367,6 +459,22 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 			return fetchFailedMsg{err: err, filter: filter}
 		}
 		return prsFetchedMsg{filter: filter, prs: prs, raw: raw}
+	}
+}
+
+// issueFetchCmd runs `gh issue list` for filter (gh excludes PRs by default).
+func (m Model) issueFetchCmd(filter string) tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		raw, err := r.Run(dir, gh.IssueListArgs(filter, defaultLimit)...)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: filter}
+		}
+		is, err := gh.ParseIssues(raw)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: filter}
+		}
+		return issuesFetchedMsg{filter: filter, issues: is, raw: raw}
 	}
 }
 
@@ -496,6 +604,12 @@ func (m *Model) switchToFilter() tea.Cmd {
 	m.refreshing = true
 	hit := m.hydrate()
 	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
+	if m.mode == "issue" {
+		if !hit {
+			m.setIssues(nil)
+		}
+		return tea.Batch(m.issueFetchCmd(m.filter), m.startSpinner())
+	}
 	if !hit {
 		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
 	}
@@ -504,6 +618,36 @@ func (m *Model) switchToFilter() tea.Cmd {
 		fetch = m.mineFetchCmd()
 	}
 	return tea.Batch(fetch, m.startSpinner())
+}
+
+// toggleMode flips the board between PRs and issues: it saves the active board's
+// selection, restores the other's, swaps the section + action set, resets all
+// per-item/preview view state, and re-fetches (cached → instant).
+func (m *Model) toggleMode() tea.Cmd {
+	cur := boardView{state: m.state, body: m.body, filter: m.filter, presetIdx: m.presetIdx}
+	m.state, m.body, m.filter, m.presetIdx = m.other.state, m.other.body, m.other.filter, m.other.presetIdx
+	m.other = cur
+
+	if m.mode == "pr" {
+		m.mode = "issue"
+		m.section = NewIssueSection(m.filter)
+		m.actions = action.DefaultIssueActions()
+	} else {
+		m.mode = "pr"
+		m.section = NewPRSection(m.filter)
+		m.actions = action.DefaultPRActions()
+	}
+
+	// Reset view state so nothing from the other board leaks through.
+	m.previewExpanded = false
+	m.previewMax = false
+	m.previewOffset = 0
+	m.hideDrafts = false
+	m.expanded = false
+	m.err = nil
+	m.detailSeq++ // cancel any in-flight detail debounce/fetch for the old board
+
+	return m.switchToFilter() // resets cursor + selection, hydrates, fetches
 }
 
 // openPicker shows the member picker in the given mode, pre-checking the right
@@ -587,6 +731,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.mineFetchCmd(),
 		m.fetchCmd("is:open"),
+		m.issueFetchCmd(searchFor("open", assigneeBody)),
 		m.fetchMembersCmd(),
 		spinnerTick(),
 		themeWatchTick(m.themeModTime),
@@ -619,6 +764,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+	case issuesFetchedMsg:
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(issueKey(m.repo, msg.filter), msg.raw)
+		}
+		if msg.filter != "" && msg.filter != m.filter {
+			return m, nil // background prewarm of another issue filter
+		}
+		m.refreshing = false
+		m.loaded = true
+		m.sel.clear()
+		m.setIssues(msg.issues)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
+		}
+		return m, m.detailCmdForCursor()
 	case mineFetchedMsg:
 		if m.cache != nil {
 			m.cache.Set(prKey(m.repo, searchFor(msg.state, mineBody)), msg.mineRaw)
@@ -658,6 +818,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fresh[msg.number] = true
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+		}
+		m.renderList()
+		return m, nil
+	case issueDetailMsg:
+		m.issueDetail[msg.number] = msg.detail
+		m.issueFresh[msg.number] = true
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(issueDetailKey(m.repo, msg.number), msg.raw)
 		}
 		m.renderList()
 		return m, nil
@@ -841,14 +1009,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.actionFilter.Focus()
 		case "f":
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
-			m.presetIdx = nextPreset(max(m.presetIdx, 0))
-			m.body = defaultPresets[m.presetIdx].search
+			ps := presetsFor(m.mode)
+			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
+			m.body = ps[m.presetIdx].search
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
 		case "s":
-			m.state = nextState(m.state)
+			m.state = nextState(m.state, statesFor(m.mode))
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
+		case "i":
+			return m, m.toggleMode()
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
@@ -859,6 +1030,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewScrollBy(-1)
 			return m, nil
 		case "D":
+			if m.mode != "pr" {
+				return m, nil
+			}
 			m.hideDrafts = !m.hideDrafts
 			if ps, ok := m.section.(*PRSection); ok {
 				ps.SetHideDrafts(m.hideDrafts)
@@ -867,8 +1041,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 			return m, nil
 		case "F":
+			if m.mode != "pr" {
+				return m, nil
+			}
 			return m, m.openPicker("author")
 		case "R":
+			if m.mode != "pr" {
+				return m, nil
+			}
 			if _, ok := m.cursorVars(); ok {
 				return m, m.openPicker("reviewer")
 			}
@@ -906,6 +1086,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
 		case "right", "l":
+			if m.mode != "pr" {
+				return m, nil // expanded view is PR-only in v1
+			}
 			m.enterExpanded()
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
@@ -1023,13 +1206,25 @@ func clearStatusCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
 }
 
-// header is the top line: repo · preset · state · count.
+// modeSegments renders the "PRs │ Issues" board switch, the active one lit.
+func modeSegments(active string) string {
+	seg := func(name, mode string) string {
+		if mode == active {
+			return accentStyle.Bold(true).Render(name)
+		}
+		return dimStyle.Render(name)
+	}
+	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
+}
+
+// header is the top line: repo · mode segments · preset · state · count.
 func (m Model) header() string {
 	label := m.body
 	if m.presetIdx >= 0 {
-		label = defaultPresets[m.presetIdx].name
+		label = presetsFor(m.mode)[m.presetIdx].name
 	}
-	h := headerStyle.Render("  "+m.repo) + dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
+	h := headerStyle.Render("  "+m.repo) + "  " + modeSegments(m.mode) +
+		dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
@@ -1071,7 +1266,7 @@ func (m Model) listTitle() string {
 // isMineView reports whether the active view is the "mine" preset, where every
 // PR is the author's own — so grouping by author would be noise.
 func (m Model) isMineView() bool {
-	return m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
+	return m.mode == "pr" && m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.
@@ -1094,9 +1289,14 @@ func (m Model) legendView() string {
 		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
 		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
 		"",
-		accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
-		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("s") + statusBarStyle.Render(" state   ") + accentStyle.Render("F") + statusBarStyle.Render(" author   ") + accentStyle.Render("R") + statusBarStyle.Render(" reviewers   ") + accentStyle.Render("D") + statusBarStyle.Render(" drafts"),
-		accentStyle.Render("ctrl+j/k") + statusBarStyle.Render(" scroll preview   ") + accentStyle.Render("z") + statusBarStyle.Render(" maximize   ") + accentStyle.Render("esc") + statusBarStyle.Render(" close"),
+		accentStyle.Render("i") + statusBarStyle.Render(" PRs/Issues   ") + accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
+		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("s") + statusBarStyle.Render(" state"),
+	}
+	if m.mode == "pr" {
+		rows = append(rows,
+			accentStyle.Render("F")+statusBarStyle.Render(" author   ")+accentStyle.Render("R")+statusBarStyle.Render(" reviewers   ")+accentStyle.Render("D")+statusBarStyle.Render(" drafts"),
+			accentStyle.Render("ctrl+j/k")+statusBarStyle.Render(" scroll preview   ")+accentStyle.Render("z")+statusBarStyle.Render(" maximize   ")+accentStyle.Render("esc")+statusBarStyle.Render(" close"),
+		)
 	}
 	body := strings.Join(rows, "\n")
 	return titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
@@ -1108,11 +1308,21 @@ var actionOrder = []string{"enter", "m", "r", "u", "M", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 
-// navHints is the keybinding cheatsheet shown in the docked panel's top section.
-var navHints = []keyHint{
-	{"↑↓", "move"}, {"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
-	{"f", "filter"}, {"s", "state"}, {"F", "author"}, {"R", "reviewers"}, {"/", "find"},
-	{"space", "select"}, {"V", "all"}, {"D", "drafts"}, {"q", "quit"},
+// navHintsFor is the docked-panel cheatsheet for the active board. Issue mode
+// drops the PR-only author/reviewer/drafts hints; both modes show the i-toggle.
+func navHintsFor(mode string) []keyHint {
+	base := []keyHint{
+		{"↑↓", "move"}, {"i", "PRs/Issues"}, {"f", "filter"}, {"s", "state"},
+		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
+	}
+	if mode == "pr" {
+		pr := []keyHint{
+			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+			{"F", "author"}, {"R", "reviewers"}, {"D", "drafts"},
+		}
+		return append(base, pr...)
+	}
+	return base
 }
 
 // gridHints lays hints into aligned columns: every cell is padded to the widest
@@ -1186,9 +1396,9 @@ func panelColumn(label string, hints []keyHint, w int, alignKeys bool) string {
 // panelBody lays keys on the left and actions on the right, split by a vertical
 // rule. Narrow columns collapse each side to a single vertical stack. Action
 // labels are column-aligned; keys aren't (their widths vary too much).
-func panelBody(innerW int, actionsLabel string, acts []keyHint) string {
+func panelBody(innerW int, keyHints []keyHint, actionsLabel string, acts []keyHint) string {
 	lw, rw := panelSplit(innerW)
-	left := panelColumn("keys", navHints, lw, false)
+	left := panelColumn("keys", keyHints, lw, false)
 	right := panelColumn(actionsLabel, acts, rw, true)
 	h := max(lipgloss.Height(left), lipgloss.Height(right))
 	// Each separator line must carry its own padding — wrapping the whole
@@ -1200,11 +1410,12 @@ func panelBody(innerW int, actionsLabel string, acts []keyHint) string {
 }
 
 // panelContentRows is the tallest of the two columns (each = header + grid).
-// Reserved against the full action set so the height is stable when batch mode
-// hides the single-only actions.
+// Reserved against the full action set (PR mode, the superset of nav hints) so
+// the height is stable when batch mode hides the single-only actions, and
+// doesn't jump when switching to issue mode's shorter hint list.
 func panelContentRows(innerW int) int {
 	lw, rw := panelSplit(innerW)
-	return max(1+len(gridHints(navHints, lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
+	return max(1+len(gridHints(navHintsFor("pr"), lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
@@ -1254,7 +1465,7 @@ func (m Model) actionHints() (label string, hints []keyHint) {
 // cheatsheet and the focused view's actions, sized to the given outer width.
 func (m Model) keysActionsPanel(w int) string {
 	label, acts := m.actionHints()
-	return titledBox(panelBody(w-2, label, acts), w, panelRowsFor(w-2), "help")
+	return titledBox(panelBody(w-2, navHintsFor(m.mode), label, acts), w, panelRowsFor(w-2), "help")
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:
@@ -1269,16 +1480,23 @@ func (m Model) statusBar() string {
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
 		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
 	}
-	drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
-	if m.hideDrafts {
-		drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
+	parts = append(parts,
+		hint("↵", "worktree"), hint("a", "actions"), hint("i", "PRs/Issues"),
+	)
+	if m.mode == "pr" {
+		parts = append(parts, hint("→", "expand"))
 	}
 	parts = append(parts,
-		hint("↵", "worktree"), hint("a", "actions"), hint("→", "expand"),
 		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
-		accentStyle.Render("D")+statusBarStyle.Render(":")+drafts,
-		hint("q", "quit"),
 	)
+	if m.mode == "pr" {
+		drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
+		if m.hideDrafts {
+			drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
+		}
+		parts = append(parts, accentStyle.Render("D")+statusBarStyle.Render(":")+drafts)
+	}
+	parts = append(parts, hint("q", "quit"))
 	rule := sepStyle.Render(strings.Repeat("─", max(m.width, 1)))
 	return rule + "\n  " + strings.Join(parts, "  ")
 }
