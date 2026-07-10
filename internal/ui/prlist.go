@@ -1145,7 +1145,7 @@ func (m Model) board() string {
 		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
 	}
 	l := computeLayout(m.width, m.height)
-	if m.previewMax && l.ShowSide {
+	if m.previewMax {
 		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
 	}
 	if l.ShowSide && l.ShowPanel {

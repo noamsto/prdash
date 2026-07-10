@@ -390,7 +390,7 @@ func (m Model) renderDocked(l Layout) string {
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	ch := m.contentHeight(l)
-	if m.previewMax && l.ShowSide {
+	if m.previewMax {
 		return titledBox(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle())
 	}
 	list := titledBox(m.vp.View(), l.ListWidth, ch, m.listTitle())
