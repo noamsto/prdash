@@ -29,6 +29,18 @@ func TestSetPRsBuildsRows(t *testing.T) {
 	}
 }
 
+func TestCountTracksShownOverTotal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 7, Title: "hello"}, {Number: 9, Title: "world"}})
+	if got := m.count(); got != "2/2" {
+		t.Fatalf("count = %q, want 2/2", got)
+	}
+	m.section.SetShown([]int{0})
+	if got := m.count(); got != "1/2" {
+		t.Fatalf("filtered count = %q, want 1/2", got)
+	}
+}
+
 func TestHydrateFromCache(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 42, Title: "cached"}})
