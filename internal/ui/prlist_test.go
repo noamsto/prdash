@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +67,32 @@ func TestIssuesFetchedPopulatesRows(t *testing.T) {
 	}
 	if got.refreshing {
 		t.Error("refreshing should clear after fetch")
+	}
+}
+
+func TestDisabledIssuesShowsNoticeNotError(t *testing.T) {
+	m := NewModel("/repo", "is:open assignee:@me", nil)
+	m.SetRepo("factify-inc/mono")
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open assignee:@me")
+	m.filter = "is:open assignee:@me"
+	m.width, m.height = 100, 30
+	m.renderList() // establish the initial Loading… viewport
+
+	updated, _ := m.Update(fetchFailedMsg{
+		filter: "is:open assignee:@me",
+		err:    errors.New("the 'factify-inc/mono' repository has disabled issues"),
+	})
+	m = updated.(Model)
+	if m.err != nil {
+		t.Fatalf("disabled issues should not surface as an error: %v", m.err)
+	}
+	out := m.render() // no manual renderList: the handler must repaint the viewport itself
+	if strings.Contains(out, "Error:") {
+		t.Fatalf("disabled issues should not render an error: %q", out)
+	}
+	if !strings.Contains(out, "Issues are disabled") {
+		t.Fatalf("expected disabled-issues notice: %q", out)
 	}
 }
 

@@ -1,6 +1,21 @@
 package gh
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+func TestIssuesDisabled(t *testing.T) {
+	if !IssuesDisabled(errors.New("the 'factify-inc/mono' repository has disabled issues")) {
+		t.Fatal("expected disabled-issues error to be detected")
+	}
+	if IssuesDisabled(errors.New("gh: authentication required")) {
+		t.Fatal("unrelated error should not match")
+	}
+	if IssuesDisabled(nil) {
+		t.Fatal("nil error should not match")
+	}
+}
 
 func TestIssueListArgs(t *testing.T) {
 	args := IssueListArgs("assignee:@me", 20)

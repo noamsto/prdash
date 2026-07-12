@@ -65,6 +65,7 @@ type Model struct {
 	expandedTab     int
 	checkCursor     int         // hovered check on the expanded Checks tab
 	loaded          bool        // first live fetch has returned; distinguishes empty from loading
+	emptyNotice     string      // overrides the empty-board hint (e.g. issues disabled on this repo)
 	refreshing      bool        // a list fetch for the current filter is in flight
 	spinning        bool        // the refresh spinner tick loop is running
 	spinnerFrame    int         // advancing index into spinnerFrames
@@ -220,7 +221,10 @@ func (m *Model) renderList() {
 	if m.section.Len() == 0 {
 		m.cursorLine = 0
 		hint := "Loading…"
-		if m.loaded {
+		switch {
+		case m.emptyNotice != "":
+			hint = m.emptyNotice
+		case m.loaded:
 			noun := "PRs"
 			if m.section.Kind() == "issue" {
 				noun = "issues"
@@ -601,6 +605,7 @@ func (m *Model) backgroundRefresh() tea.Cmd {
 func (m *Model) switchToFilter() tea.Cmd {
 	m.cursor = 0
 	m.sel.clear()
+	m.emptyNotice = ""
 	m.refreshing = true
 	hit := m.hydrate()
 	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
@@ -800,6 +805,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a background prewarm failed; the current view is unaffected
 		}
 		m.refreshing = false
+		if gh.IssuesDisabled(msg.err) {
+			// Not an error: this repo tracks issues elsewhere. Show an empty board.
+			m.loaded = true
+			m.emptyNotice = "Issues are disabled for this repository."
+			m.renderList() // repaint the viewport; the m.err path skips it via board()
+			return m, nil
+		}
 		m.err = msg.err
 		return m, nil
 	case membersFetchedMsg:

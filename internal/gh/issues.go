@@ -45,3 +45,10 @@ func ParseIssues(b []byte) ([]Issue, error) {
 	}
 	return is, nil
 }
+
+// IssuesDisabled reports whether err is gh's "repository has disabled issues"
+// failure — a normal state for repos that track work in an external tracker,
+// so the caller shows an empty board rather than an error.
+func IssuesDisabled(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "has disabled issues")
+}
