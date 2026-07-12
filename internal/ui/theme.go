@@ -13,9 +13,9 @@ import (
 // NOT inherit the terminal theme, so mauve is mauve everywhere. Adding a flavor
 // (Latte/Frappé/Macchiato) or a dark/light toggle later is a second constructor.
 type Theme struct {
-	Accent  string // mauve — #, keys, links, headline, header/active tab
-	Issue   string // teal — Issues-board accent (title/segment), distinct from mauve
-	Header  string // mauve — top header + active tab
+	Accent  string // teal — #, keys, links, PR-board accent (title/segment/active tab)
+	Issue   string // peach coral — Issues-board accent; shares Draft's hex but drafts are PR-only, so they never co-occur
+	Header  string // mauve — top header + repo wordmark, the app identity
 	Focus   string // sky — cursor-row bar
 	Select  string // pink — multi-select ●
 	Text    string // row titles, body
@@ -34,16 +34,16 @@ type Theme struct {
 // Mocha is the Catppuccin Mocha flavor.
 func Mocha() Theme {
 	return Theme{
-		Accent: "#cba6f7", Issue: "#94e2d5", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
+		Accent: "#94e2d5", Issue: "#fab387", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
 		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
 		Section: "#74c7ec", Base: "#1e1e2e",
-		// Distinct author hues — deliberately excludes mauve (accent), sky (focus),
-		// pink (select), peach (draft tag), sapphire (section labels), and the
-		// green/red/yellow state colors.
+		// Distinct author hues — deliberately excludes teal (accent), mauve (header),
+		// sky (focus), pink (select), peach (draft/issue accent), sapphire (section
+		// labels), and the green/red/yellow state colors.
 		Author: []string{
-			"#b4befe", "#94e2d5", "#eba0ac",
-			"#f5e0dc", "#f2cdcd", "#89b4fa",
+			"#b4befe", "#eba0ac", "#f5e0dc",
+			"#f2cdcd", "#89b4fa",
 		},
 	}
 }
@@ -52,13 +52,13 @@ func Mocha() Theme {
 // adjusted values from nix-config palette.nix, so prdash matches the desktop.
 func Latte() Theme {
 	return Theme{
-		Accent: "#8839ef", Issue: "#179299", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
+		Accent: "#179299", Issue: "#fe640b", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
 		Text: "#4c4f69", Meta: "#6c6f85", Rule: "#acb0be", RowBg: "#ccd0da",
 		Pass: "#358023", Fail: "#d20f39", Pending: "#996b00", Draft: "#c24b00",
 		Section: "#1a7d8f", Base: "#eff1f5",
 		Author: []string{
-			"#5a6ad4", "#147076", "#c0364a",
-			"#a85847", "#b54545", "#1e66f5",
+			"#5a6ad4", "#c0364a", "#a85847",
+			"#b54545", "#1e66f5",
 		},
 	}
 }
@@ -86,6 +86,7 @@ var (
 	selMarkStyle      lipgloss.Style
 	focusBarStyle     lipgloss.Style
 	headerStyle       lipgloss.Style
+	mergedStyle       lipgloss.Style // mauve — the merged-PR status mark
 	statusBarStyle    lipgloss.Style
 	sectionLabelStyle lipgloss.Style
 	draftTagStyle     lipgloss.Style
@@ -114,6 +115,7 @@ func applyTheme(t Theme) {
 	selMarkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Select))
 	focusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
 	headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header)).Bold(true)
+	mergedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header))
 	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
 	draftTagStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
@@ -236,3 +238,9 @@ func ciGlyph(state string) string {
 		return dimStyle.Render("·")
 	}
 }
+
+// mergedGlyph is the status mark for a merged PR — mauve, matching GitHub's
+// purple and the lazytmux status line, and distinct from the CI pass/fail marks.
+const mergedGlyph = "󰘭" // nerd: nf-md-source-merge (U+F062D)
+
+func mergedMark() string { return mergedStyle.Render(mergedGlyph) }

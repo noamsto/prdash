@@ -831,7 +831,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
 		}
-		m.renderList()
+		if m.expanded {
+			m.reflowExpanded() // fold in the fresh detail without losing the reader's place
+		} else {
+			m.renderList()
+		}
 		return m, nil
 	case issueDetailMsg:
 		m.issueDetail[msg.number] = msg.detail
@@ -874,7 +878,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			applyTheme(themeFor(mode))
 			preview.SetMode(mode)
 			if m.expanded {
-				m.renderExpanded()
+				m.reflowExpanded()
 			} else {
 				m.renderList()
 			}
@@ -908,7 +912,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.renderList()
+		if m.expanded {
+			m.reflowExpanded() // reflow to the new size, keep the reader's place
+		} else {
+			m.renderList()
+		}
 		return m, nil
 	case tea.KeyMsg:
 		if m.expanded {
@@ -1255,14 +1263,14 @@ func modeSegments(active string) string {
 	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
 }
 
-// header is the top line: repo · mode segments · preset · state · count.
+// header is the top line: repo · mode segments · preset · state · shown/total.
 func (m Model) header() string {
 	label := m.body
 	if m.presetIdx >= 0 {
 		label = presetsFor(m.mode)[m.presetIdx].name
 	}
 	h := headerStyle.Render("  "+m.repo) + "  " + modeSegments(m.mode) +
-		dimStyle.Render(fmt.Sprintf("   %s · %s · %d", label, m.state, m.section.Len()))
+		dimStyle.Render(fmt.Sprintf("   %s · %s · %s", label, m.state, m.count()))
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
@@ -1272,6 +1280,12 @@ func (m Model) header() string {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
 	return h
+}
+
+// count is the "shown/total" tally for the header — shown is the filtered
+// subset (author/search/hide-drafts), total the full result set.
+func (m Model) count() string {
+	return fmt.Sprintf("%d/%d", m.section.Len(), m.section.Total())
 }
 
 // statusBadge renders the transient inline-action badge (spinner while running,

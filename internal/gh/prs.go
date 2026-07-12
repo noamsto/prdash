@@ -9,7 +9,7 @@ import (
 
 var prFields = []string{
 	"number", "title", "author", "statusCheckRollup", "reviewDecision",
-	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt", "isDraft",
+	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt", "isDraft", "state",
 }
 
 type Check struct {
@@ -67,7 +67,12 @@ type PR struct {
 	URL         string    `json:"url"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	IsDraft     bool      `json:"isDraft"`
+	State       string    `json:"state"` // OPEN | CLOSED | MERGED
 }
+
+// IsMerged reports whether the PR landed — its status mark and color differ from
+// an open PR's CI rollup (merged is terminal; the checks no longer matter).
+func (p PR) IsMerged() bool { return p.State == "MERGED" }
 
 func PRListArgs(filter string, limit int) []string {
 	return []string{

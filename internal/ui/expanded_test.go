@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -77,17 +78,14 @@ func TestDiscussionColumnCapsAndCenters(t *testing.T) {
 	}
 }
 
-func TestExpandedFooterOffersPanOnlyForDiff(t *testing.T) {
+func TestExpandedFooterNeverOffersPan(t *testing.T) {
+	// The Diff tab is a width-fitted diffstat, so no tab horizontally pans.
 	m := Model{}
-	for _, tab := range []int{0, 1} {
+	for _, tab := range []int{0, 1, 2, 3} {
 		m.expandedTab = tab
 		if got := m.expandedFooter(); strings.Contains(got, "pan") {
-			t.Fatalf("wrapped discussion tab %d should not offer pan: %q", tab, got)
+			t.Fatalf("tab %d should not offer pan: %q", tab, got)
 		}
-	}
-	m.expandedTab = 3
-	if got := m.expandedFooter(); !strings.Contains(got, "pan") {
-		t.Fatalf("diff tab should offer pan: %q", got)
 	}
 }
 
@@ -208,6 +206,64 @@ func TestExpandedViewShowsTabStrip(t *testing.T) {
 	}
 	if !strings.Contains(out, "#7") {
 		t.Fatalf("expanded view should show the PR number: %q", out)
+	}
+}
+
+func TestExpandedBoxWidthCapsEveryTab(t *testing.T) {
+	m := Model{width: 200}
+	for _, tab := range []int{0, 1, 2, 3} { // Conversation, Reviews, Checks, Diff
+		m.expandedTab = tab
+		if got := m.expandedBoxWidth(); got != discussionMaxWidth+6 {
+			t.Fatalf("tab %d width = %d, want capped %d", tab, got, discussionMaxWidth+6)
+		}
+	}
+	m.width = 80 // narrow terminal: never wider than the terminal
+	if got := m.expandedBoxWidth(); got != 80 {
+		t.Fatalf("narrow width = %d, want 80", got)
+	}
+}
+
+func manyComments(n int) []gh.Comment {
+	cs := make([]gh.Comment, n)
+	for i := range cs {
+		cs[i].Author.Login = "octocat"
+		cs[i].Body = fmt.Sprintf("comment number %d", i)
+	}
+	return cs
+}
+
+func TestConversationOpensAtMostRecent(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 12 // short enough that the timeline overflows
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{Comments: manyComments(40)}
+
+	m.enterExpanded()
+	if m.expandedTab != 0 {
+		t.Fatalf("precondition: Conversation tab expected, got %d", m.expandedTab)
+	}
+	if m.vp.YOffset() == 0 {
+		t.Fatal("precondition: content should overflow so the offset can be non-zero")
+	}
+	if !m.vp.AtBottom() {
+		t.Fatal("Conversation should open scrolled to the most recent comment")
+	}
+}
+
+func TestReflowKeepsScrollPosition(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 12
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	m.detail[7] = gh.PRDetail{Comments: manyComments(40)}
+	m.enterExpanded()
+
+	m.vp.ScrollUp(3) // reader scrolls back through the history
+	want := m.vp.YOffset()
+
+	updated, _ := m.Update(prDetailMsg{number: 7, detail: gh.PRDetail{Comments: manyComments(40)}})
+	m = updated.(Model)
+	if got := m.vp.YOffset(); got != want {
+		t.Fatalf("refresh moved the scroll: got %d, want %d", got, want)
 	}
 }
 

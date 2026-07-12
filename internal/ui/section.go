@@ -28,6 +28,7 @@ type Section interface {
 	Filter() string
 	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single line
 	Len() int
+	Total() int // rows before filtering (author/search/hide-drafts)
 	VarsAt(i int) action.Vars
 	Haystacks() []string
 	SetShown(idx []int)
@@ -75,6 +76,7 @@ func (s *PRSection) groupLabel(i int) string {
 	return p.Author.Login
 }
 func (s *PRSection) Len() int           { return len(s.shown) }
+func (s *PRSection) Total() int         { return len(s.prs) }
 func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
@@ -83,11 +85,17 @@ func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	o.Draft = p.IsDraft
+	// A merged PR is terminal: its mauve merge mark replaces the CI rollup, whose
+	// pass/fail no longer means anything.
+	status := ciGlyph(p.CIState())
+	if p.IsMerged() {
+		status = mergedMark()
+	}
 	// Author is dropped from the row: it's redundant in a single-author (flat)
 	// view and hoisted into the group header when grouped.
-	return renderItemRow(o, fmt.Sprintf("#%d", p.Number), p.Title,
+	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
 		"", ageString(p.UpdatedAt),
-		ciGlyph(p.CIState()), reviewDot(p.ReviewDecision))
+		status, reviewDot(p.ReviewDecision))
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -234,6 +242,7 @@ func (s *IssueSection) Kind() string              { return "issue" }
 func (s *IssueSection) Filter() string            { return s.filter }
 func (s *IssueSection) SetIssues(is []gh.Issue)   { s.issues = is; s.shown = allIdx(len(is)) }
 func (s *IssueSection) Len() int                  { return len(s.shown) }
+func (s *IssueSection) Total() int                { return len(s.issues) }
 func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
 
 // issueAt returns the gh.Issue at shown-row i (mirrors prAt).
@@ -241,7 +250,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
-	return renderItemRow(o, fmt.Sprintf("#%d", is.Number), is.Title,
+	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
 		is.Author.Login, ageString(is.UpdatedAt), "", "")
 }
 
@@ -284,7 +293,7 @@ func joinSpace(s []string) string { return strings.Join(s, " ") }
 // renderItemRow renders one dense board line:
 //
 //	‹bar›‹mark› ‹ci› ‹rv› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
-func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string {
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review string) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -310,7 +319,7 @@ func renderItemRow(o RowOpts, num, title, author, age, ci, review string) string
 	if o.NumWidth > 0 {
 		numCell = padNum(num, o.NumWidth)
 	}
-	left := bar + mark + " " + ci + " " + review + " " + flag + " " + accentStyle.Render(numCell) + " "
+	left := bar + mark + " " + ci + " " + review + " " + flag + " " + numStyle.Render(numCell) + " "
 	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 

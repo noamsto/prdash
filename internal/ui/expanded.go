@@ -170,10 +170,18 @@ func (m Model) expandedBoxHeight() int {
 	return h
 }
 
-// renderExpanded fills the viewport with the active tab's content, scroll reset.
-// The viewport is the box interior — two columns/rows in from the border.
-func (m *Model) renderExpanded() {
-	w := m.width - 2
+// expandedBoxWidth is the OUTER width of the tabbed box: every tab caps to the
+// reading column so the tab bar sits over its content instead of stretching the
+// whole terminal. The Diff tab is a diffstat (a file list truncated to width),
+// not a wide unified diff, so it wants the same column as the prose tabs.
+func (m Model) expandedBoxWidth() int {
+	return min(m.width, discussionMaxWidth+6) // +4 column padding, +2 border
+}
+
+// setExpandedContent (re)fills the viewport with the active tab's content at the
+// current geometry. It leaves the scroll offset alone — callers pick the anchor.
+func (m *Model) setExpandedContent() {
+	w := m.expandedBoxWidth() - 2
 	rows := m.expandedBoxHeight() - 2
 	if w < 1 {
 		w = 1
@@ -183,10 +191,34 @@ func (m *Model) renderExpanded() {
 	}
 	m.vp.SetWidth(w)
 	m.vp.SetHeight(rows)
-	m.vp.SetHorizontalStep(8) // < / > pan the Diff tab's wide content
 	m.vp.SetContent(m.expandedBody(w))
-	m.vp.SetYOffset(0)
-	m.vp.SetXOffset(0)
+}
+
+// renderExpanded rebuilds the active tab and anchors it: Conversation and Reviews
+// open at the bottom (most recent), the rest at the top. Used when the tab or the
+// focused PR changes — a deliberate move that warrants re-anchoring.
+func (m *Model) renderExpanded() {
+	m.setExpandedContent()
+	if m.expandedTab == 0 || m.expandedTab == 1 { // Conversation, Reviews
+		m.vp.GotoBottom()
+	} else {
+		m.vp.SetYOffset(0)
+	}
+}
+
+// reflowExpanded rebuilds the active tab in place, preserving the reader's scroll
+// position (clamped to the new bounds). Used for background refreshes and resizes,
+// which must not yank the view away from what the reader was on.
+func (m *Model) reflowExpanded() {
+	off := m.vp.YOffset()
+	m.setExpandedContent()
+	if maxOff := m.vp.TotalLineCount() - m.vp.Height(); off > maxOff {
+		off = maxOff
+	}
+	if off < 0 {
+		off = 0
+	}
+	m.vp.SetYOffset(off)
 }
 
 // updateExpanded handles keys while in expanded mode.
@@ -242,16 +274,6 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.vp.ScrollUp(1)
-		return m, nil
-	case ">", ".":
-		if m.expandedTab == 3 {
-			m.vp.ScrollRight(8)
-		}
-		return m, nil
-	case "<", ",":
-		if m.expandedTab == 3 {
-			m.vp.ScrollLeft(8)
-		}
 		return m, nil
 	case "J":
 		if m.cursor < m.section.Len()-1 {
@@ -381,9 +403,6 @@ func (m Model) expandedFooter() string {
 	if m.expandedTab == 2 {
 		return "  j/k move · r rerun · R rerun all · h/l tabs · J/K PR · esc back"
 	}
-	if m.expandedTab == 3 {
-		return "  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back"
-	}
 	return "  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back"
 }
 
@@ -395,10 +414,11 @@ func (m Model) expandedView() string {
 	if v, ok := m.cursorVars(); ok {
 		n = v.Number
 	}
+	bw := m.expandedBoxWidth() // cap to the reading column so the view centers
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
 	if ps, ok := m.section.(*PRSection); ok {
 		if title := ps.prAt(m.cursor).Title; title != "" {
-			if avail := m.width - lipgloss.Width(head) - 4; avail > 12 {
+			if avail := bw - lipgloss.Width(head) - 4; avail > 12 {
 				head += dimStyle.Render("  " + truncate(title, avail))
 			}
 		}
@@ -407,9 +427,13 @@ func (m Model) expandedView() string {
 	foot := statusBarStyle.Render(m.expandedFooter())
 	lines := []string{head}
 	if ps, ok := m.section.(*PRSection); ok {
-		lines = append(lines, m.expandedMeta(ps.prAt(m.cursor), m.width-2))
+		lines = append(lines, m.expandedMeta(ps.prAt(m.cursor), bw-2))
 	}
-	box := tabbedBox(m.vp.View(), m.width, m.expandedBoxHeight(), expandedTabs, m.expandedTab)
+	box := tabbedBox(m.vp.View(), bw, m.expandedBoxHeight(), expandedTabs, m.expandedTab)
 	lines = append(lines, box, foot)
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if bw < m.width { // center the reading column in a wide terminal
+		out = indentLines(out, (m.width-bw)/2)
+	}
+	return out
 }

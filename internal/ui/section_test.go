@@ -26,7 +26,7 @@ func TestReviewDot(t *testing.T) {
 
 func TestRenderItemRowIsSingleLine(t *testing.T) {
 	o := RowOpts{Width: 80, Focused: true, Selected: true, Flag: failStyle.Render("⚠")}
-	row := renderItemRow(o, "#7", "hello world", "alice", "2d",
+	row := renderItemRow(o, accentStyle, "#7", "hello world", "alice", "2d",
 		ciGlyph("fail"), reviewDot("APPROVED"))
 	if strings.Contains(row, "\n") {
 		t.Fatalf("dense row must be one line: %q", row)
@@ -76,7 +76,7 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
-		return renderItemRow(o, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
 	}
 	plain := args(RowOpts{Width: 80})
 	draft := args(RowOpts{Width: 80, Draft: true})
@@ -97,7 +97,7 @@ func TestPRSectionMarksDraftRow(t *testing.T) {
 
 func TestDraftRowShowsDraftTag(t *testing.T) {
 	row := func(o RowOpts) string {
-		return renderItemRow(o, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
 	}
 	if got := row(RowOpts{Width: 80, Draft: true}); !strings.Contains(got, "[draft]") {
 		t.Fatalf("draft row should carry a [draft] tag: %q", got)
@@ -191,6 +191,21 @@ func TestPRRowOmitsInlineAuthor(t *testing.T) {
 	}
 }
 
+func TestMergedPRShowsMergeMarkNotCI(t *testing.T) {
+	// A merged PR with a passing rollup must show the merge mark, not the ✓.
+	p := gh.PR{Number: 9, Title: "landed", State: "MERGED",
+		StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{p})
+	row := s.RenderRow(0, RowOpts{Width: 80})
+	if !strings.Contains(row, mergedGlyph) {
+		t.Fatalf("merged PR row should carry the merge mark %q: %q", mergedGlyph, row)
+	}
+	if strings.Contains(row, "✓") {
+		t.Fatalf("merged PR row should not show the CI pass glyph: %q", row)
+	}
+}
+
 func TestIssueRowKeepsInlineAuthor(t *testing.T) {
 	is := gh.Issue{Number: 1, Title: "bug"}
 	is.Author.Login = "carol"
@@ -219,7 +234,7 @@ func TestFocusedRowGetsBackground(t *testing.T) {
 	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
 	set := probe[:strings.Index(probe, "X")]
 	row := func(o RowOpts) string {
-		return renderItemRow(o, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""))
+		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""))
 	}
 	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
 		t.Fatalf("focused row should carry the cursor background: %q", got)

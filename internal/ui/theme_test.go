@@ -22,13 +22,21 @@ func TestCIGlyphUnknownIsNone(t *testing.T) {
 	}
 }
 
-func TestMochaPaletteIsMauveLed(t *testing.T) {
+func TestMochaPaletteAccentsAreDistinct(t *testing.T) {
 	th := Mocha()
-	if th.Accent != "#cba6f7" {
-		t.Errorf("accent = %q, want mauve #cba6f7", th.Accent)
+	if th.Accent != "#94e2d5" {
+		t.Errorf("accent = %q, want teal #94e2d5", th.Accent)
 	}
-	if th.Header != th.Accent {
-		t.Errorf("header should be mauve-led like accent: header=%q accent=%q", th.Header, th.Accent)
+	if th.Header != "#cba6f7" {
+		t.Errorf("header = %q, want mauve #cba6f7 (the app identity)", th.Header)
+	}
+	// The repo wordmark (Header) and the PR accent must not match, or the header
+	// blurs into the active PRs tab — the whole reason PRs moved off mauve.
+	if th.Header == th.Accent {
+		t.Errorf("header and PR accent must differ: header=%q accent=%q", th.Header, th.Accent)
+	}
+	if th.Accent == th.Issue {
+		t.Errorf("the two board accents must differ: pr=%q issue=%q", th.Accent, th.Issue)
 	}
 	if th.Focus == th.Accent || th.Select == th.Accent || th.Focus == th.Select {
 		t.Errorf("focus, select, accent must all be distinct: accent=%q focus=%q select=%q",
@@ -89,8 +97,8 @@ func TestRenderChipsFitsAll(t *testing.T) {
 
 func TestLattePaletteIsLight(t *testing.T) {
 	l := Latte()
-	if l.Accent != "#8839ef" {
-		t.Errorf("latte accent = %q, want #8839ef", l.Accent)
+	if l.Accent != "#179299" {
+		t.Errorf("latte accent = %q, want teal #179299", l.Accent)
 	}
 	if l.Base != "#eff1f5" {
 		t.Errorf("latte base = %q, want light #eff1f5", l.Base)
