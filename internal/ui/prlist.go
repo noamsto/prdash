@@ -1030,7 +1030,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = nextState(m.state, statesFor(m.mode))
 			m.filter = searchFor(m.state, m.body)
 			return m, m.switchToFilter()
-		case "i":
+		case "tab":
 			return m, m.toggleMode()
 		case "z":
 			m.previewMax = !m.previewMax
@@ -1085,7 +1085,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.renderList()
 			return m, nil
-		case "tab":
+		case "p":
 			m.previewExpanded = !m.previewExpanded
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
@@ -1294,21 +1294,49 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	return triage.Compute(ps.prAt(m.cursor), d), true
 }
 
-// legendView is the ?-toggled glyph + key reference, as a centered modal.
+// legendView is the ?-toggled glyph + key reference, as a centered modal. It
+// lists every board-view key; expanded-view keys live in that view's own footer.
 func (m Model) legendView() string {
+	key := func(k, label string) string {
+		return accentStyle.Render(k) + statusBarStyle.Render(" "+label)
+	}
+	row := func(items ...string) string { return strings.Join(items, statusBarStyle.Render("   ")) }
+
 	rows := []string{
 		accentStyle.Render("CI / review") + statusBarStyle.Render("  ✓ pass   ✗ fail   ● running   · none"),
 		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
 		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
 		"",
-		accentStyle.Render("i") + statusBarStyle.Render(" PRs/Issues   ") + accentStyle.Render("↵") + statusBarStyle.Render(" worktree   ") + accentStyle.Render("y") + statusBarStyle.Render(" #  ") + accentStyle.Render("Y") + statusBarStyle.Render(" url  ") + accentStyle.Render("b") + statusBarStyle.Render(" branch   ") + accentStyle.Render("o") + statusBarStyle.Render(" open   ") + accentStyle.Render("a") + statusBarStyle.Render(" actions"),
-		accentStyle.Render("f") + statusBarStyle.Render(" filter   ") + accentStyle.Render("s") + statusBarStyle.Render(" state"),
 	}
+
+	nav := []string{key("↑↓/jk", "move")}
 	if m.mode == "pr" {
-		rows = append(rows,
-			accentStyle.Render("F")+statusBarStyle.Render(" author   ")+accentStyle.Render("R")+statusBarStyle.Render(" reviewers   ")+accentStyle.Render("D")+statusBarStyle.Render(" drafts"),
-			accentStyle.Render("ctrl+j/k")+statusBarStyle.Render(" scroll preview   ")+accentStyle.Render("z")+statusBarStyle.Render(" maximize   ")+accentStyle.Render("esc")+statusBarStyle.Render(" close"),
-		)
+		nav = append(nav, key("→/l", "expand"))
+	}
+	nav = append(nav, key("⇥", "PRs/Issues"))
+
+	filters := []string{key("f", "filter"), key("s", "state")}
+	if m.mode == "pr" {
+		filters = append(filters, key("F", "author"), key("R", "reviewers"), key("D", "drafts"))
+	}
+
+	preview := []string{}
+	if m.mode == "pr" {
+		preview = append(preview, key("p", "all comments")) // only the PR preview renders the timeline p unfolds
+	}
+	preview = append(preview, key("z", "maximize"), key("ctrl+j/k", "scroll"))
+
+	rows = append(rows,
+		row(nav...),
+		row(preview...),
+		row(key("/", "find"), key("space", "select"), key("V", "all")),
+		row(filters...),
+		row(key("a", "actions"), key("?", "legend"), key("q", "quit")),
+		"",
+		row(key("↵", "worktree"), key("W", "bulk"), key("y", "#"), key("Y", "url"), key("b", "branch"), key("o", "open")),
+	)
+	if m.mode == "pr" {
+		rows = append(rows, row(key("m", "merge"), key("r", "rerun"), key("u", "update"), key("M", "ready")))
 	}
 	body := strings.Join(rows, "\n")
 	return titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
@@ -1321,10 +1349,10 @@ var actionOrder = []string{"enter", "m", "r", "u", "M", "W", "y", "Y", "b", "o"}
 type keyHint struct{ key, label string }
 
 // navHintsFor is the docked-panel cheatsheet for the active board. Issue mode
-// drops the PR-only author/reviewer/drafts hints; both modes show the i-toggle.
+// drops the PR-only author/reviewer/drafts hints; both modes show the tab-toggle.
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
-		{"↑↓", "move"}, {"i", "PRs/Issues"}, {"f", "filter"}, {"s", "state"},
+		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"f", "filter"}, {"s", "state"},
 		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
 	}
 	if mode == "pr" {
@@ -1493,10 +1521,13 @@ func (m Model) statusBar() string {
 		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
 	}
 	parts = append(parts,
-		hint("↵", "worktree"), hint("a", "actions"), hint("i", "PRs/Issues"),
+		hint("↵", "worktree"), hint("a", "actions"), hint("⇥", "PRs/Issues"),
 	)
 	if m.mode == "pr" {
 		parts = append(parts, hint("→", "expand"))
+		if computeLayout(m.width, m.height).ShowSide {
+			parts = append(parts, hint("p", "all comments")) // only unfolds the side preview's timeline
+		}
 	}
 	parts = append(parts,
 		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
