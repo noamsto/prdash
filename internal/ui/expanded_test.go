@@ -62,6 +62,35 @@ func TestRenderReviewsEmpty(t *testing.T) {
 	}
 }
 
+func TestDiscussionColumnCapsAndCenters(t *testing.T) {
+	renderWidth := 0
+	out := renderDiscussionColumn(160, func(w int) string {
+		renderWidth = w
+		return strings.Repeat("x", w)
+	})
+	if renderWidth != discussionMaxWidth {
+		t.Fatalf("render width = %d, want cap %d", renderWidth, discussionMaxWidth)
+	}
+	wantGutter := (160 - discussionMaxWidth) / 2
+	if !strings.HasPrefix(out, strings.Repeat(" ", wantGutter)) {
+		t.Fatalf("discussion column is not centered with %d-cell gutter: %q", wantGutter, out)
+	}
+}
+
+func TestExpandedFooterOffersPanOnlyForDiff(t *testing.T) {
+	m := Model{}
+	for _, tab := range []int{0, 1} {
+		m.expandedTab = tab
+		if got := m.expandedFooter(); strings.Contains(got, "pan") {
+			t.Fatalf("wrapped discussion tab %d should not offer pan: %q", tab, got)
+		}
+	}
+	m.expandedTab = 3
+	if got := m.expandedFooter(); !strings.Contains(got, "pan") {
+		t.Fatalf("diff tab should offer pan: %q", got)
+	}
+}
+
 func TestTabSegmentMarksActive(t *testing.T) {
 	out := tabSegment(expandedTabs, 2)
 	if !strings.Contains(ansi.Strip(out), "Checks") {

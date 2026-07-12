@@ -31,25 +31,32 @@ func jumpTabIndex(jump string) int {
 
 func renderReviews(d gh.PRDetail, w int) string {
 	if len(d.LatestReviews) == 0 {
-		return dimStyle.Render("  No reviews yet.")
+		return dimStyle.Render("No reviews yet.")
 	}
-	var b strings.Builder
-	sep := sepStyle.Render(strings.Repeat("─", w))
-	for i, r := range d.LatestReviews {
-		if i > 0 {
-			b.WriteString(sep + "\n\n")
-		}
-		b.WriteString(metaLine(r.Author.Login, r.State, r.SubmittedAt) + "\n")
-		if r.Body != "" {
-			body, err := preview.Render(r.Body, w)
-			if err != nil {
-				body = r.Body
-			}
-			b.WriteString(body)
-		}
-		b.WriteString("\n")
+	blocks := make([]string, 0, len(d.LatestReviews))
+	for _, r := range d.LatestReviews {
+		blocks = append(blocks, renderDiscussionItem(
+			metaLine(r.Author.Login, r.State, r.SubmittedAt), r.Body, w,
+		))
 	}
-	return b.String()
+	return strings.Join(blocks, "\n\n")
+}
+
+const discussionMaxWidth = 104
+
+// renderDiscussionColumn caps prose to a comfortable reading width and centers
+// it in wide terminals. Narrow terminals retain a small gutter where possible.
+func renderDiscussionColumn(viewportWidth int, render func(int) string) string {
+	if viewportWidth < 1 {
+		viewportWidth = 1
+	}
+	contentWidth := viewportWidth
+	if viewportWidth >= 48 {
+		contentWidth -= 4
+	}
+	contentWidth = min(contentWidth, discussionMaxWidth)
+	gutter := (viewportWidth - contentWidth) / 2
+	return indentLines(render(contentWidth), gutter)
 }
 
 func renderChecks(pr gh.PR, w, cursor int) string {
@@ -125,7 +132,9 @@ func (m Model) expandedBody(w int) string {
 	}
 	switch m.expandedTab {
 	case 1:
-		return renderReviews(d, w)
+		return renderDiscussionColumn(w, func(contentWidth int) string {
+			return renderReviews(d, contentWidth)
+		})
 	case 2:
 		if ps, ok := m.section.(*PRSection); ok {
 			return renderChecks(ps.prAt(m.cursor), w, m.checkCursor)
@@ -135,7 +144,9 @@ func (m Model) expandedBody(w int) string {
 		return renderDiffstat(d, w)
 	default:
 		items := preview.Timeline(d)
-		return renderTimeline(items, len(items), w, true)
+		return renderDiscussionColumn(w, func(contentWidth int) string {
+			return renderTimeline(items, len(items), contentWidth, true)
+		})
 	}
 }
 
@@ -172,9 +183,10 @@ func (m *Model) renderExpanded() {
 	}
 	m.vp.SetWidth(w)
 	m.vp.SetHeight(rows)
-	m.vp.SetHorizontalStep(8) // < / > pan wide content (tables, diffs) instead of wrapping
+	m.vp.SetHorizontalStep(8) // < / > pan the Diff tab's wide content
 	m.vp.SetContent(m.expandedBody(w))
 	m.vp.SetYOffset(0)
+	m.vp.SetXOffset(0)
 }
 
 // updateExpanded handles keys while in expanded mode.
@@ -232,10 +244,14 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vp.ScrollUp(1)
 		return m, nil
 	case ">", ".":
-		m.vp.ScrollRight(8)
+		if m.expandedTab == 3 {
+			m.vp.ScrollRight(8)
+		}
 		return m, nil
 	case "<", ",":
-		m.vp.ScrollLeft(8)
+		if m.expandedTab == 3 {
+			m.vp.ScrollLeft(8)
+		}
 		return m, nil
 	case "J":
 		if m.cursor < m.section.Len()-1 {
@@ -365,7 +381,10 @@ func (m Model) expandedFooter() string {
 	if m.expandedTab == 2 {
 		return "  j/k move · r rerun · R rerun all · h/l tabs · J/K PR · esc back"
 	}
-	return "  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back"
+	if m.expandedTab == 3 {
+		return "  j/k scroll · <> pan · h/l tabs · J/K PR · ↵ worktree · esc back"
+	}
+	return "  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back"
 }
 
 // expandedView is the full-screen detail: header, metadata line, then the

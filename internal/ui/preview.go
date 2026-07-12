@@ -129,28 +129,47 @@ func (m Model) prefetchCmd() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// discussionHeader keeps identity and separation on one line. This gives each
+// comment a clear start without spending a full row on a divider.
+func discussionHeader(meta string, width int) string {
+	ruleLen := width - lipgloss.Width(meta) - 1
+	if ruleLen < 3 {
+		return meta
+	}
+	return meta + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
+}
+
+// renderDiscussionItem renders one GitHub-style comment/review block. Glamour
+// owns the padding inside the markdown body; trimming the tail keeps adjacent
+// items from accumulating extra blank rows.
+func renderDiscussionItem(meta, markdown string, width int) string {
+	if markdown == "" {
+		return discussionHeader(meta, width)
+	}
+	body, err := preview.Render(markdown, width)
+	if err != nil {
+		body = markdown // render failed; show the raw markdown rather than nothing
+	}
+	return discussionHeader(meta, width) + "\n" + strings.TrimRight(body, "\n")
+}
+
 // renderTimeline renders the latest n items expanded, older collapsed.
 func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 	older, latest := preview.Fold(items, n)
 	if expanded {
 		older, latest = 0, items
 	}
-	var b strings.Builder
+	blocks := make([]string, 0, len(latest)+1)
 	if older > 0 {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("▸ %d earlier comments", older)) + "\n\n")
+		blocks = append(blocks, dimStyle.Render(fmt.Sprintf("▸ %d earlier comments", older)))
 	}
-	sep := sepStyle.Render(strings.Repeat("─", width))
-	for i, it := range latest {
-		if i > 0 {
-			b.WriteString(sep + "\n\n")
-		}
-		body, err := preview.Render(it.Body, width)
-		if err != nil {
-			body = it.Body // render failed; show the raw markdown rather than nothing
-		}
-		b.WriteString(metaLine(it.Author, it.State, it.At) + "\n" + body + "\n")
+	for _, it := range latest {
+		blocks = append(blocks, renderDiscussionItem(metaLine(it.Author, it.State, it.At), it.Body, width))
 	}
-	return b.String()
+	if len(blocks) == 0 {
+		return dimStyle.Render("No conversation yet.")
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 func (m Model) previewWidth() int {

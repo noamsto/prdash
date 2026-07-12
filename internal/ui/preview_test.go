@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
@@ -20,6 +21,35 @@ func TestRenderPreviewBodyShowsOlderMarker(t *testing.T) {
 	out := renderTimeline(items, 3, 80, false) // n=3, not expanded
 	if !strings.Contains(out, "earlier") {
 		t.Fatalf("expected older marker: %q", out)
+	}
+}
+
+func TestDiscussionHeaderUsesRemainingWidth(t *testing.T) {
+	meta := metaLine("alice", "", time.Time{})
+	out := ansi.Strip(discussionHeader(meta, 40))
+	if !strings.HasPrefix(out, "@alice ") || !strings.Contains(out, "─") {
+		t.Fatalf("discussion header should combine metadata and divider: %q", out)
+	}
+	if got := lipgloss.Width(out); got != 40 {
+		t.Fatalf("discussion header width = %d, want 40: %q", got, out)
+	}
+}
+
+func TestRenderTimelineEmptyState(t *testing.T) {
+	out := ansi.Strip(renderTimeline(nil, 0, 80, true))
+	if out != "No conversation yet." {
+		t.Fatalf("empty conversation state = %q", out)
+	}
+}
+
+func TestRenderTimelineKeepsCommentsCompact(t *testing.T) {
+	items := []preview.Item{
+		{Author: "alice", Body: "First comment."},
+		{Author: "bob", Body: "Second comment."},
+	}
+	out := ansi.Strip(renderTimeline(items, len(items), 80, true))
+	if strings.Contains(out, "\n\n\n") {
+		t.Fatalf("conversation should not accumulate multiple blank rows:\n%q", out)
 	}
 }
 
