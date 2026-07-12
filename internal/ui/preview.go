@@ -319,26 +319,41 @@ func ciLine(pr gh.PR) string {
 	}
 }
 
-// reviewLine summarises the review state: who requested changes (the actionable
-// case), else who approved, else the pending requested reviewers.
+// reviewLine summarises the review state, one line per state present, ordered
+// most-actionable first: changes requested, approved, commented, dismissed. The
+// decisive states carry sentiment color; comments and dismissals stay dim. With
+// no reviews it falls back to the pending requested reviewers.
 func reviewLine(d gh.PRDetail) string {
-	var changed, approved []string
+	var changed, approved, commented, dismissed []string
 	for _, r := range d.LatestReviews {
 		switch r.State {
 		case "CHANGES_REQUESTED":
 			changed = append(changed, "@"+r.Author.Login)
 		case "APPROVED":
 			approved = append(approved, "@"+r.Author.Login)
+		case "COMMENTED":
+			commented = append(commented, "@"+r.Author.Login)
+		case "DISMISSED":
+			dismissed = append(dismissed, "@"+r.Author.Login)
 		}
 	}
-	switch {
-	case len(changed) > 0:
-		return failStyle.Render("✗ changes requested by " + strings.Join(changed, ", "))
-	case len(approved) > 0:
-		return passStyle.Render("✓ approved by " + strings.Join(approved, ", "))
-	default:
+	var lines []string
+	if len(changed) > 0 {
+		lines = append(lines, failStyle.Render("✗ changes requested by "+strings.Join(changed, ", ")))
+	}
+	if len(approved) > 0 {
+		lines = append(lines, passStyle.Render("✓ approved by "+strings.Join(approved, ", ")))
+	}
+	if len(commented) > 0 {
+		lines = append(lines, dimStyle.Render("· commented by "+strings.Join(commented, ", ")))
+	}
+	if len(dismissed) > 0 {
+		lines = append(lines, dimStyle.Render("· dismissed: "+strings.Join(dismissed, ", ")))
+	}
+	if len(lines) == 0 {
 		return reviewersLine(d.ReviewRequests)
 	}
+	return strings.Join(lines, "\n")
 }
 
 // reviewersLine summarises requested reviewers for the quick window. Team
