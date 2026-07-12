@@ -21,9 +21,9 @@ func main() {
 	repo, err := gh.CurrentRepo(runner, dir)
 	if err != nil {
 		if errors.Is(err, gh.ErrNoRepo) {
-			fmt.Fprintln(os.Stderr, "prdash: not in a GitHub repo")
+			ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a GitHub remote, then run prdash again.")
 		} else {
-			fmt.Fprintln(os.Stderr, "prdash:", err)
+			ui.RunNotice("prdash", "Couldn't reach GitHub:\n\n"+err.Error())
 		}
 		os.Exit(1)
 	}
