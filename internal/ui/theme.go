@@ -14,6 +14,7 @@ import (
 // (Latte/Frappé/Macchiato) or a dark/light toggle later is a second constructor.
 type Theme struct {
 	Accent  string // mauve — #, keys, links, headline, header/active tab
+	Issue   string // teal — Issues-board accent (title/segment), distinct from mauve
 	Header  string // mauve — top header + active tab
 	Focus   string // sky — cursor-row bar
 	Select  string // pink — multi-select ●
@@ -33,7 +34,7 @@ type Theme struct {
 // Mocha is the Catppuccin Mocha flavor.
 func Mocha() Theme {
 	return Theme{
-		Accent: "#cba6f7", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
+		Accent: "#cba6f7", Issue: "#94e2d5", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
 		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
 		Section: "#74c7ec", Base: "#1e1e2e",
@@ -51,7 +52,7 @@ func Mocha() Theme {
 // adjusted values from nix-config palette.nix, so prdash matches the desktop.
 func Latte() Theme {
 	return Theme{
-		Accent: "#8839ef", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
+		Accent: "#8839ef", Issue: "#179299", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
 		Text: "#4c4f69", Meta: "#6c6f85", Rule: "#acb0be", RowBg: "#ccd0da",
 		Pass: "#358023", Fail: "#d20f39", Pending: "#996b00", Draft: "#c24b00",
 		Section: "#1a7d8f", Base: "#eff1f5",
@@ -76,6 +77,7 @@ var theme Theme
 var (
 	titleStyle        lipgloss.Style
 	accentStyle       lipgloss.Style
+	issueAccentStyle  lipgloss.Style
 	dimStyle          lipgloss.Style
 	sepStyle          lipgloss.Style
 	passStyle         lipgloss.Style
@@ -103,6 +105,7 @@ func applyTheme(t Theme) {
 	theme = t
 	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
 	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
+	issueAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Issue))
 	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	sepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
 	passStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))

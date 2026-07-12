@@ -256,7 +256,7 @@ func (m Model) issuePreviewPane(is *IssueSection, w, bw int) string {
 
 // identityHeaderIssue mirrors identityHeader for issues (no branch/head ref line).
 func identityHeaderIssue(is gh.Issue) string {
-	line1 := accentStyle.Render(fmt.Sprintf("#%d", is.Number)) + " " + headerStyle.Render(is.Title)
+	line1 := issueAccentStyle.Render(fmt.Sprintf("#%d", is.Number)) + " " + headerStyle.Render(is.Title)
 	line2 := authorStyle(is.Author.Login).Render(is.Author.Login) +
 		dimStyle.Render(" · "+ageString(is.UpdatedAt))
 	return line1 + "\n" + line2
@@ -377,12 +377,13 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 // renderDocked stacks the keys/actions panel beneath the list in the left
 // column and lets the preview span the full height on the right.
 func (m Model) renderDocked(l Layout) string {
-	list := titledBox(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle())
+	tint := accentFor(m.mode)
+	list := titledBoxTinted(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle(), tint)
 	panel := m.keysActionsPanel(l.ListWidth)
 	left := lipgloss.JoinVertical(lipgloss.Left, list, panel)
 
 	fullH := l.ContentHeight + l.PanelRows // list + panel, so the preview reaches the bottom
-	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, fullH, m.previewTitle())
+	side := titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, fullH, m.previewTitle(), tint)
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
 }
@@ -390,14 +391,15 @@ func (m Model) renderDocked(l Layout) string {
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	ch := m.contentHeight(l)
-	if m.previewMax && l.ShowSide {
-		return titledBox(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle())
+	tint := accentFor(m.mode)
+	if m.previewMax {
+		return titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle(), tint)
 	}
-	list := titledBox(m.vp.View(), l.ListWidth, ch, m.listTitle())
+	list := titledBoxTinted(m.vp.View(), l.ListWidth, ch, m.listTitle(), tint)
 	if !l.ShowSide {
 		return list
 	}
-	side := titledBox(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, ch, m.previewTitle())
+	side := titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, ch, m.previewTitle(), tint)
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, side)
 }

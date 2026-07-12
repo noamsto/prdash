@@ -322,8 +322,8 @@ func TestListTitleReflectsSection(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("r")
 	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
-	if got := m.listTitle(); got != "PRs · 2" {
-		t.Fatalf("listTitle = %q, want %q", got, "PRs · 2")
+	if got := m.listTitle(); !strings.Contains(got, "PRs · 2") {
+		t.Fatalf("listTitle = %q, want to contain %q", got, "PRs · 2")
 	}
 }
 

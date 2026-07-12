@@ -66,6 +66,12 @@ func boxTop(segment string, segW, w int) string {
 // set into the top edge. lipgloss has no native border title, so the top line
 // is hand-built and prepended to a top-less bordered body.
 func titledBox(content string, w, h int, title string) string {
+	return titledBoxTinted(content, w, h, title, accentStyle)
+}
+
+// titledBoxTinted is titledBox with the title painted in a caller-chosen style,
+// so the PR and Issue boards can tint their box titles in distinct accents.
+func titledBoxTinted(content string, w, h int, title string, tint lipgloss.Style) string {
 	if w < 4 {
 		w = 4
 	}
@@ -76,7 +82,7 @@ func titledBox(content string, w, h int, title string) string {
 	if lipgloss.Width(label) > w-3 { // cap the label so the top line stays exactly w wide
 		label = truncate(label, w-3)
 	}
-	return boxTop(accentStyle.Render(label), lipgloss.Width(label), w) + "\n" + boxBody(content, w, h)
+	return boxTop(tint.Render(label), lipgloss.Width(label), w) + "\n" + boxBody(content, w, h)
 }
 
 // tabbedBox is a titledBox whose top edge carries a tab bar instead of a single
