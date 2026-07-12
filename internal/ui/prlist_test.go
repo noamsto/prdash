@@ -569,7 +569,7 @@ func TestToggleModeSwapsBoard(t *testing.T) {
 	m.previewMax = true
 	m.hideDrafts = true
 
-	out, _ := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := out.(Model)
 
 	if got.mode != "issue" {
@@ -585,7 +585,7 @@ func TestToggleModeSwapsBoard(t *testing.T) {
 		t.Error("view state not reset on toggle")
 	}
 
-	back, _ := got.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	back, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	b := back.(Model)
 	if b.mode != "pr" || b.section.Kind() != "pr" {
 		t.Errorf("toggle back failed: mode=%q kind=%q", b.mode, b.section.Kind())
