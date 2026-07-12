@@ -58,8 +58,40 @@ func TestReviewLineNamesWho(t *testing.T) {
 	if got := reviewLine(mk("APPROVED")); !strings.Contains(got, "approved by @alice") {
 		t.Fatalf("should name who approved: %q", got)
 	}
+	if got := reviewLine(mk("COMMENTED")); !strings.Contains(got, "commented by @alice") {
+		t.Fatalf("should name who commented: %q", got)
+	}
+	if got := reviewLine(mk("DISMISSED")); !strings.Contains(got, "dismissed: @alice") {
+		t.Fatalf("should name whose review was dismissed: %q", got)
+	}
 	if got := reviewLine(gh.PRDetail{ReviewRequests: []gh.ReviewRequest{{Login: "bob"}}}); !strings.Contains(got, "bob") {
 		t.Fatalf("with no reviews, should fall back to pending reviewers: %q", got)
+	}
+}
+
+func TestReviewLineShowsEveryState(t *testing.T) {
+	rv := func(login, state string) gh.Review {
+		var r gh.Review
+		r.Author.Login = login
+		r.State = state
+		return r
+	}
+	d := gh.PRDetail{LatestReviews: []gh.Review{
+		rv("alice", "CHANGES_REQUESTED"),
+		rv("bob", "APPROVED"),
+		rv("carol", "COMMENTED"),
+		rv("dave", "DISMISSED"),
+	}}
+	got := reviewLine(d)
+	for _, want := range []string{
+		"changes requested by @alice",
+		"approved by @bob",
+		"commented by @carol",
+		"dismissed: @dave",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("review line should surface every state, missing %q: %q", want, got)
+		}
 	}
 }
 
