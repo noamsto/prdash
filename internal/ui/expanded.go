@@ -414,7 +414,7 @@ func (m Model) expandedView() string {
 	if v, ok := m.cursorVars(); ok {
 		n = v.Number
 	}
-	bw := m.expandedBoxWidth() // prose tabs cap to the reading column; Diff spans full width
+	bw := m.expandedBoxWidth() // cap to the reading column so the view centers
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
 	if ps, ok := m.section.(*PRSection); ok {
 		if title := ps.prAt(m.cursor).Title; title != "" {
