@@ -224,6 +224,22 @@ func TestClosedPRShowsDimClosedMarkNotCI(t *testing.T) {
 	}
 }
 
+func TestMergedPRInClosedViewRendersFromOwnState(t *testing.T) {
+	mrg, _ := time.Parse(time.RFC3339, "2026-07-12T00:00:00Z")
+	cls, _ := time.Parse(time.RFC3339, "2026-07-01T00:00:00Z") // deliberately != MergedAt
+	p := gh.PR{Number: 5, Title: "landed", State: "MERGED", MergedAt: mrg, ClosedAt: cls}
+	s := NewPRSection("")
+	s.SetState("closed") // view is "closed", but the row is a merged PR
+	s.SetPRs([]gh.PR{p})
+	row := s.RenderRow(0, RowOpts{Width: 80})
+	if !strings.Contains(row, mergedGlyph) {
+		t.Fatalf("merged PR must show the merge mark even in the closed view: %q", row)
+	}
+	if want := ageString(mrg); !strings.Contains(row, want) {
+		t.Fatalf("age must come from MergedAt (%q), not ClosedAt: %q", want, row)
+	}
+}
+
 func TestRowTimeReflectsPRState(t *testing.T) {
 	upd, _ := time.Parse(time.RFC3339, "2026-07-01T00:00:00Z")
 	mrg, _ := time.Parse(time.RFC3339, "2026-07-12T00:00:00Z") // ~1d before "now"-ish

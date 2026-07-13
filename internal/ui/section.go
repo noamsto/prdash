@@ -28,7 +28,6 @@ type Section interface {
 	Filter() string
 	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single line
 	Len() int
-	Total() int // rows before filtering (author/search/hide-drafts)
 	VarsAt(i int) action.Vars
 	Haystacks() []string
 	SetShown(idx []int)
@@ -77,7 +76,6 @@ func (s *PRSection) groupLabel(i int) string {
 	return p.Author.Login
 }
 func (s *PRSection) Len() int           { return len(s.shown) }
-func (s *PRSection) Total() int         { return len(s.prs) }
 func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
@@ -260,7 +258,6 @@ func (s *IssueSection) Kind() string              { return "issue" }
 func (s *IssueSection) Filter() string            { return s.filter }
 func (s *IssueSection) SetIssues(is []gh.Issue)   { s.issues = is; s.shown = allIdx(len(is)) }
 func (s *IssueSection) Len() int                  { return len(s.shown) }
-func (s *IssueSection) Total() int                { return len(s.issues) }
 func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
 
 // issueAt returns the gh.Issue at shown-row i (mirrors prAt).
