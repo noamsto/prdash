@@ -185,7 +185,7 @@ func TestRenderMainBordersListPane(t *testing.T) {
 	if !strings.Contains(out, "╭") || !strings.Contains(out, "╯") {
 		t.Fatalf("renderMain should wrap the list in a rounded border: %q", out)
 	}
-	if !strings.Contains(out, "PRs · 1") {
+	if !strings.Contains(out, "· 1") {
 		t.Fatalf("list pane should be titled: %q", out)
 	}
 }

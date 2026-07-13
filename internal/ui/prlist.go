@@ -1265,14 +1265,10 @@ func modeSegments(active string) string {
 	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
 }
 
-// header is the top line: repo · mode segments · preset · state · shown/total.
+// header is the global top line: repo · board segments · (spinner) · (badge) ·
+// (selection). The current view (preset/state/count) lives on the list title.
 func (m Model) header() string {
-	label := m.body
-	if m.presetIdx >= 0 {
-		label = presetsFor(m.mode)[m.presetIdx].name
-	}
-	h := headerStyle.Render("  "+m.repo) + "  " + modeSegments(m.mode) +
-		dimStyle.Render(fmt.Sprintf("   %s · %s · %s", label, m.state, m.count()))
+	h := headerStyle.Render("  "+m.repo) + "  " + modeSegments(m.mode)
 	if m.refreshing {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
@@ -1282,12 +1278,6 @@ func (m Model) header() string {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
 	return h
-}
-
-// count is the "shown/total" tally for the header — shown is the filtered
-// subset (author/search/hide-drafts), total the full result set.
-func (m Model) count() string {
-	return fmt.Sprintf("%d/%d", m.section.Len(), m.section.Total())
 }
 
 // statusBadge renders the transient inline-action badge (spinner while running,
@@ -1309,12 +1299,30 @@ func (m Model) statusBadge() string {
 	}
 }
 
-// listTitle is the list pane's border title: the board glyph + kind + shown count.
-func (m Model) listTitle() string {
-	if m.section.Kind() == "issue" {
-		return fmt.Sprintf("%s Issues · %d", issueGlyph, m.section.Len())
+// titleGlyph is the list-title marker: the terminal-state glyph for merged/closed
+// PRs, else the board glyph. Issues have no merged state, so they always use theirs.
+func (m Model) titleGlyph() string {
+	if m.mode == "issue" {
+		return issueGlyph
 	}
-	return fmt.Sprintf("%s PRs · %d", prGlyph, m.section.Len())
+	switch m.state {
+	case "merged":
+		return mergedGlyph
+	case "closed":
+		return closedGlyph
+	default:
+		return prGlyph
+	}
+}
+
+// listTitle is the list pane's border title — the current view: state glyph +
+// preset (or custom author body) + state + shown count.
+func (m Model) listTitle() string {
+	label := m.body
+	if m.presetIdx >= 0 {
+		label = presetsFor(m.mode)[m.presetIdx].name
+	}
+	return fmt.Sprintf("%s %s · %s · %d", m.titleGlyph(), label, m.state, m.section.Len())
 }
 
 // isMineView reports whether the active view is the "mine" preset, where every
