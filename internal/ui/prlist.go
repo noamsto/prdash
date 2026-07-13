@@ -1354,6 +1354,7 @@ func (m Model) legendView() string {
 
 	rows := []string{
 		accentStyle.Render("CI / review") + statusBarStyle.Render("  ✓ pass   ✗ fail   ● running   · none"),
+		accentStyle.Render("state") + statusBarStyle.Render("       "+mergedGlyph+" merged   "+closedGlyph+" closed"),
 		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
 		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
 		"",

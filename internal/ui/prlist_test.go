@@ -390,6 +390,19 @@ func TestLegendToggle(t *testing.T) {
 	}
 }
 
+func TestLegendDocumentsTerminalGlyphs(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 130, 40
+	leg := m.legendView()
+	if !strings.Contains(leg, mergedGlyph) {
+		t.Fatalf("legend should document the merged mark %q: %q", mergedGlyph, leg)
+	}
+	if !strings.Contains(leg, "merged") || !strings.Contains(leg, "closed") {
+		t.Fatalf("legend should name merged and closed states: %q", leg)
+	}
+}
+
 func TestStatusBarHasTopRule(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("r")
