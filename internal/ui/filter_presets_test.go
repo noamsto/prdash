@@ -3,15 +3,17 @@ package ui
 import "testing"
 
 func TestSearchFor(t *testing.T) {
-	cases := []struct{ state, body, want string }{
-		{"open", "author:@me", "is:open author:@me"},
-		{"merged", "author:@me", "is:merged author:@me"},
-		{"open", "", "is:open"},
-		{"closed", "", "is:closed"},
+	cases := []struct{ mode, state, body, want string }{
+		{"pr", "open", "author:@me", "is:open author:@me"},
+		{"pr", "merged", "author:@me", "is:merged author:@me"},
+		{"pr", "open", "", "is:open"},
+		{"pr", "closed", "", "is:closed is:unmerged"}, // exclude merged from the closed PR view
+		{"pr", "closed", "author:@me", "is:closed is:unmerged author:@me"},
+		{"issue", "closed", "", "is:closed"}, // issues have no merged state
 	}
 	for _, c := range cases {
-		if got := searchFor(c.state, c.body); got != c.want {
-			t.Errorf("searchFor(%q,%q)=%q want %q", c.state, c.body, got, c.want)
+		if got := searchFor(c.mode, c.state, c.body); got != c.want {
+			t.Errorf("searchFor(%q,%q,%q)=%q want %q", c.mode, c.state, c.body, got, c.want)
 		}
 	}
 }

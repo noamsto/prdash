@@ -89,7 +89,7 @@ func TestStateToggleRecomputesFilter(t *testing.T) {
 	}
 	u, _ = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = u.(Model)
-	if m.state != "closed" || m.filter != "is:closed author:@me" {
+	if m.state != "closed" || m.filter != "is:closed is:unmerged author:@me" {
 		t.Fatalf("second s toggle: state=%q filter=%q", m.state, m.filter)
 	}
 }

@@ -9,8 +9,13 @@ var prStates = []string{"open", "merged", "closed"}
 var issueStates = []string{"open", "closed"}
 
 // searchFor composes a gh search from a state and an optional body qualifier.
-func searchFor(state, body string) string {
+// A PR's "closed" state adds is:unmerged, since GitHub counts merged PRs as
+// closed and the merged state already shows those; issues have no merged state.
+func searchFor(mode, state, body string) string {
 	s := "is:" + state
+	if mode == "pr" && state == "closed" {
+		s += " is:unmerged"
+	}
 	if body == "" {
 		return s
 	}

@@ -89,11 +89,11 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	af := textinput.New()
 	af.Prompt = "› "
 	state, body := splitState(filter, prStates)
-	resolved := searchFor(state, body)
+	resolved := searchFor("pr", state, body)
 	return Model{
 		dir: dir, filter: resolved, state: state, body: body, mode: "pr",
 		other: boardView{
-			state: "open", body: assigneeBody, filter: searchFor("open", assigneeBody),
+			state: "open", body: assigneeBody, filter: searchFor("issue", "open", assigneeBody),
 			presetIdx: 0, // issuePresets[0] == "mine"
 		},
 		cache: c, section: NewPRSection(resolved),
@@ -346,8 +346,8 @@ func (m *Model) hydrate() bool {
 		return true
 	}
 	if m.isMineView() {
-		mine, ok1 := m.cachedPRs(searchFor(m.state, mineBody))
-		rev, ok2 := m.cachedPRs(searchFor(m.state, reviewBody))
+		mine, ok1 := m.cachedPRs(searchFor("pr", m.state, mineBody))
+		rev, ok2 := m.cachedPRs(searchFor("pr", m.state, reviewBody))
 		if !ok1 && !ok2 {
 			return false
 		}
@@ -489,7 +489,7 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 func (m Model) mineFetchCmd() tea.Cmd {
 	r, dir := m.runner, m.dir
 	state := m.state
-	mineF, reviewF := searchFor(state, mineBody), searchFor(state, reviewBody)
+	mineF, reviewF := searchFor("pr", state, mineBody), searchFor("pr", state, reviewBody)
 	list := func(filter string) ([]gh.PR, []byte, error) {
 		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
 		if err != nil {
@@ -710,7 +710,7 @@ func (m *Model) confirmPicker() tea.Cmd {
 		}
 		slices.Sort(terms)
 		m.body = strings.Join(terms, " ")
-		m.filter = searchFor(m.state, m.body)
+		m.filter = searchFor(m.mode, m.state, m.body)
 		m.presetIdx = -1
 		return m.switchToFilter()
 	case "reviewer":
@@ -738,7 +738,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.mineFetchCmd(),
 		m.fetchCmd("is:open"),
-		m.issueFetchCmd(searchFor("open", assigneeBody)),
+		m.issueFetchCmd(searchFor("issue", "open", assigneeBody)),
 		m.fetchMembersCmd(),
 		spinnerTick(),
 		themeWatchTick(m.themeModTime),
@@ -788,8 +788,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detailCmdForCursor()
 	case mineFetchedMsg:
 		if m.cache != nil {
-			m.cache.Set(prKey(m.repo, searchFor(msg.state, mineBody)), msg.mineRaw)
-			m.cache.Set(prKey(m.repo, searchFor(msg.state, reviewBody)), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, mineBody)), msg.mineRaw)
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody)), msg.reviewRaw)
 		}
 		if !m.isMineView() || msg.state != m.state {
 			return m, nil // prewarm while viewing another preset/state
@@ -1034,11 +1034,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ps := presetsFor(m.mode)
 			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
 			m.body = ps[m.presetIdx].search
-			m.filter = searchFor(m.state, m.body)
+			m.filter = searchFor(m.mode, m.state, m.body)
 			return m, m.switchToFilter()
 		case "s":
 			m.state = nextState(m.state, statesFor(m.mode))
-			m.filter = searchFor(m.state, m.body)
+			m.filter = searchFor(m.mode, m.state, m.body)
 			return m, m.switchToFilter()
 		case "tab":
 			return m, m.toggleMode()
