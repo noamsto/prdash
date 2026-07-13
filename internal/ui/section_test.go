@@ -136,6 +136,31 @@ func TestPRRankApprovedFailingIsNotReady(t *testing.T) {
 	}
 }
 
+func TestGroupByAuthorMergedOrdersByNewestMerge(t *testing.T) {
+	ts := func(s string) time.Time { v, _ := time.Parse(time.RFC3339, s); return v }
+	a1 := gh.PR{Number: 1, State: "MERGED", MergedAt: ts("2026-07-05T00:00:00Z")}
+	a1.Author.Login = "alice"
+	a2 := gh.PR{Number: 2, State: "MERGED", MergedAt: ts("2026-07-03T00:00:00Z")}
+	a2.Author.Login = "alice"
+	b1 := gh.PR{Number: 3, State: "MERGED", MergedAt: ts("2026-07-10T00:00:00Z")}
+	b1.Author.Login = "bob"
+
+	s := NewPRSection("")
+	s.SetState("merged")
+	s.SetForceGroup(true) // the non-mine "all" view groups by author
+	s.SetPRs([]gh.PR{a1, a2, b1})
+
+	// bob leads (newest merge 07-10 beats alice's newest 07-05); within alice's
+	// group, newest-first: #1 (07-05) then #2 (07-03).
+	var got []int
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	if want := []int{3, 1, 2}; !slices.Equal(got, want) {
+		t.Fatalf("merged group order = %v, want %v (groups by newest event, not rank)", got, want)
+	}
+}
+
 func TestSetShownOrderedGroupsByAuthorWhenMultiple(t *testing.T) {
 	a := gh.PR{Number: 1, ReviewDecision: "REVIEW_REQUIRED"} // alice, rank waiting
 	a.Author.Login = "alice"

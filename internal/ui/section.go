@@ -187,7 +187,7 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	}
 	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
 		s.grouped = true
-		s.shown = groupByAuthor(s.prs, idx)
+		s.shown = groupByAuthor(s.prs, idx, s.state)
 		return
 	}
 	s.grouped = false
@@ -215,30 +215,39 @@ func distinctAuthors(prs []gh.PR, idx []int) int {
 	return len(seen)
 }
 
-// groupByAuthor reorders idx so each author's rows are contiguous. Groups are
-// ordered by their best (lowest) member rank, ties by login; within a group the
-// incoming (rank) order is preserved.
-func groupByAuthor(prs []gh.PR, idx []int) []int {
+// groupByAuthor reorders idx so each author's rows are contiguous; within a group
+// the incoming order is preserved. Group order depends on state: the open board
+// leads with each author's best (lowest) member rank, ties by login. Terminal
+// boards (merged/closed) have no meaningful rank, so groups keep first-appearance
+// order — and since idx arrives newest-event-first, that leads with whichever
+// author has the newest merge/close, extending newest-first across groups.
+func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
 	groups := map[string][]int{}
-	best := map[string]int{}
+	authors := make([]string, 0) // first-appearance order
 	for _, i := range idx {
 		a := prs[i].Author.Login
-		r := prRank(prs[i])
-		if _, ok := groups[a]; !ok || r < best[a] {
-			best[a] = r
+		if _, ok := groups[a]; !ok {
+			authors = append(authors, a)
 		}
 		groups[a] = append(groups[a], i)
 	}
-	authors := make([]string, 0, len(groups))
-	for a := range groups {
-		authors = append(authors, a)
-	}
-	slices.SortStableFunc(authors, func(x, y string) int {
-		if best[x] != best[y] {
-			return best[x] - best[y]
+	if state != "merged" && state != "closed" {
+		best := map[string]int{}
+		for a, g := range groups {
+			best[a] = prRank(prs[g[0]])
+			for _, i := range g {
+				if r := prRank(prs[i]); r < best[a] {
+					best[a] = r
+				}
+			}
 		}
-		return strings.Compare(x, y)
-	})
+		slices.SortStableFunc(authors, func(x, y string) int {
+			if best[x] != best[y] {
+				return best[x] - best[y]
+			}
+			return strings.Compare(x, y)
+		})
+	}
 	out := make([]int, 0, len(idx))
 	for _, a := range authors {
 		out = append(out, groups[a]...)
