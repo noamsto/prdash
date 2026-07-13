@@ -9,7 +9,8 @@ import (
 
 var prFields = []string{
 	"number", "title", "author", "statusCheckRollup", "reviewDecision",
-	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt", "isDraft", "state",
+	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt",
+	"mergedAt", "closedAt", "isDraft", "state",
 }
 
 type Check struct {
@@ -66,6 +67,8 @@ type PR struct {
 	BaseRefName string    `json:"baseRefName"`
 	URL         string    `json:"url"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	MergedAt    time.Time `json:"mergedAt"` // zero unless State == MERGED
+	ClosedAt    time.Time `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
 	IsDraft     bool      `json:"isDraft"`
 	State       string    `json:"state"` // OPEN | CLOSED | MERGED
 }

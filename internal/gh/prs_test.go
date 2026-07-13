@@ -1,6 +1,9 @@
 package gh
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 type fakeRunner struct {
 	gotArgs []string
@@ -17,7 +20,7 @@ func TestPRListArgs(t *testing.T) {
 	want := []string{
 		"pr", "list", "--search", "is:open author:@me",
 		"-L", "20", "--json",
-		"number,title,author,statusCheckRollup,reviewDecision,labels,assignees,headRefName,baseRefName,url,updatedAt,isDraft,state",
+		"number,title,author,statusCheckRollup,reviewDecision,labels,assignees,headRefName,baseRefName,url,updatedAt,mergedAt,closedAt,isDraft,state",
 	}
 	if len(args) != len(want) {
 		t.Fatalf("args len = %d, want %d (%v)", len(args), len(want), args)
@@ -112,5 +115,31 @@ func TestCheckResult(t *testing.T) {
 	}
 	if got := (Check{Conclusion: "FAILURE"}).Result(); got != "fail" {
 		t.Errorf("conclusion fallback: %q", got)
+	}
+}
+
+func TestParsePRsReadsMergeAndCloseTimes(t *testing.T) {
+	raw := []byte(`[{"number":1,"mergedAt":"2026-07-10T09:00:00Z","closedAt":"2026-07-10T09:00:00Z"},
+	                {"number":2,"mergedAt":null,"closedAt":"2026-07-11T12:30:00Z"}]`)
+	prs, err := ParsePRs(raw)
+	if err != nil {
+		t.Fatalf("ParsePRs: %v", err)
+	}
+	if prs[0].MergedAt.IsZero() {
+		t.Errorf("PR #1 MergedAt should be parsed, got zero")
+	}
+	if !prs[1].MergedAt.IsZero() {
+		t.Errorf("PR #2 has null mergedAt, want zero time, got %v", prs[1].MergedAt)
+	}
+	if prs[1].ClosedAt.IsZero() {
+		t.Errorf("PR #2 ClosedAt should be parsed, got zero")
+	}
+}
+
+func TestPRListArgsRequestsTimestamps(t *testing.T) {
+	args := PRListArgs("is:merged", 20)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "mergedAt") || !strings.Contains(joined, "closedAt") {
+		t.Fatalf("PRListArgs must request mergedAt,closedAt: %q", joined)
 	}
 }
