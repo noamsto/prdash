@@ -7,7 +7,7 @@
 
 The PR list treats every state identically, which makes the terminal (merged / closed) states confusing:
 
-1. **Left-column glyphs are historical noise for terminal PRs.** For a merged PR, cell 1 (CI rollup) and the actionability sort key describe the PR's state *before* it landed. A merged PR showing `✗` (CI failed) or `●` (running) is meaningless — it merged. The intended mauve merged glyph (`mergedMark`, `section.go:91`) is being obscured by this.
+1. **Left-column glyphs are historical noise for terminal PRs.** The mauve merged glyph + kept review dot (`mergedMark`, `section.go:91`; `reviewDot`, `section.go:98`) already landed for the *merged* state in #28 (2026-07-12) — a rebuild shows it. But the **closed (not merged)** state still paints the frozen pre-close CI rollup (`✗`/`●`), which is meaningless once a PR is closed. Closed needs the same "terminal, not CI" treatment merged already has.
 2. **No time-based ordering for merged/closed.** Sorting is `prRank` (actionability) then `UpdatedAt` desc (`sortPRs`, `section.go:146`). For merged PRs the rank is meaningless yet still buckets rows by frozen CI/review state, so they read as scrambled rather than chronological. `gh.PR` has no `MergedAt`/`ClosedAt` field, so we currently *cannot* sort by the event that matters.
 3. **Redundant, misplaced status.** The current-view descriptor (`mine · merged · N`) sits on the global top line (`header()`, `prlist.go:1268-1271`) while the list-box title carries a second count (`PRs · N`, `listTitle()`, `prlist.go:1311`). The view state should live on the pane it describes; the top line should be reserved for global/persistent state.
 
