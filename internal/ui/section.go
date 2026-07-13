@@ -39,9 +39,10 @@ type PRSection struct {
 	filter     string
 	prs        []gh.PR
 	shown      []int
-	grouped    bool // true when the board renders group headers (see setShownOrdered)
-	hideDrafts bool // when true, draft PRs are excluded from the shown set
-	forceGroup bool // group even with a single author (non-"mine" views)
+	grouped    bool   // true when the board renders group headers (see setShownOrdered)
+	hideDrafts bool   // when true, draft PRs are excluded from the shown set
+	forceGroup bool   // group even with a single author (non-"mine" views)
+	state      string // active view state (open|merged|closed); selects the sort key
 
 	cats     map[int]string // PR number → category label; non-nil switches grouping from author to category
 	catOrder []string       // category header order (e.g. Mine, Review requested)
@@ -52,7 +53,7 @@ func (s *PRSection) Kind() string           { return "pr" }
 func (s *PRSection) Filter() string         { return s.filter }
 func (s *PRSection) SetPRs(p []gh.PR) {
 	s.cats, s.catOrder = nil, nil // flat/author grouping; SetCategorized opts into category grouping
-	sortPRs(p)
+	sortPRs(p, s.state)
 	s.prs = p
 	s.setShownOrdered(allIdx(len(p)))
 }
@@ -60,7 +61,7 @@ func (s *PRSection) SetPRs(p []gh.PR) {
 // SetCategorized paints PRs grouped under category headers (order) instead of by
 // author — used by the mine view (Mine / Review requested).
 func (s *PRSection) SetCategorized(p []gh.PR, cats map[int]string, order []string) {
-	sortPRs(p)
+	sortPRs(p, s.state)
 	s.prs = p
 	s.cats = cats
 	s.catOrder = order
@@ -143,14 +144,23 @@ func prRank(p gh.PR) int {
 	}
 }
 
-// sortPRs orders by actionability rank, ties broken most-recently-updated first.
-func sortPRs(prs []gh.PR) {
-	slices.SortStableFunc(prs, func(a, b gh.PR) int {
-		if d := prRank(a) - prRank(b); d != 0 {
-			return d
-		}
-		return b.UpdatedAt.Compare(a.UpdatedAt)
-	})
+// sortPRs orders the board. Terminal states are chronological (newest event
+// first); the open board keeps the actionability rank, ties broken most-recently
+// updated. Rank is meaningless once a PR has landed/closed, so it's skipped there.
+func sortPRs(prs []gh.PR, state string) {
+	switch state {
+	case "merged":
+		slices.SortStableFunc(prs, func(a, b gh.PR) int { return b.MergedAt.Compare(a.MergedAt) })
+	case "closed":
+		slices.SortStableFunc(prs, func(a, b gh.PR) int { return b.ClosedAt.Compare(a.ClosedAt) })
+	default:
+		slices.SortStableFunc(prs, func(a, b gh.PR) int {
+			if d := prRank(a) - prRank(b); d != 0 {
+				return d
+			}
+			return b.UpdatedAt.Compare(a.UpdatedAt)
+		})
+	}
 }
 
 // setShownOrdered records the shown subset in display order and decides grouping.
@@ -159,6 +169,10 @@ func sortPRs(prs []gh.PR) {
 // still walks them top-to-bottom; with one author the flat rank order stands.
 func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
 func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
+
+// SetState records the view state so the next SetPRs/SetCategorized sorts by the
+// right key (merge/close time for terminal states, actionability for open).
+func (s *PRSection) SetState(state string) { s.state = state }
 
 func (s *PRSection) setShownOrdered(idx []int) {
 	if s.hideDrafts {

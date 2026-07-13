@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -261,5 +262,44 @@ func TestSetHideDraftsExcludesDrafts(t *testing.T) {
 	}
 	if s.prAt(0).Number != 2 {
 		t.Fatalf("remaining row should be the non-draft #2, got #%d", s.prAt(0).Number)
+	}
+}
+
+func TestSetPRsMergedSortsByMergeTime(t *testing.T) {
+	mk := func(num int, merged string) gh.PR {
+		ts, _ := time.Parse(time.RFC3339, merged)
+		return gh.PR{Number: num, State: "MERGED", MergedAt: ts,
+			// deliberately varied CI/review so rank order would differ from time order
+			ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "FAILURE"}}}
+	}
+	s := NewPRSection("")
+	s.SetState("merged")
+	s.SetPRs([]gh.PR{
+		mk(1, "2026-07-10T09:00:00Z"),
+		mk(2, "2026-07-12T09:00:00Z"),
+		mk(3, "2026-07-11T09:00:00Z"),
+	})
+	var got []int
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	if want := []int{2, 3, 1}; !slices.Equal(got, want) {
+		t.Fatalf("merged sort = %v, want newest-merge-first %v", got, want)
+	}
+}
+
+func TestSetPRsClosedSortsByCloseTime(t *testing.T) {
+	mk := func(num int, closed string) gh.PR {
+		ts, _ := time.Parse(time.RFC3339, closed)
+		return gh.PR{Number: num, State: "CLOSED", ClosedAt: ts}
+	}
+	s := NewPRSection("")
+	s.SetState("closed")
+	s.SetPRs([]gh.PR{
+		mk(1, "2026-07-10T09:00:00Z"),
+		mk(2, "2026-07-12T09:00:00Z"),
+	})
+	if s.prAt(0).Number != 2 {
+		t.Fatalf("closed sort should lead with newest close #2, got #%d", s.prAt(0).Number)
 	}
 }

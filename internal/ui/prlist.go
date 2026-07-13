@@ -113,6 +113,7 @@ func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
 		// Outside the "mine" view, group by author even with a single author, so
 		// you always see whose PRs you're looking at.
+		s.SetState(m.state)
 		s.SetForceGroup(!m.isMineView())
 		s.SetPRs(prs)
 	}
@@ -149,6 +150,7 @@ func (m *Model) setMine(mine, review []gh.PR) {
 		all = append(all, p)
 	}
 	if s, ok := m.section.(*PRSection); ok {
+		s.SetState(m.state)
 		s.SetCategorized(all, cats, []string{"Mine", "Review requested"})
 	}
 	m.applyFilter()
