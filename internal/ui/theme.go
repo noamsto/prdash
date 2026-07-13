@@ -244,3 +244,9 @@ func ciGlyph(state string) string {
 const mergedGlyph = "󰘭" // nerd: nf-md-source-merge (U+F062D)
 
 func mergedMark() string { return mergedStyle.Render(mergedGlyph) }
+
+// closedGlyph marks a PR closed without merging — a dim ✗, distinct from the red
+// CI-fail ✗ by color: the checks no longer matter, the PR just didn't land.
+const closedGlyph = "✗"
+
+func closedMark() string { return dimStyle.Render(closedGlyph) }

@@ -207,6 +207,49 @@ func TestMergedPRShowsMergeMarkNotCI(t *testing.T) {
 	}
 }
 
+func TestClosedPRShowsDimClosedMarkNotCI(t *testing.T) {
+	// A closed (unmerged) PR whose last CI run failed must show the closed mark,
+	// not a red CI ✗, and not the merge mark.
+	p := gh.PR{Number: 9, Title: "abandoned", State: "CLOSED",
+		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
+	s := NewPRSection("")
+	s.SetState("closed")
+	s.SetPRs([]gh.PR{p})
+	row := s.RenderRow(0, RowOpts{Width: 80})
+	if !strings.Contains(row, closedMark()) {
+		t.Fatalf("closed PR row should carry the dim closed mark: %q", row)
+	}
+	if strings.Contains(row, mergedGlyph) {
+		t.Fatalf("closed PR must not show the merge mark: %q", row)
+	}
+}
+
+func TestRowTimeReflectsPRState(t *testing.T) {
+	upd, _ := time.Parse(time.RFC3339, "2026-07-01T00:00:00Z")
+	mrg, _ := time.Parse(time.RFC3339, "2026-07-12T00:00:00Z") // ~1d before "now"-ish
+	merged := gh.PR{Number: 1, Title: "landed", State: "MERGED", UpdatedAt: upd, MergedAt: mrg}
+	open := gh.PR{Number: 2, Title: "wip", State: "OPEN", UpdatedAt: mrg}
+
+	s := NewPRSection("")
+	s.SetState("merged")
+	s.SetPRs([]gh.PR{merged})
+	mergedRow := s.RenderRow(0, RowOpts{Width: 80})
+
+	so := NewPRSection("")
+	so.SetState("open")
+	so.SetPRs([]gh.PR{open})
+	openRow := so.RenderRow(0, RowOpts{Width: 80})
+
+	// Both events are the same instant (mrg), so both rows show the same age string;
+	// the merged row must derive it from MergedAt, not its (much older) UpdatedAt.
+	if want := ageString(mrg); !strings.Contains(mergedRow, want) {
+		t.Fatalf("merged row age should come from MergedAt (%q): %q", want, mergedRow)
+	}
+	if want := ageString(mrg); !strings.Contains(openRow, want) {
+		t.Fatalf("open row age should come from UpdatedAt (%q): %q", want, openRow)
+	}
+}
+
 func TestIssueRowKeepsInlineAuthor(t *testing.T) {
 	is := gh.Issue{Number: 1, Title: "bug"}
 	is.Author.Login = "carol"

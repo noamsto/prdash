@@ -209,7 +209,7 @@ func (m *Model) renderList() {
 			m.cursorLine = line
 		}
 		flag := ""
-		if isPR {
+		if isPR && ps.prAt(i).State == "OPEN" {
 			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}

@@ -86,17 +86,21 @@ func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	o.Draft = p.IsDraft
-	// A merged PR is terminal: its mauve merge mark replaces the CI rollup, whose
-	// pass/fail no longer means anything.
+	// A terminal PR's cell-1 glyph reflects how it ended, not its frozen CI rollup:
+	// merged → mauve merge mark, closed → dim ✗. The age column likewise shows the
+	// event that ended it (merge/close time) rather than the last update.
 	status := ciGlyph(p.CIState())
-	if p.IsMerged() {
-		status = mergedMark()
+	age := ageString(p.UpdatedAt)
+	switch {
+	case p.IsMerged():
+		status, age = mergedMark(), ageString(p.MergedAt)
+	case p.State == "CLOSED":
+		status, age = closedMark(), ageString(p.ClosedAt)
 	}
 	// Author is dropped from the row: it's redundant in a single-author (flat)
 	// view and hoisted into the group header when grouped.
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		"", ageString(p.UpdatedAt),
-		status, reviewDot(p.ReviewDecision))
+		"", age, status, reviewDot(p.ReviewDecision))
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
