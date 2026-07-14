@@ -335,8 +335,11 @@ func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
 	if !strings.Contains(panel, "Merge") {
 		t.Fatalf("batch mode should include bulk-capable merge:\n%s", panel)
 	}
-	if strings.Contains(panel, "Open in browser") {
-		t.Fatalf("batch mode should hide single-only actions like open-in-browser:\n%s", panel)
+	if !strings.Contains(panel, "Open in browser") {
+		t.Fatalf("batch mode should include bulk-capable open-in-browser:\n%s", panel)
+	}
+	if strings.Contains(panel, "Rerun checks") {
+		t.Fatalf("batch mode should hide single-only actions like rerun-checks:\n%s", panel)
 	}
 }
 
