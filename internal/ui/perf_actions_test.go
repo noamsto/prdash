@@ -445,7 +445,7 @@ func TestExitActionWithoutHandoffQueuesExec(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("enter should queue one exec command standalone, got %d", len(got))
 	}
-	if want := []string{"wt", "switch", "pr:7"}; !slices.Equal(got[0], want) {
+	if want := []string{"wt", "switch", "feat/x"}; !slices.Equal(got[0], want) {
 		t.Fatalf("queued %v, want %v", got[0], want)
 	}
 	if cmd == nil {

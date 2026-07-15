@@ -3,7 +3,7 @@ package action
 func DefaultPRActions() map[string]Action {
 	return map[string]Action{
 		"enter": {Key: "enter", Label: "Open worktree",
-			Command:  Command{Argv: []string{"wt", "switch", "pr:{{.Number}}"}},
+			Command:  Command{Argv: []string{"wt", "switch", "{{.Branch}}"}},
 			ExitsTUI: true, Scope: "single"},
 		"m": {Key: "m", Label: "Merge (squash)",
 			Command: Command{Argv: []string{"gh", "pr", "merge", "{{.Number}}", "--squash"}},
@@ -21,7 +21,7 @@ func DefaultPRActions() map[string]Action {
 		"o": {Key: "o", Label: "Open in browser",
 			Command: Command{Argv: []string{"gh", "pr", "view", "{{.Number}}", "--web"}}, Scope: "per-selected"},
 		"W": {Key: "W", Label: "Bulk worktrees",
-			Command:  Command{Argv: []string{"wt", "switch", "pr:{{.Number}}"}},
+			Command:  Command{Argv: []string{"wt", "switch", "{{.Branch}}"}},
 			ExitsTUI: true, Scope: "per-selected"},
 		"u": {Key: "u", Label: "Update branch",
 			Command: Command{Argv: []string{"gh", "pr", "update-branch", "{{.Number}}"}}, Scope: "per-selected", Refresh: true,
