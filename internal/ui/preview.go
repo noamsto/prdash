@@ -70,7 +70,8 @@ func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
 }
 
 // detailCmdForCursor refetches the cursor row's detail unless it was already
-// refreshed this session; disk-cached (stale) detail still triggers a refetch.
+// refreshed this session or its disk cache is still within launchFreshTTL — so
+// navigating right after a launch reuses recent detail instead of refetching it.
 func (m *Model) detailCmdForCursor() tea.Cmd {
 	if m.runner == nil {
 		return nil
@@ -81,12 +82,12 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 	}
 	switch m.section.Kind() {
 	case "issue":
-		if m.issueFresh[v.Number] {
+		if m.issueFresh[v.Number] || m.cacheFresh(issueDetailKey(m.repo, v.Number)) {
 			return nil
 		}
 		return m.fetchIssueDetailCmd(v.Number)
 	case "pr":
-		if m.fresh[v.Number] {
+		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
 			return nil
 		}
 		return m.fetchDetailCmd(v.Number)
@@ -119,12 +120,15 @@ func (m Model) prefetchCmd() tea.Cmd {
 		return nil
 	}
 	nums := prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow)
-	if len(nums) == 0 {
-		return nil
-	}
 	cmds := make([]tea.Cmd, 0, len(nums))
 	for _, n := range nums {
+		if m.cacheFresh(detailKey(m.repo, n)) {
+			continue // recent disk detail; the hydrated card is good enough
+		}
 		cmds = append(cmds, m.fetchDetailCmd(n))
+	}
+	if len(cmds) == 0 {
+		return nil
 	}
 	return tea.Batch(cmds...)
 }

@@ -529,6 +529,16 @@ func (m *Model) startSpinner() tea.Cmd {
 
 const pollInterval = 30 * time.Second
 
+// launchFreshTTL bounds how recently a cached fetch must have been written for a
+// cold launch to reuse it instead of re-hitting the API. Relaunching within this
+// window (e.g. spamming the tmux popup) costs zero GraphQL calls; ctrl+r and the
+// live-checks poll always force a real refresh regardless.
+const launchFreshTTL = 60 * time.Second
+
+func (m Model) cacheFresh(key string) bool {
+	return m.cache != nil && m.cache.Fresh(key, launchFreshTTL)
+}
+
 func checksPollTick() tea.Cmd {
 	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return checksPollMsg{} })
 }
@@ -733,16 +743,35 @@ func (m *Model) confirmPicker() tea.Cmd {
 }
 
 func (m Model) Init() tea.Cmd {
-	// Prewarm both views (the current one paints on arrival, the other just
-	// caches), refresh members once, and start the spinner.
-	return tea.Batch(
-		m.mineFetchCmd(),
-		m.fetchCmd("is:open"),
-		m.issueFetchCmd(searchFor("issue", "open", assigneeBody)),
-		m.fetchMembersCmd(),
-		spinnerTick(),
-		themeWatchTick(m.themeModTime),
-	)
+	cmds := append([]tea.Cmd{spinnerTick(), themeWatchTick(m.themeModTime)}, m.launchFetchCmds()...)
+	return tea.Batch(cmds...)
+}
+
+// launchFetchCmds returns the startup reconcile fetches — the current "mine"
+// view plus the prewarmed is:open/issue boards and member list — omitting any
+// whose cache is still fresh. When the current view is reused, it emits
+// fetchSkippedMsg so the refresh spinner still clears. Split out so the
+// freshness gating is unit-testable without the ticker commands.
+func (m Model) launchFetchCmds() []tea.Cmd {
+	var cmds []tea.Cmd
+	mineFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, mineBody))) &&
+		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody)))
+	if mineFresh {
+		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
+	} else {
+		cmds = append(cmds, m.mineFetchCmd())
+	}
+	if !m.cacheFresh(prKey(m.repo, "is:open")) {
+		cmds = append(cmds, m.fetchCmd("is:open"))
+	}
+	issueF := searchFor("issue", "open", assigneeBody)
+	if !m.cacheFresh(issueKey(m.repo, issueF)) {
+		cmds = append(cmds, m.issueFetchCmd(issueF))
+	}
+	if !m.cacheFresh(membersKey(m.repo)) {
+		cmds = append(cmds, m.fetchMembersCmd())
+	}
+	return cmds
 }
 
 // debounceDetailCmd schedules a detail fetch ~150ms out, tagged with the current
@@ -852,6 +881,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case fetchSkippedMsg:
+		// Current view served from a fresh cache: no fetch ran, so settle the
+		// state the hydrated rows were painted under and warm detail/poll.
+		m.refreshing = false
+		m.loaded = true
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
 		if !m.refreshing && !m.actionRunning() {
 			m.spinning = false // fetch/action settled; let the loop die
