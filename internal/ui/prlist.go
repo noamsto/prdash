@@ -1432,7 +1432,7 @@ func (m Model) legendView() string {
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "r", "u", "M", "W", "y", "Y", "b", "o"}
+var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 
