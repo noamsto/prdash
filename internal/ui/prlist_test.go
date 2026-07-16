@@ -162,6 +162,25 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 	}
 }
 
+func TestCtrlRRefreshesCurrentView(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+	m.refreshing = false
+	m.loaded = true
+
+	u, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m = u.(Model)
+	if !m.refreshing {
+		t.Fatal("ctrl+r should flag a refresh in flight")
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+r should return a fetch command")
+	}
+	if m.section.Len() != 2 {
+		t.Fatalf("ctrl+r should keep rows painted, shown = %d, want 2", m.section.Len())
+	}
+}
+
 func TestDebounceSeqGuardsStaleTicks(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})

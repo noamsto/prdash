@@ -1042,6 +1042,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchToFilter()
 		case "tab":
 			return m, m.toggleMode()
+		case "ctrl+r":
+			return m, m.backgroundRefresh()
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
@@ -1382,7 +1384,7 @@ func (m Model) legendView() string {
 		row(preview...),
 		row(key("/", "find"), key("space", "select"), key("V", "all")),
 		row(filters...),
-		row(key("a", "actions"), key("?", "legend"), key("q", "quit")),
+		row(key("a", "actions"), key("ctrl+r", "refresh"), key("?", "legend"), key("q", "quit")),
 		"",
 		row(key("↵", "worktree"), key("W", "bulk"), key("y", "#"), key("Y", "url"), key("b", "branch"), key("o", "open")),
 	)
