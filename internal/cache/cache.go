@@ -43,6 +43,18 @@ func (c *Cache) Get(key string) (Entry, bool) {
 	return e, ok
 }
 
+// Fresh reports whether key has an entry saved within the last ttl. Callers use
+// it to skip a live reconcile fetch when the cached data is recent enough.
+func (c *Cache) Fresh(key string, ttl time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+	return time.Since(e.SavedAt) < ttl
+}
+
 func (c *Cache) Set(key string, rows json.RawMessage) {
 	c.mu.Lock()
 	c.entries[key] = Entry{Rows: rows, SavedAt: time.Now()}

@@ -162,6 +162,25 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 	}
 }
 
+func TestCtrlRRefreshesCurrentView(t *testing.T) {
+	m := NewModel("/repo", "is:open author:@me", nil)
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+	m.refreshing = false
+	m.loaded = true
+
+	u, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m = u.(Model)
+	if !m.refreshing {
+		t.Fatal("ctrl+r should flag a refresh in flight")
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+r should return a fetch command")
+	}
+	if m.section.Len() != 2 {
+		t.Fatalf("ctrl+r should keep rows painted, shown = %d, want 2", m.section.Len())
+	}
+}
+
 func TestDebounceSeqGuardsStaleTicks(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
@@ -679,5 +698,109 @@ func TestEmptyStateSaysIssues(t *testing.T) {
 	m.renderList()
 	if !strings.Contains(m.vp.View(), "issues") {
 		t.Errorf("empty state should mention issues:\n%s", m.vp.View())
+	}
+}
+
+// countingRunner records how many gh invocations a command tree makes, so a
+// test can assert whether a fresh cache suppressed the launch fetches.
+type countingRunner struct{ calls int }
+
+func (r *countingRunner) Run(string, ...string) ([]byte, error) {
+	r.calls++
+	return []byte("[]"), nil
+}
+
+func launchModel(t *testing.T) (Model, *cache.Cache) {
+	t.Helper()
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open author:@me", c)
+	m.SetRepo("owner/repo")
+	return m, c
+}
+
+// warmLaunchCache seeds every key Init reconciles so the whole launch is fresh.
+func warmLaunchCache(m Model, c *cache.Cache) {
+	c.Set(prKey(m.repo, searchFor("pr", m.state, mineBody)), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody)), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, "is:open"), json.RawMessage("[]"))
+	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody)), json.RawMessage("[]"))
+	c.Set(membersKey(m.repo), json.RawMessage("[]"))
+}
+
+func TestLaunchReusesFreshCache(t *testing.T) {
+	m, c := launchModel(t)
+	warmLaunchCache(m, c)
+	rec := &countingRunner{}
+	m.SetRunner(rec)
+
+	for _, cmd := range m.launchFetchCmds() {
+		if cmd != nil {
+			cmd()
+		}
+	}
+	if rec.calls != 0 {
+		t.Fatalf("fresh cache should suppress all launch fetches, got %d gh calls", rec.calls)
+	}
+}
+
+func TestLaunchFetchesWhenCacheCold(t *testing.T) {
+	m, _ := launchModel(t)
+	rec := &countingRunner{}
+	m.SetRunner(rec)
+
+	for _, cmd := range m.launchFetchCmds() {
+		if cmd != nil {
+			cmd()
+		}
+	}
+	// mine view (mine+review) + is:open + issues + members = 5 gh invocations.
+	if rec.calls != 5 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d gh calls, want 5", rec.calls)
+	}
+}
+
+func TestFetchSkippedClearsRefreshing(t *testing.T) {
+	m, _ := launchModel(t)
+	m.refreshing = true
+	u, _ := m.Update(fetchSkippedMsg{})
+	got := u.(Model)
+	if got.refreshing {
+		t.Error("fetchSkippedMsg should clear the refresh spinner")
+	}
+	if !got.loaded {
+		t.Error("fetchSkippedMsg should mark the view loaded")
+	}
+}
+
+func TestDetailCmdSkipsFreshDiskCache(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("r")
+	m.SetRunner(stubRunner{})
+	m.setPRs([]gh.PR{{Number: 7}})
+
+	if m.detailCmdForCursor() == nil {
+		t.Fatal("cold detail cache should trigger a fetch")
+	}
+	c.Set(detailKey(m.repo, 7), json.RawMessage("{}"))
+	if m.detailCmdForCursor() != nil {
+		t.Fatal("fresh disk detail should suppress the fetch")
+	}
+}
+
+func TestPrefetchSkipsFreshDiskDetails(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("r")
+	m.SetRunner(stubRunner{})
+	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
+
+	if m.prefetchCmd() == nil {
+		t.Fatal("cold window should prefetch detail")
+	}
+	c.Set(detailKey(m.repo, 1), json.RawMessage("{}"))
+	c.Set(detailKey(m.repo, 2), json.RawMessage("{}"))
+	if m.prefetchCmd() != nil {
+		t.Fatal("all-fresh window should skip prefetch entirely")
 	}
 }

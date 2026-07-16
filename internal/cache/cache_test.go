@@ -50,6 +50,21 @@ func TestPrunesOld(t *testing.T) {
 	}
 }
 
+func TestFresh(t *testing.T) {
+	c := newTestCache(t)
+	c.entries["recent"] = Entry{SavedAt: time.Now().Add(-10 * time.Second)}
+	c.entries["old"] = Entry{SavedAt: time.Now().Add(-10 * time.Minute)}
+	if !c.Fresh("recent", time.Minute) {
+		t.Error("entry within ttl should be fresh")
+	}
+	if c.Fresh("old", time.Minute) {
+		t.Error("entry older than ttl should be stale")
+	}
+	if c.Fresh("missing", time.Minute) {
+		t.Error("missing key should be stale")
+	}
+}
+
 func TestKey(t *testing.T) {
 	k := Key("pr", "is:open author:@me", 20, "abc123")
 	want := "pr:is:open author:@me\x0020\x00abc123"
