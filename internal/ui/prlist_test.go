@@ -865,6 +865,65 @@ func TestSetSections(t *testing.T) {
 	}
 }
 
+// TestSetSectionsEmptyViewerFallsBackToOthers covers the pre-login window:
+// before the viewer's login resolves, setSections can't tell "mine" from
+// "someone else's", so every non-review PR collapses into Others. Once the
+// login is known, a re-split moves the viewer's PRs into Mine.
+func TestSetSectionsEmptyViewerFallsBackToOthers(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	review := []gh.PR{{Number: 1, Author: author("me")}}
+	open := []gh.PR{
+		{Number: 2, Author: author("me")},
+		{Number: 3, Author: author("someone")},
+	}
+	m.setSections(review, open, "")
+	ps := m.section.(*PRSection)
+	if cat := ps.cats[2]; cat != "Others" {
+		t.Errorf("#2 with empty viewer = %q, want Others", cat)
+	}
+	if cat := ps.cats[3]; cat != "Others" {
+		t.Errorf("#3 with empty viewer = %q, want Others", cat)
+	}
+
+	m.setSections(review, open, "me")
+	if cat := ps.cats[2]; cat != "Mine" {
+		t.Errorf("#2 after viewer resolves = %q, want Mine", cat)
+	}
+}
+
+// TestViewerFetchedMsgResplitsSections drives the real production path: a
+// login-less boot paints everything under Others, then viewerFetchedMsg
+// arrives (login hydrated) and re-partitions the already-cached open list.
+func TestViewerFetchedMsgResplitsSections(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/tmp", "is:open", c)
+	m.SetRepo("o/r")
+	m.setSections(nil, []gh.PR{
+		{Number: 2, Author: author("me")},
+		{Number: 3, Author: author("someone")},
+	}, "")
+	ps := m.section.(*PRSection)
+	if cat := ps.cats[2]; cat != "Others" {
+		t.Fatalf("#2 pre-login = %q, want Others", cat)
+	}
+
+	openRaw, _ := json.Marshal([]gh.PR{
+		{Number: 2, Author: author("me")},
+		{Number: 3, Author: author("someone")},
+	})
+	c.Set(prKey(m.repo, "is:open", openListLimit), openRaw)
+
+	u, _ := m.Update(viewerFetchedMsg{login: "me"})
+	m = u.(Model)
+	ps = m.section.(*PRSection)
+	if cat := ps.cats[2]; cat != "Mine" {
+		t.Fatalf("#2 after viewerFetchedMsg = %q, want Mine", cat)
+	}
+	if cat := ps.cats[3]; cat != "Others" {
+		t.Fatalf("#3 after viewerFetchedMsg = %q, want Others", cat)
+	}
+}
+
 func TestSectionsFetchedMsgPaints(t *testing.T) {
 	m := NewModel("/tmp", "is:open", nil)
 	m.viewerLogin = "me"
@@ -1017,6 +1076,50 @@ func TestOmniNoClobberDropsStale(t *testing.T) {
 // machinery is PR-only. Entering the filter on the issue board and typing a
 // label:x-looking token then esc must not rewrite the issue filter with PR
 // semantics or leave a PR server qualifier armed.
+// TestOmniNoClobberAppliesLiveBareFilterToFreshRows extends
+// TestOmniNoClobberDropsStale: when the server response matches the current
+// composed query (not stale), its rows must still land through whatever bare
+// text the user typed while the request was in flight.
+func TestOmniNoClobberAppliesLiveBareFilterToFreshRows(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.filter = "is:open label:x" // query A, composed from a server qualifier
+	m.filterInput.SetValue("flaky")
+	m.applyFilter()
+
+	fresh := prsFetchedMsg{filter: "is:open label:x", prs: []gh.PR{
+		{Number: 10, Title: "flaky test fix", Author: author("a")},
+		{Number: 11, Title: "unrelated", Author: author("b")},
+	}}
+	u, _ := m.Update(fresh)
+	got := u.(Model)
+	ps := got.section.(*PRSection)
+	if ps.grouped {
+		t.Fatal("bare text present: sections must flatten (grouped == false)")
+	}
+	if ps.Len() != 1 || ps.prAt(0).Number != 10 {
+		t.Fatalf("fuzzy subset wrong: len=%d", ps.Len())
+	}
+}
+
+// TestSectionsDropOnTerminalState guards that leaving "open" drops the
+// Review requested/Mine/Others categories in favor of the plain
+// author-grouped terminal board.
+func TestSectionsDropOnTerminalState(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.state = "merged"
+	m.filter = searchFor("pr", "merged", "")
+	if m.sectionsDefault() {
+		t.Fatal("merged state must not be sectionsDefault")
+	}
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{
+		{Number: 1, Author: author("a"), State: "MERGED"},
+	}})
+	ps := u.(Model).section.(*PRSection)
+	if len(ps.catOrder) != 0 {
+		t.Fatal("terminal board must not carry category sections")
+	}
+}
+
 func TestOmniIssueBoardUnaffected(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.mode = "issue"
