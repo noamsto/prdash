@@ -570,6 +570,34 @@ func (m Model) mineFetchCmd() tea.Cmd {
 	}
 }
 
+// sectionsFetchCmd fetches both halves of the empty-default open view — the
+// review-requested search and the wider is:open list — caching each under its
+// own filter+limit key. Sequential (not parallel): two quick gh calls.
+func (m Model) sectionsFetchCmd() tea.Cmd {
+	r, dir := m.runner, m.dir
+	state := m.state
+	reviewF := searchFor("pr", state, reviewBody)
+	return func() tea.Msg {
+		revRaw, err := r.Run(dir, gh.PRListArgs(reviewF, defaultLimit)...)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: reviewF}
+		}
+		rev, err := gh.ParsePRs(revRaw)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: reviewF}
+		}
+		openRaw, err := r.Run(dir, gh.PRListArgs("is:open", openListLimit)...)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: "is:open"}
+		}
+		open, err := gh.ParsePRs(openRaw)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: "is:open"}
+		}
+		return sectionsFetchedMsg{state: state, review: rev, reviewRaw: revRaw, open: open, openRaw: openRaw}
+	}
+}
+
 // spinnerFrames is the braille cycle for the header refresh indicator.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -904,6 +932,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+	case sectionsFetchedMsg:
+		if m.cache != nil {
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
+		}
+		if !m.sectionsDefault() || msg.state != m.state {
+			return m, nil // a server qualifier became active, or state changed: cache only
+		}
+		m.refreshing = false
+		m.loaded = true
+		m.sel.clear()
+		m.setSections(msg.review, msg.open, m.viewerLogin)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
+		}
+		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // a background prewarm failed; the current view is unaffected
@@ -934,6 +978,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil {
 			if raw, err := json.Marshal(msg.login); err == nil {
 				m.cache.Set(viewerKey(), raw)
+			}
+		}
+		if m.sectionsDefault() {
+			rev, _ := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+			open, ok := m.cachedPRs("is:open", openListLimit)
+			if ok {
+				m.setSections(rev, open, m.viewerLogin)
 			}
 		}
 		return m, nil

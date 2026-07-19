@@ -856,3 +856,21 @@ func TestSetSections(t *testing.T) {
 		t.Errorf("#3 = %q, want Others", cat)
 	}
 }
+
+func TestSectionsFetchedMsgPaints(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.viewerLogin = "me"
+	msg := sectionsFetchedMsg{
+		state:  "open",
+		review: []gh.PR{{Number: 1, Author: author("me")}},
+		open: []gh.PR{
+			{Number: 1, Author: author("me")},
+			{Number: 3, Author: author("someone")},
+		},
+	}
+	u, _ := m.Update(msg)
+	ps := u.(Model).section.(*PRSection)
+	if ps.Len() != 2 {
+		t.Fatalf("shown = %d, want 2", ps.Len())
+	}
+}

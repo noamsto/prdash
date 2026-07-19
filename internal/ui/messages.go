@@ -30,6 +30,15 @@ type mineFetchedMsg struct {
 	mineRaw, reviewRaw []byte
 }
 
+// sectionsFetchedMsg carries the two async halves of the empty-default open view
+// (review-requested + the limit-100 open list) so the handler can compose the
+// Review/Mine/Others sections via setSections. Generalizes mineFetchedMsg.
+type sectionsFetchedMsg struct {
+	state              string // the PR state (open/merged/closed) this result is for
+	review, open       []gh.PR
+	reviewRaw, openRaw []byte
+}
+
 type fetchFailedMsg struct {
 	err    error
 	filter string // set for list fetches; a background prewarm failure is dropped
