@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -28,7 +29,7 @@ func TestReviewDot(t *testing.T) {
 func TestRenderItemRowIsSingleLine(t *testing.T) {
 	o := RowOpts{Width: 80, Focused: true, Selected: true, Flag: failStyle.Render("⚠")}
 	row := renderItemRow(o, accentStyle, "#7", "hello world", "alice", "2d",
-		ciGlyph("fail"), reviewDot("APPROVED"))
+		ciGlyph("fail"), reviewDot("APPROVED"), nil)
 	if strings.Contains(row, "\n") {
 		t.Fatalf("dense row must be one line: %q", row)
 	}
@@ -77,7 +78,7 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), nil)
 	}
 	plain := args(RowOpts{Width: 80})
 	draft := args(RowOpts{Width: 80, Draft: true})
@@ -98,7 +99,7 @@ func TestPRSectionMarksDraftRow(t *testing.T) {
 
 func TestDraftRowShowsDraftTag(t *testing.T) {
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""))
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), nil)
 	}
 	if got := row(RowOpts{Width: 80, Draft: true}); !strings.Contains(got, "[draft]") {
 		t.Fatalf("draft row should carry a [draft] tag: %q", got)
@@ -319,7 +320,7 @@ func TestFocusedRowGetsBackground(t *testing.T) {
 	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
 	set := probe[:strings.Index(probe, "X")]
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""))
+		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""), nil)
 	}
 	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
 		t.Fatalf("focused row should carry the cursor background: %q", got)
@@ -402,5 +403,85 @@ func TestSetForceFlatSkipsGrouping(t *testing.T) {
 	}
 	if s.prAt(0).Number != 2 || s.prAt(1).Number != 1 {
 		t.Fatalf("order not preserved: %d,%d", s.prAt(0).Number, s.prAt(1).Number)
+	}
+}
+
+// labeledPR carries several chips including one with an empty color (exercises
+// labelChip's fallback) and enough labels to force a "+N" overflow at a bounded
+// budget.
+func labeledPR() gh.PR {
+	p := gh.PR{Number: 42, Title: "wire up the responsive rail"}
+	p.Author.Login = "al"
+	p.Labels = []gh.Label{
+		{Name: "bug", Color: "d73a4a"},
+		{Name: "ui", Color: ""}, // empty color → labelChip fallback path
+		{Name: "backend", Color: "0e8a16"},
+		{Name: "needs-review", Color: "fbca04"},
+		{Name: "priority", Color: "5319e7"},
+	}
+	return p
+}
+
+func TestListRowChipsAppearOnWideRow(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{labeledPR()})
+	nw := columnWidths(s)
+	row := s.RenderRow(0, RowOpts{Width: 160, NumWidth: nw})
+	if strings.Contains(row, "\n") {
+		t.Fatalf("row must be one line: %q", row)
+	}
+	if lipgloss.Width(row) != 160 {
+		t.Errorf("wide labeled row width = %d, want 160", lipgloss.Width(row))
+	}
+	plain := ansi.Strip(row)
+	if !strings.Contains(plain, "bug") {
+		t.Fatalf("expected a chip label on a wide row: %q", plain)
+	}
+}
+
+func TestListRowChipsForceOverflowPlusN(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{labeledPR()})
+	nw := columnWidths(s)
+	// Wide enough to show chips, tight enough that the bounded budget cannot fit
+	// all five labels → a dim "+N" overflow must appear.
+	row := s.RenderRow(0, RowOpts{Width: 96, NumWidth: nw})
+	if lipgloss.Width(row) != 96 {
+		t.Errorf("labeled row width = %d, want 96", lipgloss.Width(row))
+	}
+	if plain := ansi.Strip(row); !strings.Contains(plain, "+") {
+		t.Fatalf("expected a +N overflow marker: %q", plain)
+	}
+}
+
+func TestListRowChipsAbsentOnNarrowRow(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{labeledPR()})
+	nw := columnWidths(s)
+	row := s.RenderRow(0, RowOpts{Width: 60, NumWidth: nw})
+	if lipgloss.Width(row) != 60 {
+		t.Errorf("narrow row width = %d, want 60 (exact-fill must hold with no chips)", lipgloss.Width(row))
+	}
+	if plain := ansi.Strip(row); !strings.Contains(plain, "wire up") {
+		t.Fatalf("title must survive intact when chips are dropped: %q", plain)
+	}
+}
+
+func TestFocusedLabeledRowIsExactFillSingleLine(t *testing.T) {
+	// Focused rows run through rowBgWrap, which re-injects the row background
+	// after every SGR reset, while each chip carries its own labelChip Background.
+	// This guards against a per-chip-bg vs row-bg refill bug that a width-only
+	// check on an unfocused row would miss.
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{labeledPR()})
+	nw := columnWidths(s)
+	for _, w := range []int{96, 120, 160, 200} {
+		row := s.RenderRow(0, RowOpts{Width: w, NumWidth: nw, Focused: true})
+		if strings.Contains(row, "\n") {
+			t.Fatalf("w=%d focused labeled row must be one line: %q", w, row)
+		}
+		if got := lipgloss.Width(row); got != w {
+			t.Errorf("w=%d focused labeled row width = %d, want %d", w, got, w)
+		}
 	}
 }

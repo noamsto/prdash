@@ -95,6 +95,27 @@ func TestDenseRowDegradesWithoutCrashAtNarrowWidths(t *testing.T) {
 	}
 }
 
+// TestDenseRowFillsWidthWithLabels is TestDenseRowFillsWidthAcrossWidthSweep's
+// labeled-row counterpart: with chips in the flexible middle, exact-fill must
+// still hold at every swept width, focused and unfocused. sweepPRs is left
+// untouched (other tests rely on it carrying no labels).
+func TestDenseRowFillsWidthWithLabels(t *testing.T) {
+	ps := NewPRSection("is:open")
+	ps.SetPRs([]gh.PR{labeledPR()})
+	nw := columnWidths(ps)
+	for _, w := range []int{40, 52, 64, 80, 100, 120, 160, 200} {
+		for _, focused := range []bool{false, true} {
+			row := ps.RenderRow(0, RowOpts{Width: w, NumWidth: nw, Focused: focused})
+			if strings.Contains(row, "\n") {
+				t.Fatalf("w=%d focused=%v labeled row not single line: %q", w, focused, row)
+			}
+			if got := lipgloss.Width(row); got != w {
+				t.Errorf("w=%d focused=%v labeled row width %d, want %d", w, focused, got, w)
+			}
+		}
+	}
+}
+
 // TestDenseRowColumnsAlignAcrossNumberWidths guards the aligned-columns AC: rows
 // whose PR numbers differ in digit count must still start their title at the same
 // visual column (the number cell is right-padded to a shared width). Checked at
