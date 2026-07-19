@@ -41,6 +41,7 @@ type PRSection struct {
 	grouped    bool   // true when the board renders group headers (see setShownOrdered)
 	hideDrafts bool   // when true, draft PRs are excluded from the shown set
 	forceGroup bool   // group even with a single author (non-"mine" views)
+	forceFlat  bool   // suppress all grouping — keep the incoming (fuzzy rank) order
 	state      string // active view state (open|merged|closed); selects the sort key
 
 	cats     map[int]string // PR number → category label; non-nil switches grouping from author to category
@@ -171,6 +172,7 @@ func sortPRs(prs []gh.PR, state string) {
 // still walks them top-to-bottom; with one author the flat rank order stands.
 func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
 func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
+func (s *PRSection) SetForceFlat(v bool)  { s.forceFlat = v }
 
 // SetState records the view state so the next SetPRs/SetCategorized sorts by the
 // right key (merge/close time for terminal states, actionability for open).
@@ -179,6 +181,11 @@ func (s *PRSection) SetState(state string) { s.state = state }
 func (s *PRSection) setShownOrdered(idx []int) {
 	if s.hideDrafts {
 		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool { return s.prs[i].IsDraft })
+	}
+	if s.forceFlat {
+		s.grouped = false
+		s.shown = idx
+		return
 	}
 	if len(s.catOrder) > 0 {
 		s.grouped = true

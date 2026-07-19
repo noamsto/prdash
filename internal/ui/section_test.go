@@ -387,3 +387,20 @@ func TestSetPRsClosedSortsByCloseTime(t *testing.T) {
 		t.Fatalf("closed sort should lead with newest close #2, got #%d", s.prAt(0).Number)
 	}
 }
+
+func TestSetForceFlatSkipsGrouping(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetState("open")
+	s.SetCategorized([]gh.PR{
+		{Number: 1, Author: author("a")},
+		{Number: 2, Author: author("b")},
+	}, map[int]string{1: "Mine", 2: "Others"}, []string{"Mine", "Others"})
+	s.SetForceFlat(true)
+	s.SetShown([]int{1, 0}) // fuzzy rank: #2 before #1
+	if s.grouped {
+		t.Fatal("grouped should be false under SetForceFlat")
+	}
+	if s.prAt(0).Number != 2 || s.prAt(1).Number != 1 {
+		t.Fatalf("order not preserved: %d,%d", s.prAt(0).Number, s.prAt(1).Number)
+	}
+}
