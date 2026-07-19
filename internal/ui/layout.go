@@ -53,3 +53,59 @@ func computeLayout(w, h int) Layout {
 	}
 	return Layout{ShowSide: true, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
 }
+
+const (
+	expandedRailMin    = 32                     // rail never narrower than this in two-col
+	expandedRailMax    = 44                     // …nor wider (a metadata rail past ~44 is wasted)
+	expandedColGap     = 2                      // cells between rail and content
+	expandedContentCap = discussionMaxWidth + 6 // 110, the reading-column cap (was in expandedBoxWidth)
+	// two-col only when a full rail AND a full-width content pane both fit.
+	expandedTwoColMin = expandedContentCap + expandedRailMin + expandedColGap // 144
+)
+
+// ExpandedLayout is the computed geometry for the expanded detail frame. It is
+// the single height/width authority for that view — callers never re-derive.
+type ExpandedLayout struct {
+	TwoCol   bool
+	RailW    int
+	RailH    int
+	ContentW int
+	VPHeight int
+}
+
+// computeExpandedLayout derives the expanded-view geometry from the terminal
+// size and section kind. Two-col is PR-only (issues stay a centered single
+// column at every width). The chrome/meta row count is section-aware: a PR
+// carries a one-line meta row only in narrow mode (in two-col that content
+// moves into the rail), so there is one height authority and no narrow-PR
+// off-by-one. Floors mirror today's expandedBoxHeight (min-3) and
+// setExpandedContent (min-1) so tiny terminals never hand vp a negative.
+func computeExpandedLayout(w, h int, isPR bool) ExpandedLayout {
+	twoCol := isPR && w >= expandedTwoColMin
+
+	metaRows := 0
+	if isPR && !twoCol {
+		metaRows = 1
+	}
+	body := h - (2 + metaRows) // head + footer (+ narrow-PR meta)
+	if body < 3 {
+		body = 3
+	}
+
+	l := ExpandedLayout{TwoCol: twoCol}
+	if twoCol {
+		l.ContentW = expandedContentCap
+		l.RailW = min(max(w-expandedColGap-l.ContentW, expandedRailMin), expandedRailMax)
+		l.RailH = body
+	} else {
+		l.ContentW = min(w, expandedContentCap)
+	}
+	l.VPHeight = body - 2 // tabbedBox top tab/border line + bottom border row
+	if l.VPHeight < 1 {
+		l.VPHeight = 1
+	}
+	if l.ContentW < 1 {
+		l.ContentW = 1
+	}
+	return l
+}
