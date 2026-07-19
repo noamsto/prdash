@@ -354,12 +354,15 @@ func TestExpandedSurvivesResizeAcrossTwoColBoundary(t *testing.T) {
 	}
 }
 
-// TestExpandedTwoColRailNeverOverflows stresses the rail with a near-full column:
-// many requested reviewers plus a label set that overflows the chip budget. If
-// the chip line rendered wider than the rail's inner width it would wrap onto an
-// extra physical row that Height() does not clip, pushing the two-col frame past
-// the terminal height. Pins that against regression.
-func TestExpandedTwoColRailNeverOverflows(t *testing.T) {
+// TestExpandedTwoColRailFrameStaysWithinBounds stresses the two-col frame with a
+// near-full rail — many requested reviewers plus a chip-budget-overflowing label
+// set — on short, wide terminals. It pins the integration-level invariant that
+// the composed frame never exceeds w×h: the lines[:RailH] logical cap, the
+// rail↔content JoinHorizontal height match, and per-line truncation all holding
+// together. (It does not by itself falsify the renderExpandedRail MaxWidth/
+// MaxHeight clamp, which is unreachable defense-in-depth given renderChips's
+// maxW guarantee — the chip width contract is pinned by TestRenderChipsNeverExceedsMaxW.)
+func TestExpandedTwoColRailFrameStaysWithinBounds(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("owner/repo")
 	m.setPRs(sweepPRs())

@@ -416,8 +416,10 @@ func (m Model) renderExpandedRail(pr gh.PR, d gh.PRDetail, l ExpandedLayout) str
 	if len(lines) > l.RailH {
 		lines = lines[:l.RailH]
 	}
-	// Max{Width,Height} hard-clip: even if a line somehow wraps, the rail can
-	// never bleed past RailW or push the two-col frame past RailH rows.
+	// Correctness rests on each line being truncated to inner (< RailW) and the
+	// lines[:RailH] cap above; Max{Width,Height} is defense-in-depth that makes
+	// "the rail box is exactly RailW×RailH" hold even if a future edit adds an
+	// un-truncated line (e.g. the raw ciSummary growing past inner).
 	return lipgloss.NewStyle().Width(l.RailW).Height(l.RailH).
 		MaxWidth(l.RailW).MaxHeight(l.RailH).Render(strings.Join(lines, "\n"))
 }
