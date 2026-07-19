@@ -78,7 +78,7 @@ type ExpandedLayout struct {
 // column at every width). The chrome/meta row count is section-aware: a PR
 // carries a one-line meta row only in narrow mode (in two-col that content
 // moves into the rail), so there is one height authority and no narrow-PR
-// off-by-one. Floors mirror today's expandedBoxHeight (min-3) and
+// off-by-one. Floors mirror the pre-helper box-height (min-3) and
 // setExpandedContent (min-1) so tiny terminals never hand vp a negative.
 func computeExpandedLayout(w, h int, isPR bool) ExpandedLayout {
 	twoCol := isPR && w >= expandedTwoColMin

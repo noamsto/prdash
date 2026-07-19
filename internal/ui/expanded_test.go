@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
@@ -292,5 +293,63 @@ func TestExpandedLeftOnLaterTabMovesLeft(t *testing.T) {
 	m = u.(Model)
 	if !m.expanded || m.expandedTab != 1 {
 		t.Fatalf("h on a later tab should move left; expanded=%v tab=%d", m.expanded, m.expandedTab)
+	}
+}
+
+func TestExpandedTwoColStaysWithinBounds(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.setPRs(sweepPRs())
+	// sortPRs may reorder sweepPRs, so pin the detail to whichever PR actually
+	// lands at cursor row 0 — otherwise the rail's reviewer/diffstat branch
+	// (the zero-PRDetail path) goes unexercised.
+	ps, _ := m.section.(*PRSection)
+	n0 := ps.prAt(0).Number
+	m.detail[n0] = gh.PRDetail{
+		ReviewRequests: []gh.ReviewRequest{{Login: "octocat"}},
+		Files:          []gh.DiffFile{{Path: "internal/ui/expanded.go", Additions: 40, Deletions: 5}},
+	}
+	m.loaded = true
+	const w, h = 180, 45
+	u, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m = u.(Model)
+	m.enterExpanded()
+
+	l := computeExpandedLayout(w, h, true)
+	if !l.TwoCol {
+		t.Fatalf("expected two-col at %dx%d", w, h)
+	}
+	for i, ln := range strings.Split(m.expandedView(), "\n") {
+		if lw := lipgloss.Width(ln); lw > w {
+			t.Errorf("two-col line %d width %d exceeds terminal width %d", i, lw, w)
+		}
+	}
+	if fh := lipgloss.Height(m.expandedView()); fh > h {
+		t.Errorf("two-col frame height %d exceeds terminal height %d", fh, h)
+	}
+}
+
+func TestExpandedSurvivesResizeAcrossTwoColBoundary(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.setPRs(sweepPRs())
+	m.detail[7] = gh.PRDetail{Files: []gh.DiffFile{{Path: "a.go", Additions: 1, Deletions: 1}}}
+	m.loaded = true
+	u, _ := m.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
+	m = u.(Model)
+	m.enterExpanded()
+
+	for _, sz := range [][2]int{{180, 45}, {100, 30}, {160, 24}, {90, 40}, {200, 50}} {
+		w, hh := sz[0], sz[1]
+		u, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: hh})
+		m = u.(Model)
+		for i, ln := range strings.Split(m.expandedView(), "\n") {
+			if lw := lipgloss.Width(ln); lw > w {
+				t.Errorf("%dx%d: line %d width %d exceeds %d", w, hh, i, lw, w)
+			}
+		}
+		if fh := lipgloss.Height(m.expandedView()); fh > hh {
+			t.Errorf("%dx%d: frame height %d exceeds %d", w, hh, fh, hh)
+		}
 	}
 }
