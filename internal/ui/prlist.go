@@ -311,7 +311,16 @@ func (m *Model) previewScrollBy(delta int) {
 }
 
 func (m *Model) applyFilter() {
-	m.section.SetShown(matchIdx(m.section.Haystacks(), m.filterInput.Value()))
+	query := m.filterInput.Value()
+	// The PR board splits server qualifiers from bare fuzzy text: bare text
+	// flattens the sections (fuzzy rank), while the issue board fuzzes the raw
+	// input as-is.
+	if ps, ok := m.section.(*PRSection); ok {
+		_, bare := parseOmni(query)
+		ps.SetForceFlat(bare != "")
+		query = bare
+	}
+	m.section.SetShown(matchIdx(m.section.Haystacks(), query))
 	if m.cursor >= m.section.Len() {
 		m.cursor = m.section.Len() - 1
 	}

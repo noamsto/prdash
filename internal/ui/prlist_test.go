@@ -884,3 +884,30 @@ func TestDefaultViewIsSections(t *testing.T) {
 		t.Fatalf("fresh default is not sectionsDefault: state=%q omni=%q", m.state, m.omniServer)
 	}
 }
+
+func TestApplyFilterRenderSwitch(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setSections(
+		[]gh.PR{{Number: 1, Title: "alpha", Author: author("me")}},
+		[]gh.PR{{Number: 2, Title: "beta flaky", Author: author("x")}},
+		"me",
+	)
+	ps := m.section.(*PRSection)
+	if !ps.grouped {
+		t.Fatal("empty filter should keep sections grouped")
+	}
+	m.filterInput.SetValue("flaky")
+	m.applyFilter()
+	if ps.grouped {
+		t.Fatal("bare text should flatten (grouped == false)")
+	}
+	if ps.Len() != 1 || ps.prAt(0).Number != 2 {
+		t.Fatalf("fuzzy result wrong: len=%d", ps.Len())
+	}
+	m.filterInput.SetValue("")
+	m.applyFilter()
+	if !ps.grouped {
+		t.Fatal("clearing text should restore sections")
+	}
+}
