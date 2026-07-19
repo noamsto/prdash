@@ -45,3 +45,68 @@ func stripTimestamp(s string) string {
 	}
 	return s[i+1:]
 }
+
+// logLine is one rendered/navigable line: either a step header or a content
+// line. step indexes into the []logStep it came from (headers included), so copy
+// can target the whole step from any line within it.
+type logLine struct {
+	text   string
+	step   int
+	header bool
+}
+
+func flattenLog(steps []logStep) []logLine {
+	var out []logLine
+	for i, s := range steps {
+		out = append(out, logLine{text: s.name, step: i, header: true})
+		for _, ln := range s.lines {
+			out = append(out, logLine{text: ln, step: i})
+		}
+	}
+	return out
+}
+
+type lineKind int
+
+const (
+	kindPlain lineKind = iota
+	kindError
+	kindPass
+)
+
+// classifyLogLine buckets a content line so the renderer can color it. Errors
+// win over passes when a line somehow matches both.
+func classifyLogLine(text string) lineKind {
+	l := strings.ToLower(text)
+	switch {
+	case strings.Contains(l, "error") || strings.Contains(l, "fail") || strings.Contains(text, "✗"):
+		return kindError
+	case strings.Contains(l, "pass") || strings.Contains(text, "✓") || strings.HasPrefix(l, "ok"):
+		return kindPass
+	default:
+		return kindPlain
+	}
+}
+
+func copyLine(lines []logLine, cursor int) string {
+	if cursor < 0 || cursor >= len(lines) {
+		return ""
+	}
+	return lines[cursor].text
+}
+
+func copyStep(steps []logStep, lines []logLine, cursor int) string {
+	if cursor < 0 || cursor >= len(lines) {
+		return ""
+	}
+	s := steps[lines[cursor].step]
+	return s.name + "\n" + strings.Join(s.lines, "\n")
+}
+
+func copyWhole(steps []logStep) string {
+	var parts []string
+	for _, s := range steps {
+		parts = append(parts, s.name+"\n"+strings.Join(s.lines, "\n"))
+	}
+	return strings.Join(parts, "\n")
+}

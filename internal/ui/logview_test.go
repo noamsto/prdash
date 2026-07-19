@@ -42,3 +42,56 @@ func TestParseJobLogFullNotFailed(t *testing.T) {
 		t.Fatal("full-log steps should not be marked failed")
 	}
 }
+
+func TestFlattenLog(t *testing.T) {
+	steps := []logStep{
+		{name: "A", lines: []string{"a1", "a2"}},
+		{name: "B", lines: []string{"b1"}},
+	}
+	lines := flattenLog(steps)
+	// header A, a1, a2, header B, b1
+	if len(lines) != 5 {
+		t.Fatalf("want 5 flat lines, got %d", len(lines))
+	}
+	if !lines[0].header || lines[0].text != "A" || lines[0].step != 0 {
+		t.Fatalf("line 0 = %+v", lines[0])
+	}
+	if lines[2].header || lines[2].text != "a2" || lines[2].step != 0 {
+		t.Fatalf("line 2 = %+v", lines[2])
+	}
+	if lines[4].step != 1 || lines[4].text != "b1" {
+		t.Fatalf("line 4 = %+v", lines[4])
+	}
+}
+
+func TestClassifyLogLine(t *testing.T) {
+	cases := map[string]lineKind{
+		"FAIL foo_test.go":  kindError,
+		"an error occurred": kindError,
+		"all tests passed":  kindPass,
+		"ok  	pkg  0.1s":    kindPass,
+		"compiling main.go": kindPlain,
+	}
+	for in, want := range cases {
+		if got := classifyLogLine(in); got != want {
+			t.Errorf("classifyLogLine(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestCopyHelpers(t *testing.T) {
+	steps := []logStep{{name: "Run tests", lines: []string{"x", "y"}}}
+	lines := flattenLog(steps) // [header, x, y]
+	if got := copyLine(lines, 1); got != "x" {
+		t.Fatalf("copyLine = %q", got)
+	}
+	if got := copyStep(steps, lines, 2); got != "Run tests\nx\ny" {
+		t.Fatalf("copyStep = %q", got)
+	}
+	if got := copyWhole(steps); got != "Run tests\nx\ny" {
+		t.Fatalf("copyWhole = %q", got)
+	}
+	if copyLine(lines, 99) != "" {
+		t.Fatal("out-of-range copyLine should be empty")
+	}
+}
