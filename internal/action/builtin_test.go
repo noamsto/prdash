@@ -1,6 +1,7 @@
 package action
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -15,6 +16,13 @@ func (r *seqRunner) Run(_ string, args ...string) ([]byte, error) {
 	o := r.outs[r.i]
 	r.i++
 	return o, nil
+}
+
+type argRunner struct{ args []string }
+
+func (r *argRunner) Run(_ string, args ...string) ([]byte, error) {
+	r.args = args
+	return []byte("log-bytes"), nil
 }
 
 func TestRerunCheck(t *testing.T) {
@@ -89,5 +97,27 @@ func TestRerunFailedNoFailures(t *testing.T) {
 	}
 	if len(r.calls) != 1 {
 		t.Fatalf("expected only the list call, got: %v", r.calls)
+	}
+}
+
+func TestJobLogArgs(t *testing.T) {
+	r := &argRunner{}
+	out, err := JobLog(r, "/repo", "123", true)
+	if err != nil {
+		t.Fatalf("JobLog: %v", err)
+	}
+	if string(out) != "log-bytes" {
+		t.Fatalf("out = %q", out)
+	}
+	want := []string{"run", "view", "--job", "123", "--log-failed"}
+	if !reflect.DeepEqual(r.args, want) {
+		t.Fatalf("failedOnly args = %v, want %v", r.args, want)
+	}
+
+	r2 := &argRunner{}
+	_, _ = JobLog(r2, "/repo", "123", false)
+	wantAll := []string{"run", "view", "--job", "123", "--log"}
+	if !reflect.DeepEqual(r2.args, wantAll) {
+		t.Fatalf("full args = %v, want %v", r2.args, wantAll)
 	}
 }

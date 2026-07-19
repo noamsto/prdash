@@ -71,3 +71,13 @@ type actionClearMsg struct{}
 // checksPollMsg fires the live-checks poll beat; the loop runs only while some
 // shown PR has a running check.
 type checksPollMsg struct{}
+
+// logFetchedMsg carries a fetched job log back to the log sub-view. all
+// distinguishes the full-log variant from failed-only so a stale in-flight
+// fetch for the other variant is ignored.
+type logFetchedMsg struct {
+	job string
+	all bool
+	raw []byte
+	err error
+}

@@ -67,17 +67,27 @@ type Model struct {
 	previewN          int
 	expanded          bool
 	expandedTab       int
-	checkCursor       int         // hovered check on the expanded Checks tab
-	loaded            bool        // first live fetch has returned; distinguishes empty from loading
-	emptyNotice       string      // overrides the empty-board hint (e.g. issues disabled on this repo)
-	refreshing        bool        // a list fetch for the current filter is in flight
-	spinning          bool        // the refresh spinner tick loop is running
-	spinnerFrame      int         // advancing index into spinnerFrames
-	polling           bool        // the live-checks poll tick loop is running
-	actionStatus      *actionStat // transient inline-action progress shown by the header
-	presetIdx         int         // index into defaultPresets; -1 when filter is a custom (author) query
-	previewMax        bool        // z: preview takes full width, list hidden
-	hideDrafts        bool        // D: exclude draft PRs from the board
+	checkCursor       int    // hovered check on the expanded Checks tab
+	logView           bool   // the check-log sub-view is active (over the Checks tab)
+	logJobID          string // Actions job ID whose log is shown
+	logLabel          string // hovered check's label, for the log box title
+	logShowAll        bool   // full job log vs failed-steps-only
+	logLoading        bool   // a log fetch is in flight
+	logErr            error  // last log fetch error
+	logSteps          []logStep
+	logLines          []logLine
+	logCursor         int                  // line cursor within logLines
+	logCache          map[string][]logStep // keyed by logCacheKey(job, all)
+	loaded            bool                 // first live fetch has returned; distinguishes empty from loading
+	emptyNotice       string               // overrides the empty-board hint (e.g. issues disabled on this repo)
+	refreshing        bool                 // a list fetch for the current filter is in flight
+	spinning          bool                 // the refresh spinner tick loop is running
+	spinnerFrame      int                  // advancing index into spinnerFrames
+	polling           bool                 // the live-checks poll tick loop is running
+	actionStatus      *actionStat          // transient inline-action progress shown by the header
+	presetIdx         int                  // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax        bool                 // z: preview takes full width, list hidden
+	hideDrafts        bool                 // D: exclude draft PRs from the board
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
@@ -107,6 +117,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
+		logCache:  map[string][]logStep{},
 		presetIdx: -1, refreshing: true, // the PR board has no presets; sections replace them
 	}
 }
@@ -1060,11 +1071,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
 		}
-		if m.expanded {
+		switch {
+		case m.logView:
+			m.setLogContent() // the log layers over the Checks tab; keep it painted
+		case m.expanded:
 			m.reflowExpanded() // fold in the fresh detail without losing the reader's place
-		} else {
+		default:
 			m.renderList()
 		}
+		return m, nil
+	case logFetchedMsg:
+		if !m.logView || msg.job != m.logJobID || msg.all != m.logShowAll {
+			return m, nil // stale: view closed or variant switched
+		}
+		m.logLoading = false
+		if msg.err != nil {
+			m.logErr = msg.err
+			m.setLogContent()
+			return m, nil
+		}
+		m.logErr = nil
+		steps := parseJobLog(msg.raw, !msg.all)
+		m.logCache[logCacheKey(msg.job, msg.all)] = steps
+		m.setLogSteps(steps)
 		return m, nil
 	case issueDetailMsg:
 		m.issueDetail[msg.number] = msg.detail
@@ -1091,12 +1120,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
-		if !m.refreshing && !m.actionRunning() {
+		if !m.refreshing && !m.actionRunning() && !m.logLoading {
 			m.spinning = false // fetch/action settled; let the loop die
 			return m, nil
 		}
 		m.spinning = true
 		m.spinnerFrame++
+		if m.logView && m.logLoading {
+			m.setLogContent() // advance the spinner frame in the log body
+		}
 		return m, spinnerTick()
 	case checksPollMsg:
 		if !m.anyChecksRunning() {
@@ -1117,9 +1149,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.themeMode = mode
 			applyTheme(themeFor(mode))
 			preview.SetMode(mode)
-			if m.expanded {
+			switch {
+			case m.logView:
+				m.setLogContent() // re-tint the log under the new theme
+			case m.expanded:
 				m.reflowExpanded()
-			} else {
+			default:
 				m.renderList()
 			}
 		}
@@ -1152,13 +1187,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.expanded {
+		switch {
+		case m.logView:
+			m.setLogContent() // reflow the log to the new size (it layers over the Checks tab)
+		case m.expanded:
 			m.reflowExpanded() // reflow to the new size, keep the reader's place
-		} else {
+		default:
 			m.renderList()
 		}
 		return m, nil
 	case tea.KeyMsg:
+		if m.logView {
+			return m.updateLogView(msg)
+		}
 		if m.expanded {
 			return m.updateExpanded(msg)
 		}
@@ -1439,6 +1480,9 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) render() string {
+	if m.logView {
+		return m.logViewRender()
+	}
 	if m.expanded {
 		return m.expandedView()
 	}

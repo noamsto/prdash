@@ -136,6 +136,32 @@ func TestParsePRsReadsMergeAndCloseTimes(t *testing.T) {
 	}
 }
 
+func TestCheckIsExternal(t *testing.T) {
+	if !(Check{Context: "ci/ext"}).IsExternal() {
+		t.Fatal("StatusContext should be external")
+	}
+	if (Check{Name: "build"}).IsExternal() {
+		t.Fatal("named CheckRun is not external")
+	}
+	if (Check{WorkflowName: "CI"}).IsExternal() {
+		t.Fatal("workflow CheckRun is not external")
+	}
+}
+
+func TestCheckURL(t *testing.T) {
+	// A CheckRun exposes its page as detailsUrl.
+	if got := (Check{Name: "build", DetailsUrl: "https://d/1"}).URL(); got != "https://d/1" {
+		t.Fatalf("CheckRun URL = %q, want detailsUrl", got)
+	}
+	// An external StatusContext exposes it as targetUrl instead.
+	if got := (Check{Context: "ci/ext", TargetUrl: "https://t/2"}).URL(); got != "https://t/2" {
+		t.Fatalf("StatusContext URL = %q, want targetUrl", got)
+	}
+	if got := (Check{}).URL(); got != "" {
+		t.Fatalf("URL with neither field = %q, want empty", got)
+	}
+}
+
 func TestPRListArgsRequestsTimestamps(t *testing.T) {
 	args := PRListArgs("is:merged", 20)
 	joined := strings.Join(args, " ")

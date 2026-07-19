@@ -261,6 +261,14 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.expandedTab == 2 {
 			return m.rerunAllFailedChecks()
 		}
+	case "o": // Checks tab: open the hovered check in the browser
+		if m.expandedTab == 2 {
+			return m.openHoveredCheck()
+		}
+	case "Y": // Checks tab: copy the hovered check's URL
+		if m.expandedTab == 2 {
+			return m.copyHoveredCheckURL()
+		}
 	case "j", "down":
 		if m.expandedTab == 2 {
 			m.moveCheckCursor(1)
@@ -290,6 +298,9 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
 	case "enter":
+		if m.expandedTab == 2 { // Checks: drill into the hovered check's logs
+			return m.enterLogView()
+		}
 		if a, ok := m.actions["enter"]; ok {
 			return m, m.runAction(a)
 		}
@@ -401,7 +412,7 @@ func (m Model) expandedMeta(pr gh.PR, w int) string {
 // expandedFooter is the bottom hint line: the Checks tab swaps in the rerun keys.
 func (m Model) expandedFooter() string {
 	if m.expandedTab == 2 {
-		return "  j/k move · r rerun · R rerun all · h/l tabs · J/K PR · esc back"
+		return "  ↵ logs · o open · Y url · r rerun · R all · j/k move · esc back"
 	}
 	return "  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back"
 }

@@ -51,3 +51,13 @@ func RerunFailed(r gh.Runner, dir, branch string) error {
 	}
 	return nil
 }
+
+// JobLog fetches one Actions job's log. failedOnly limits it to failed steps
+// (gh --log-failed); otherwise the whole job log.
+func JobLog(r gh.Runner, dir, jobID string, failedOnly bool) ([]byte, error) {
+	flag := "--log"
+	if failedOnly {
+		flag = "--log-failed"
+	}
+	return r.Run(dir, "run", "view", "--job", jobID, flag)
+}
