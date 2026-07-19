@@ -57,6 +57,7 @@ func computeLayout(w, h int) Layout {
 const (
 	expandedRailMin    = 32                     // rail never narrower than this in two-col
 	expandedRailMax    = 44                     // …nor wider (a metadata rail past ~44 is wasted)
+	railInset          = 2                      // 1-cell gutter each side of the rail's content
 	expandedColGap     = 2                      // cells between rail and content
 	expandedContentCap = discussionMaxWidth + 6 // 110, the reading-column cap (was in expandedBoxWidth)
 	// two-col only when a full rail AND a full-width content pane both fit.

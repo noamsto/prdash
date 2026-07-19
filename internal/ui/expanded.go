@@ -391,7 +391,7 @@ func (m Model) expandedMeta(pr gh.PR, w int) string {
 // one-liner. Width-clamped to RailW and height-clamped to RailH so a long label
 // or reviewer set can never bleed past the column or push the frame past h.
 func (m Model) renderExpandedRail(pr gh.PR, d gh.PRDetail, l ExpandedLayout) string {
-	inner := l.RailW - 2
+	inner := l.RailW - railInset // leave a 1-cell gutter on each side of the rail
 	if inner < 1 {
 		inner = 1
 	}
@@ -409,14 +409,17 @@ func (m Model) renderExpandedRail(pr gh.PR, d gh.PRDetail, l ExpandedLayout) str
 	for _, r := range d.ReviewRequests {
 		lines = append(lines, dimStyle.Render(truncate("• "+r.Login, inner)))
 	}
-	lines = append(lines, ciSummary(pr))
+	lines = append(lines, ciSummary(pr)) // already styled + bounded; rail MaxWidth clips any future growth
 	if s := d.Diffstat(); s.Files > 0 {
 		lines = append(lines, dimStyle.Render(truncate(fmt.Sprintf("%d files +%d -%d", s.Files, s.Additions, s.Deletions), inner)))
 	}
 	if len(lines) > l.RailH {
 		lines = lines[:l.RailH]
 	}
-	return lipgloss.NewStyle().Width(l.RailW).Height(l.RailH).Render(strings.Join(lines, "\n"))
+	// Max{Width,Height} hard-clip: even if a line somehow wraps, the rail can
+	// never bleed past RailW or push the two-col frame past RailH rows.
+	return lipgloss.NewStyle().Width(l.RailW).Height(l.RailH).
+		MaxWidth(l.RailW).MaxHeight(l.RailH).Render(strings.Join(lines, "\n"))
 }
 
 // expandedFooter is the bottom hint line: the Checks tab swaps in the rerun keys.

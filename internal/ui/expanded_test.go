@@ -353,3 +353,46 @@ func TestExpandedSurvivesResizeAcrossTwoColBoundary(t *testing.T) {
 		}
 	}
 }
+
+// TestExpandedTwoColRailNeverOverflows stresses the rail with a near-full column:
+// many requested reviewers plus a label set that overflows the chip budget. If
+// the chip line rendered wider than the rail's inner width it would wrap onto an
+// extra physical row that Height() does not clip, pushing the two-col frame past
+// the terminal height. Pins that against regression.
+func TestExpandedTwoColRailNeverOverflows(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.setPRs(sweepPRs())
+	m.loaded = true
+	ps, _ := m.section.(*PRSection)
+	n0 := ps.prAt(0).Number
+	var reviewers []gh.ReviewRequest
+	for i := range 20 {
+		reviewers = append(reviewers, gh.ReviewRequest{Login: fmt.Sprintf("reviewer-%02d", i)})
+	}
+	pr := ps.prAt(0)
+	pr.Labels = []gh.Label{
+		{Name: "bug", Color: "d73a4a"}, {Name: "enhancement", Color: "a2eeef"},
+		{Name: "needs-triage", Color: "fbca04"}, {Name: "backend", Color: "0e8a16"},
+		{Name: "priority-high", Color: "5319e7"}, {Name: "documentation", Color: "0075ca"},
+	}
+	m.setPRs([]gh.PR{pr})
+	m.detail[n0] = gh.PRDetail{ReviewRequests: reviewers, Files: []gh.DiffFile{{Path: "x.go", Additions: 9, Deletions: 9}}}
+
+	// Short, wide terminals: two-col engages but RailH is small, so any wrap shows.
+	for _, sz := range [][2]int{{150, 12}, {144, 10}, {200, 14}, {160, 20}} {
+		w, hh := sz[0], sz[1]
+		u, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: hh})
+		m = u.(Model)
+		m.enterExpanded()
+		view := m.expandedView()
+		for i, ln := range strings.Split(view, "\n") {
+			if lw := lipgloss.Width(ln); lw > w {
+				t.Errorf("%dx%d: line %d width %d exceeds %d", w, hh, i, lw, w)
+			}
+		}
+		if fh := lipgloss.Height(view); fh > hh {
+			t.Errorf("%dx%d: rail-stressed frame height %d exceeds %d", w, hh, fh, hh)
+		}
+	}
+}

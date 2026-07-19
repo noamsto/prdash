@@ -485,3 +485,57 @@ func TestFocusedLabeledRowIsExactFillSingleLine(t *testing.T) {
 		}
 	}
 }
+
+// TestListRowCJKTitleWithChipsExactFill guards the exact-fill invariant for a
+// wide-cell (CJK) title once chips shrink the title budget. Each CJK glyph is 2
+// cells, so a rune-count truncation (rather than cell-count) would let the title
+// overflow the row — the bug this pins.
+func TestListRowCJKTitleWithChipsExactFill(t *testing.T) {
+	p := labeledPR()
+	// 30 CJK glyphs = 60 display cells; long enough to need truncation once the
+	// chip budget is carved out at every swept width.
+	p.Title = strings.Repeat("重", 30)
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{p})
+	nw := columnWidths(s)
+	for _, w := range []int{72, 80, 96, 120, 160} {
+		for _, foc := range []bool{false, true} {
+			row := s.RenderRow(0, RowOpts{Width: w, NumWidth: nw, Focused: foc})
+			if strings.Contains(row, "\n") {
+				t.Fatalf("w=%d foc=%v CJK+chips row must be one line: %q", w, foc, row)
+			}
+			if got := lipgloss.Width(row); got != w {
+				t.Errorf("w=%d foc=%v CJK+chips row width = %d, want %d", w, foc, got, w)
+			}
+		}
+	}
+}
+
+// TestListRowChipsTransitionAtMinWidth pins the chip appear/disappear boundary
+// at chipRowMinWidth so the transition is as tightly held as the two-col cutoff.
+func TestListRowChipsTransitionAtMinWidth(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{labeledPR()})
+	nw := columnWidths(s)
+	below := ansi.Strip(s.RenderRow(0, RowOpts{Width: chipRowMinWidth - 1, NumWidth: nw}))
+	if strings.Contains(below, "bug") {
+		t.Errorf("no chips expected just below chipRowMinWidth: %q", below)
+	}
+	// A generous width above the threshold reliably shows chips.
+	above := ansi.Strip(s.RenderRow(0, RowOpts{Width: chipRowMinWidth + 48, NumWidth: nw}))
+	if !strings.Contains(above, "bug") {
+		t.Errorf("chips expected above chipRowMinWidth: %q", above)
+	}
+}
+
+// TestRenderChipsNeverExceedsMaxW brute-forces the width contract: the rendered
+// chip string (including any "+N" suffix) must never exceed maxW. The expanded
+// rail clamps a frame to this width, so an overshoot would wrap and overflow.
+func TestRenderChipsNeverExceedsMaxW(t *testing.T) {
+	labels := labeledPR().Labels
+	for maxW := 3; maxW <= 60; maxW++ {
+		if got := lipgloss.Width(renderChips(labels, maxW)); got > maxW {
+			t.Errorf("renderChips width %d exceeds maxW %d", got, maxW)
+		}
+	}
+}
