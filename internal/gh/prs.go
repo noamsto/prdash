@@ -10,7 +10,7 @@ import (
 var prFields = []string{
 	"number", "title", "author", "statusCheckRollup", "reviewDecision",
 	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt",
-	"mergedAt", "closedAt", "isDraft", "state",
+	"mergedAt", "closedAt", "isDraft", "state", "body",
 }
 
 type Check struct {
@@ -71,6 +71,7 @@ type PR struct {
 	ClosedAt    time.Time `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
 	IsDraft     bool      `json:"isDraft"`
 	State       string    `json:"state"` // OPEN | CLOSED | MERGED
+	Body        string    `json:"body"`
 }
 
 // IsMerged reports whether the PR landed — its status mark and color differ from

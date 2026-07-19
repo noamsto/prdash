@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/sahilm/fuzzy"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -28,59 +29,63 @@ type boardView struct {
 }
 
 type Model struct {
-	dir             string
-	filter          string
-	state           string    // open | merged | closed; the s-toggle dimension
-	body            string    // state-agnostic qualifier (e.g. "author:@me", "")
-	mode            string    // "pr" | "issue"; the i-toggle dimension
-	other           boardView // the inactive board's saved state/preset (restored on toggle-back)
-	issueDetail     map[int]gh.IssueDetail
-	issueFresh      map[int]bool // issue numbers whose body was refetched this session
-	cache           *cache.Cache
-	runner          gh.Runner
-	vp              viewport.Model
-	cursor          int // indexes the section's shown set
-	cursorLine      int // display-line offset of the cursor row (headers shift it)
-	previewOffset   int // ctrl+j/k scroll position within the side preview
-	width           int
-	height          int
-	section         Section
-	err             error
-	filtering       bool
-	filterInput     textinput.Model
-	repo            string
-	actions         map[string]action.Action
-	pending         *action.Action
-	showActions     bool
-	showLegend      bool
-	actionFilter    textinput.Model
-	actionCursor    int
-	sel             selection
-	detail          map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
-	fresh           map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
-	detailSeq       int                 // bumped on cursor move; gates the debounced detail fetch
-	previewExpanded bool
-	previewN        int
-	expanded        bool
-	expandedTab     int
-	checkCursor     int         // hovered check on the expanded Checks tab
-	loaded          bool        // first live fetch has returned; distinguishes empty from loading
-	emptyNotice     string      // overrides the empty-board hint (e.g. issues disabled on this repo)
-	refreshing      bool        // a list fetch for the current filter is in flight
-	spinning        bool        // the refresh spinner tick loop is running
-	spinnerFrame    int         // advancing index into spinnerFrames
-	polling         bool        // the live-checks poll tick loop is running
-	actionStatus    *actionStat // transient inline-action progress shown by the header
-	presetIdx       int         // index into defaultPresets; -1 when filter is a custom (author) query
-	previewMax      bool        // z: preview takes full width, list hidden
-	hideDrafts      bool        // D: exclude draft PRs from the board
-	showPicker      bool
-	pickerMode      string // "author" | "reviewer"
-	pick            picker
-	members         []gh.User  // cached assignable users for this repo
-	pendingExec     [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
-	themeMode       string     // "light"|"dark"; active palette mode
-	themeModTime    time.Time  // last-seen mtime of the theme-state file
+	dir               string
+	filter            string
+	state             string    // open | merged | closed; the s-toggle dimension
+	body              string    // state-agnostic qualifier (e.g. "author:@me", "")
+	mode              string    // "pr" | "issue"; the i-toggle dimension
+	omniServer        string    // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
+	omniSeq           int       // bumped on each server-qualifier change; gates the debounced SWR refetch
+	other             boardView // the inactive board's saved state/preset (restored on toggle-back)
+	issueDetail       map[int]gh.IssueDetail
+	issueFresh        map[int]bool // issue numbers whose body was refetched this session
+	cache             *cache.Cache
+	runner            gh.Runner
+	vp                viewport.Model
+	cursor            int // indexes the section's shown set
+	cursorLine        int // display-line offset of the cursor row (headers shift it)
+	previewOffset     int // ctrl+j/k scroll position within the side preview
+	width             int
+	height            int
+	section           Section
+	err               error
+	filtering         bool
+	filterInput       textinput.Model
+	omniSuggestCursor int // highlighted row in the @-mention autocomplete dropdown
+	repo              string
+	actions           map[string]action.Action
+	pending           *action.Action
+	showActions       bool
+	showLegend        bool
+	actionFilter      textinput.Model
+	actionCursor      int
+	sel               selection
+	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
+	previewExpanded   bool
+	previewN          int
+	expanded          bool
+	expandedTab       int
+	checkCursor       int         // hovered check on the expanded Checks tab
+	loaded            bool        // first live fetch has returned; distinguishes empty from loading
+	emptyNotice       string      // overrides the empty-board hint (e.g. issues disabled on this repo)
+	refreshing        bool        // a list fetch for the current filter is in flight
+	spinning          bool        // the refresh spinner tick loop is running
+	spinnerFrame      int         // advancing index into spinnerFrames
+	polling           bool        // the live-checks poll tick loop is running
+	actionStatus      *actionStat // transient inline-action progress shown by the header
+	presetIdx         int         // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax        bool        // z: preview takes full width, list hidden
+	hideDrafts        bool        // D: exclude draft PRs from the board
+	showPicker        bool
+	pickerMode        string // "author" | "reviewer"
+	pick              picker
+	members           []gh.User  // cached assignable users for this repo
+	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
+	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
+	themeMode         string     // "light"|"dark"; active palette mode
+	themeModTime      time.Time  // last-seen mtime of the theme-state file
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -102,7 +107,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
-		presetIdx: presetIndexFor(body, defaultPresets), refreshing: true,
+		presetIdx: -1, refreshing: true, // the PR board has no presets; sections replace them
 	}
 }
 
@@ -111,10 +116,10 @@ func (m *Model) SetRepo(repo string)   { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
-		// Outside the "mine" view, group by author even with a single author, so
-		// you always see whose PRs you're looking at.
+		// Outside the sections default, group by author even with a single
+		// author, so you always see whose PRs you're looking at.
 		s.SetState(m.state)
-		s.SetForceGroup(!m.isMineView())
+		s.SetForceGroup(!m.sectionsDefault())
 		s.SetPRs(prs)
 	}
 	m.applyFilter()
@@ -133,25 +138,31 @@ func (m *Model) setIssues(is []gh.Issue) {
 	}
 }
 
-// setMine paints the mine view: authored PRs under "Mine", review-requested
-// under "Review requested". A PR that is both stays under Mine.
-func (m *Model) setMine(mine, review []gh.PR) {
-	cats := make(map[int]string, len(mine)+len(review))
-	all := make([]gh.PR, 0, len(mine)+len(review))
-	for _, p := range mine {
-		cats[p.Number] = "Mine"
+// setSections paints the empty-default open view: Review requested → Mine →
+// Others. Precedence is Review > Mine > Others (first match wins). Mine needs the
+// real viewer login to split one open list client-side; an empty viewer (login
+// not yet resolved) collapses Mine into Others until viewerFetchedMsg re-runs this.
+func (m *Model) setSections(review, open []gh.PR, viewer string) {
+	cats := make(map[int]string, len(open)+len(review))
+	all := make([]gh.PR, 0, len(open)+len(review))
+	for _, p := range review {
+		cats[p.Number] = "Review requested"
 		all = append(all, p)
 	}
-	for _, p := range review {
+	for _, p := range open {
 		if _, dup := cats[p.Number]; dup {
-			continue
+			continue // already Review requested; precedence wins
 		}
-		cats[p.Number] = "Review requested"
+		if viewer != "" && p.Author.Login == viewer {
+			cats[p.Number] = "Mine"
+		} else {
+			cats[p.Number] = "Others"
+		}
 		all = append(all, p)
 	}
 	if s, ok := m.section.(*PRSection); ok {
 		s.SetState(m.state)
-		s.SetCategorized(all, cats, []string{"Mine", "Review requested"})
+		s.SetCategorized(all, cats, []string{"Review requested", "Mine", "Others"})
 	}
 	m.applyFilter()
 	if n := m.section.Len(); m.cursor >= n {
@@ -277,7 +288,16 @@ func (m *Model) previewScrollBy(delta int) {
 }
 
 func (m *Model) applyFilter() {
-	m.section.SetShown(matchIdx(m.section.Haystacks(), m.filterInput.Value()))
+	query := m.filterInput.Value()
+	// The PR board splits server qualifiers from bare fuzzy text: bare text
+	// flattens the sections (fuzzy rank), while the issue board fuzzes the raw
+	// input as-is.
+	if ps, ok := m.section.(*PRSection); ok {
+		_, bare := parseOmni(query)
+		ps.SetForceFlat(bare != "")
+		query = bare
+	}
+	m.section.SetShown(matchIdx(m.section.Haystacks(), query))
 	if m.cursor >= m.section.Len() {
 		m.cursor = m.section.Len() - 1
 	}
@@ -287,16 +307,138 @@ func (m *Model) applyFilter() {
 	m.renderList()
 }
 
+// cursorDelta maps an omni-mode navigation key to a signed row delta; page keys
+// jump a screenful, arrows/ctrl-n/p one row. moveCursor clamps the result.
+func cursorDelta(key string) int {
+	switch key {
+	case "up", "ctrl+p":
+		return -1
+	case "down", "ctrl+n":
+		return 1
+	case "pgup":
+		return -10
+	case "pgdown":
+		return 10
+	}
+	return 0
+}
+
+// omniServerCmd re-parses the omni input; when the server-qualifier half changed,
+// it repoints m.filter and arms a debounced SWR refetch. Bare text is handled by
+// applyFilter (instant), so a pure-text edit arms nothing.
+func (m *Model) omniServerCmd() tea.Cmd {
+	server, _ := parseOmni(m.filterInput.Value())
+	if server == m.omniServer {
+		return nil
+	}
+	m.omniServer = server
+	m.filter = searchFor("pr", m.state, server)
+	m.omniSeq++
+	seq := m.omniSeq
+	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
+		return omniDebounceMsg{seq: seq}
+	})
+}
+
+// omniActivePartial returns the @-login partial immediately left of the
+// cursor, and whether the cursor sits inside such a token. "@" alone yields
+// "".
+func (m Model) omniActivePartial() (string, bool) {
+	r := []rune(m.filterInput.Value())
+	pos := min(m.filterInput.Position(), len(r))
+	v := string(r[:pos])
+	i := strings.LastIndexAny(v, " ")
+	tok := v[i+1:]
+	if !strings.HasPrefix(tok, "@") {
+		return "", false
+	}
+	return tok[1:], true
+}
+
+// omniSuggestions is the active @-partial's member candidates, narrowed by
+// fuzzy match; nil outside an @ token or off the PR omni bar.
+func (m Model) omniSuggestions() []gh.User {
+	if !m.filtering || m.mode != "pr" {
+		return nil
+	}
+	partial, ok := m.omniActivePartial()
+	if !ok {
+		return nil
+	}
+	if partial == "" {
+		return m.members
+	}
+	logins := make([]string, len(m.members))
+	for i, u := range m.members {
+		logins[i] = u.Login
+	}
+	out := []gh.User{}
+	for _, mt := range fuzzy.Find(partial, logins) {
+		out = append(out, m.members[mt.Index])
+	}
+	return out
+}
+
+// completeOmniAt replaces the active @-partial with @<login>, moving the
+// cursor past the inserted token.
+func (m *Model) completeOmniAt(login string) {
+	r := []rune(m.filterInput.Value())
+	pos := min(m.filterInput.Position(), len(r))
+	left := string(r[:pos])
+	i := strings.LastIndexAny(left, " ")
+	rewritten := left[:i+1] + "@" + login + string(r[pos:])
+	m.filterInput.SetValue(rewritten)
+	m.filterInput.SetCursor(i + 1 + len([]rune("@"+login)))
+}
+
+// omniSuggestDropdownRows caps how many members the @-mention dropdown lists
+// at once; the fuzzy partial narrows the set to reach the rest.
+const omniSuggestDropdownRows = 6
+
+// omniSuggestDropdown renders the @-mention candidate list under the omni bar,
+// highlighting m.omniSuggestCursor; "" when no suggestions are active.
+func (m Model) omniSuggestDropdown() string {
+	sug := m.omniSuggestions()
+	if len(sug) == 0 {
+		return ""
+	}
+	n := min(len(sug), omniSuggestDropdownRows, max(1, m.height-4))
+	lines := make([]string, n)
+	for i, u := range sug[:n] {
+		cur := "  "
+		if i == m.omniSuggestCursor {
+			cur = accentStyle.Render("▸ ")
+		}
+		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-2))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// omniHintRows is the height of the dropdown-or-hint block render() draws under the
+// filter input while filtering, so contentHeight can reserve it.
+func (m Model) omniHintRows() int {
+	if !m.filtering {
+		return 0
+	}
+	if dd := m.omniSuggestDropdown(); dd != "" {
+		return lipgloss.Height(dd)
+	}
+	if m.mode == "pr" {
+		return 1 // the "@user · is: · text" hint line
+	}
+	return 0
+}
+
 // prKey scopes the cached PR list by repo — the shared cache file holds every
 // repo's lists, and a filter like "is:open author:@me" is identical across them,
 // so without the repo they collide and bleed between repos.
-func prKey(repo, filter string) string {
-	return cache.Key("pr", repo+"\x00"+filter, defaultLimit, schemaVer)
+func prKey(repo, filter string, limit int) string {
+	return cache.Key("pr", repo+"\x00"+filter, limit, schemaVer)
 }
 
 // cachedPRs returns the cached PR list for a filter, if present and parseable.
-func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
-	e, ok := m.cache.Get(prKey(m.repo, filter))
+func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
+	e, ok := m.cache.Get(prKey(m.repo, filter, limit))
 	if !ok {
 		return nil, false
 	}
@@ -345,17 +487,17 @@ func (m *Model) hydrate() bool {
 		m.hydrateIssueDetail()
 		return true
 	}
-	if m.isMineView() {
-		mine, ok1 := m.cachedPRs(searchFor("pr", m.state, mineBody))
-		rev, ok2 := m.cachedPRs(searchFor("pr", m.state, reviewBody))
+	if m.sectionsDefault() {
+		rev, ok1 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+		open, ok2 := m.cachedPRs("is:open", openListLimit)
 		if !ok1 && !ok2 {
 			return false
 		}
-		m.setMine(mine, rev)
+		m.setSections(rev, open, m.viewerLogin)
 		m.hydrateDetail()
 		return true
 	}
-	prs, ok := m.cachedPRs(m.filter)
+	prs, ok := m.cachedPRs(m.filter, defaultLimit)
 	if !ok {
 		return false
 	}
@@ -446,7 +588,32 @@ func (m *Model) hydrateMembers() {
 	m.members = users
 }
 
+const viewerSchemaVer = "v1"
+
+// viewerKey scopes the cached viewer login globally: `gh api user` returns the
+// same login for every repo on a host, so it is neither repo- nor limit-scoped.
+func viewerKey() string { return cache.Key("viewer", "", 0, viewerSchemaVer) }
+
+// hydrateViewer paints the cached viewer login onto the model so the sections
+// view can split Mine from Others without waiting on a live fetch.
+func (m *Model) hydrateViewer() {
+	if m.cache == nil {
+		return
+	}
+	e, ok := m.cache.Get(viewerKey())
+	if !ok {
+		return
+	}
+	var login string
+	if err := json.Unmarshal(e.Rows, &login); err != nil {
+		slog.Debug("viewer cache unmarshal failed", "err", err)
+		return
+	}
+	m.viewerLogin = login
+}
+
 func (m *Model) Hydrate() {
+	m.hydrateViewer() // must precede hydrate(): setSections partitions Mine/Others by viewerLogin
 	m.hydrate()
 	m.hydrateMembers()
 }
@@ -484,30 +651,31 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// mineFetchCmd fetches both halves of the mine view in one command, caching each
-// under its own filter key. Sequential (not parallel) — two quick gh calls.
-func (m Model) mineFetchCmd() tea.Cmd {
+// sectionsFetchCmd fetches both halves of the empty-default open view — the
+// review-requested search and the wider is:open list — caching each under its
+// own filter+limit key. Sequential (not parallel): two quick gh calls.
+func (m Model) sectionsFetchCmd() tea.Cmd {
 	r, dir := m.runner, m.dir
 	state := m.state
-	mineF, reviewF := searchFor("pr", state, mineBody), searchFor("pr", state, reviewBody)
-	list := func(filter string) ([]gh.PR, []byte, error) {
-		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
-		if err != nil {
-			return nil, nil, err
-		}
-		prs, err := gh.ParsePRs(raw)
-		return prs, raw, err
-	}
+	reviewF := searchFor("pr", state, reviewBody)
 	return func() tea.Msg {
-		mine, mineRaw, err := list(mineF)
+		revRaw, err := r.Run(dir, gh.PRListArgs(reviewF, defaultLimit)...)
 		if err != nil {
-			return fetchFailedMsg{err: err, filter: mineF}
+			return fetchFailedMsg{err: err, filter: reviewF}
 		}
-		rev, revRaw, err := list(reviewF)
+		rev, err := gh.ParsePRs(revRaw)
 		if err != nil {
-			return fetchFailedMsg{err: err, filter: mineF}
+			return fetchFailedMsg{err: err, filter: reviewF}
 		}
-		return mineFetchedMsg{state: state, mine: mine, mineRaw: mineRaw, review: rev, reviewRaw: revRaw}
+		openRaw, err := r.Run(dir, gh.PRListArgs("is:open", openListLimit)...)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: "is:open"}
+		}
+		open, err := gh.ParsePRs(openRaw)
+		if err != nil {
+			return fetchFailedMsg{err: err, filter: "is:open"}
+		}
+		return sectionsFetchedMsg{state: state, review: rev, reviewRaw: revRaw, open: open, openRaw: openRaw}
 	}
 }
 
@@ -605,8 +773,8 @@ func (m *Model) maybeStartPoll() tea.Cmd {
 func (m *Model) backgroundRefresh() tea.Cmd {
 	m.refreshing = true
 	fetch := m.fetchCmd(m.filter)
-	if m.isMineView() {
-		fetch = m.mineFetchCmd()
+	if m.sectionsDefault() {
+		fetch = m.sectionsFetchCmd()
 	}
 	return tea.Batch(fetch, m.startSpinner())
 }
@@ -628,11 +796,15 @@ func (m *Model) switchToFilter() tea.Cmd {
 		return tea.Batch(m.issueFetchCmd(m.filter), m.startSpinner())
 	}
 	if !hit {
-		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
+		if m.sectionsDefault() {
+			m.setSections(nil, nil, m.viewerLogin) // drop stale rows while the fetch is in flight
+		} else {
+			m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
+		}
 	}
 	fetch := m.fetchCmd(m.filter)
-	if m.isMineView() {
-		fetch = m.mineFetchCmd()
+	if m.sectionsDefault() {
+		fetch = m.sectionsFetchCmd()
 	}
 	return tea.Batch(fetch, m.startSpinner())
 }
@@ -704,6 +876,17 @@ func (m Model) fetchMembersCmd() tea.Cmd {
 	}
 }
 
+func (m Model) fetchViewerCmd() tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		login, err := gh.FetchViewerLogin(r, dir)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return viewerFetchedMsg{login: login}
+	}
+}
+
 // confirmPicker applies the picker result based on the active mode.
 func (m *Model) confirmPicker() tea.Cmd {
 	checked := m.pick.checked
@@ -747,22 +930,19 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// launchFetchCmds returns the startup reconcile fetches — the current "mine"
-// view plus the prewarmed is:open/issue boards and member list — omitting any
-// whose cache is still fresh. When the current view is reused, it emits
+// launchFetchCmds returns the startup reconcile fetches — the sections default
+// view plus the prewarmed issue board, member list, and viewer login — omitting
+// any whose cache is still fresh. When the current view is reused, it emits
 // fetchSkippedMsg so the refresh spinner still clears. Split out so the
 // freshness gating is unit-testable without the ticker commands.
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
-	mineFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, mineBody))) &&
-		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody)))
-	if mineFresh {
+	sectionsFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit)) &&
+		m.cacheFresh(prKey(m.repo, "is:open", openListLimit))
+	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {
-		cmds = append(cmds, m.mineFetchCmd())
-	}
-	if !m.cacheFresh(prKey(m.repo, "is:open")) {
-		cmds = append(cmds, m.fetchCmd("is:open"))
+		cmds = append(cmds, m.sectionsFetchCmd())
 	}
 	issueF := searchFor("issue", "open", assigneeBody)
 	if !m.cacheFresh(issueKey(m.repo, issueF)) {
@@ -770,6 +950,9 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
 		cmds = append(cmds, m.fetchMembersCmd())
+	}
+	if m.viewerLogin == "" {
+		cmds = append(cmds, m.fetchViewerCmd())
 	}
 	return cmds
 }
@@ -787,7 +970,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(prKey(m.repo, msg.filter), msg.raw)
+			m.cache.Set(prKey(m.repo, msg.filter, defaultLimit), msg.raw)
 		}
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // background prewarm of another preset: cache only
@@ -815,18 +998,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		return m, m.detailCmdForCursor()
-	case mineFetchedMsg:
+	case sectionsFetchedMsg:
 		if m.cache != nil {
-			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, mineBody)), msg.mineRaw)
-			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody)), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
 		}
-		if !m.isMineView() || msg.state != m.state {
-			return m, nil // prewarm while viewing another preset/state
+		if !m.sectionsDefault() || msg.state != m.state {
+			return m, nil // a server qualifier became active, or state changed: cache only
 		}
 		m.refreshing = false
 		m.loaded = true
 		m.sel.clear()
-		m.setMine(msg.mine, msg.review)
+		m.setSections(msg.review, msg.open, m.viewerLogin)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
@@ -856,6 +1039,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pick.cands = msg.users
 		}
 		return m, nil
+	case viewerFetchedMsg:
+		m.viewerLogin = msg.login
+		if m.cache != nil {
+			if raw, err := json.Marshal(msg.login); err == nil {
+				m.cache.Set(viewerKey(), raw)
+			}
+		}
+		if m.sectionsDefault() {
+			rev, _ := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+			open, ok := m.cachedPRs("is:open", openListLimit)
+			if ok {
+				m.setSections(rev, open, m.viewerLogin)
+			}
+		}
+		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
 		m.fresh[msg.number] = true
@@ -881,6 +1079,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case omniDebounceMsg:
+		if msg.seq != m.omniSeq || !m.filtering {
+			return m, nil // superseded by a later keystroke, or already committed
+		}
+		return m, m.switchToFilter() // SWR: hydrate cached instant, fetch to reconcile
 	case fetchSkippedMsg:
 		// Current view served from a fresh cache: no fetch ran, so settle the
 		// state the hydrated rows were painted under and warm detail/poll.
@@ -966,24 +1169,80 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.confirmAnswer(false)
 		}
 		if m.filtering {
+			if m.mode != "pr" {
+				// Issue board: plain local fuzzy filter, untouched by the omni
+				// server-qualifier machinery.
+				switch msg.String() {
+				case "esc":
+					m.filtering = false
+					m.filterInput.SetValue("")
+					m.filterInput.Blur()
+					m.sel.clear() // shown set changes; stale indexes would point elsewhere
+					m.applyFilter()
+					return m, nil
+				case "enter":
+					m.filtering = false
+					m.filterInput.Blur()
+					return m, nil
+				}
+				var cmd tea.Cmd
+				m.filterInput, cmd = m.filterInput.Update(msg)
+				m.sel.clear() // editing the query reorders the shown set
+				m.applyFilter()
+				return m, cmd
+			}
 			switch msg.String() {
 			case "esc":
 				m.filtering = false
 				m.filterInput.SetValue("")
 				m.filterInput.Blur()
-				m.sel.clear() // shown set changes; stale indexes would point elsewhere
-				m.applyFilter()
-				return m, nil
+				m.omniServer = ""
+				m.omniSuggestCursor = 0
+				m.filter = searchFor("pr", m.state, "")
+				m.sel.clear()
+				return m, m.switchToFilter() // restore the sections default
+			case "tab":
+				if sug := m.omniSuggestions(); len(sug) > 0 {
+					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
+					m.omniSuggestCursor = 0
+					m.applyFilter()
+					return m, m.omniServerCmd()
+				}
+				return m, nil // no suggestion active: tab is unbound in omni mode
 			case "enter":
+				if sug := m.omniSuggestions(); len(sug) > 0 {
+					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
+					m.omniSuggestCursor = 0
+					m.applyFilter()
+					return m, m.omniServerCmd()
+				}
 				m.filtering = false
 				m.filterInput.Blur()
-				return m, nil
+				if m.omniServer != "" {
+					return m, m.switchToFilter() // committed a server query: reconcile now, in case the debounce never fired
+				}
+				return m, nil // bare-text/empty commit: rows already local, no refetch
+			case "up", "down", "ctrl+n", "ctrl+p", "pgup", "pgdown":
+				if sug := m.omniSuggestions(); len(sug) > 0 && (msg.String() == "up" || msg.String() == "down") {
+					m.omniSuggestCursor = max(0, min(m.omniSuggestCursor+cursorDelta(msg.String()), min(len(sug), omniSuggestDropdownRows)-1))
+					return m, nil
+				}
+				m.moveCursor(cursorDelta(msg.String())) // pass through to the list
+				m.detailSeq++
+				return m, m.debounceDetailCmd()
+			case "backspace":
+				if m.filterInput.Value() == "" {
+					m.filtering = false
+					m.filterInput.Blur()
+					return m, nil
+				}
 			}
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
-			m.sel.clear() // editing the query reorders the shown set
-			m.applyFilter()
-			return m, cmd
+			m.omniSuggestCursor = 0 // the edit reshapes the @-partial; re-narrow from the top
+			m.sel.clear()
+			m.applyFilter() // bare text: instant, local
+			return m, tea.Batch(cmd, m.omniServerCmd())
 		}
 		if m.showPicker {
 			switch msg.String() {
@@ -1065,6 +1324,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showActions = true
 			return m, m.actionFilter.Focus()
 		case "f":
+			if m.mode != "issue" {
+				return m, nil // PR board: filtering is via / (omni); f is retired
+			}
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			ps := presetsFor(m.mode)
 			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
@@ -1073,7 +1335,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchToFilter()
 		case "s":
 			m.state = nextState(m.state, statesFor(m.mode))
-			m.filter = searchFor(m.mode, m.state, m.body)
+			body := m.body
+			if m.mode == "pr" && m.omniServer != "" {
+				body = m.omniServer // a committed omni qualifier lives here, not in m.body
+			}
+			m.filter = searchFor(m.mode, m.state, body)
 			return m, m.switchToFilter()
 		case "tab":
 			return m, m.toggleMode()
@@ -1099,11 +1365,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sel.clear() // the shown set changes; stale indexes would point elsewhere
 			m.applyFilter()
 			return m, nil
-		case "F":
-			if m.mode != "pr" {
-				return m, nil
-			}
-			return m, m.openPicker("author")
 		case "R":
 			if m.mode != "pr" {
 				return m, nil
@@ -1114,7 +1375,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "/":
 			m.filtering = true
-			return m, m.filterInput.Focus()
+			cmds := []tea.Cmd{m.filterInput.Focus()}
+			if m.mode == "pr" && m.members == nil {
+				cmds = append(cmds, m.fetchMembersCmd())
+			}
+			return m, tea.Batch(cmds...)
 		case "?":
 			m.showLegend = true
 			return m, nil
@@ -1178,7 +1443,14 @@ func (m Model) render() string {
 		return m.expandedView()
 	}
 	if m.filtering {
-		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()
+		out := m.header() + "\n" + m.filterInput.View()
+		switch dd := m.omniSuggestDropdown(); {
+		case dd != "":
+			out += "\n" + dd
+		case m.mode == "pr":
+			out += "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+		}
+		return out + "\n" + m.renderMain()
 	}
 	// Overlays float over the live board so the layout stays put behind them.
 	board := m.board()
@@ -1353,19 +1625,26 @@ func (m Model) titleGlyph() string {
 }
 
 // listTitle is the list pane's border title — the current view: state glyph +
-// preset (or custom author body) + state + shown count.
+// preset (or custom author body, or the active omni query) + state + shown count.
 func (m Model) listTitle() string {
 	label := m.body
-	if m.presetIdx >= 0 {
+	if m.mode == "issue" && m.presetIdx >= 0 {
 		label = presetsFor(m.mode)[m.presetIdx].name
+	} else if m.mode == "pr" {
+		if m.omniServer != "" {
+			label = m.omniServer
+		} else {
+			label = "all"
+		}
 	}
 	return fmt.Sprintf("%s %s · %s · %d", m.titleGlyph(), label, m.state, m.section.Len())
 }
 
-// isMineView reports whether the active view is the "mine" preset, where every
-// PR is the author's own — so grouping by author would be noise.
-func (m Model) isMineView() bool {
-	return m.mode == "pr" && m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
+// sectionsDefault reports whether the board is the empty-default open PR view —
+// the sole state that shows the Review/Mine/Others sections. Any active server
+// qualifier or a non-open state drops to the flat setPRs path.
+func (m Model) sectionsDefault() bool {
+	return m.mode == "pr" && m.state == "open" && m.omniServer == ""
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.
@@ -1403,9 +1682,9 @@ func (m Model) legendView() string {
 	}
 	nav = append(nav, key("⇥", "PRs/Issues"))
 
-	filters := []string{key("f", "filter"), key("s", "state")}
+	filters := []string{key("/", "filter (@user, is:, text)"), key("s", "state")}
 	if m.mode == "pr" {
-		filters = append(filters, key("F", "author"), key("R", "reviewers"), key("D", "drafts"))
+		filters = append(filters, key("R", "reviewers"), key("D", "drafts"))
 	}
 
 	preview := []string{}
@@ -1417,7 +1696,7 @@ func (m Model) legendView() string {
 	rows = append(rows,
 		row(nav...),
 		row(preview...),
-		row(key("/", "find"), key("space", "select"), key("V", "all")),
+		row(key("space", "select"), key("V", "all")),
 		row(filters...),
 		row(key("a", "actions"), key("ctrl+r", "refresh"), key("?", "legend"), key("q", "quit")),
 		"",
@@ -1440,13 +1719,13 @@ type keyHint struct{ key, label string }
 // drops the PR-only author/reviewer/drafts hints; both modes show the tab-toggle.
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
-		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"f", "filter"}, {"s", "state"},
+		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
 		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
 			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
-			{"F", "author"}, {"R", "reviewers"}, {"D", "drafts"},
+			{"R", "reviewers"}, {"D", "drafts"},
 		}
 		return append(base, pr...)
 	}
@@ -1633,8 +1912,12 @@ func (m Model) statusBar() string {
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
-const schemaVer = "v2"
+const schemaVer = "v3"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.
 const defaultLimit = 20
+
+// openListLimit is the tail depth for the empty-default open list; the 3-section
+// partition needs more than the focused review/terminal boards' defaultLimit.
+const openListLimit = 100

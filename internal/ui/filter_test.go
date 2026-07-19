@@ -42,3 +42,32 @@ func TestFilterByBranch(t *testing.T) {
 		t.Fatalf("query 'render' = %+v", got)
 	}
 }
+
+func TestFilterPRsMatchesBody(t *testing.T) {
+	prs := []gh.PR{
+		{Number: 1, Title: "fix header", Body: "resolves a flaky race in the poller"},
+		{Number: 2, Title: "add cache"},
+	}
+	got := filterPRs(prs, "flaky")
+	if len(got) != 1 || got[0].Number != 1 {
+		t.Fatalf("body match failed: got %+v", got)
+	}
+}
+
+func TestParseOmni(t *testing.T) {
+	cases := []struct{ in, wantServer, wantBare string }{
+		{"@alice", "involves:alice", ""},
+		{"label:bug flaky", "label:bug", "flaky"},
+		{"foo @bob is:open bar", "involves:bob is:open", "foo bar"},
+		{"just text", "", "just text"},
+		{"", "", ""},
+		{"is:open", "is:open", ""},
+		{"unknown:thing", "", "unknown:thing"}, // unknown prefix → bare text
+	}
+	for _, c := range cases {
+		gotS, gotB := parseOmni(c.in)
+		if gotS != c.wantServer || gotB != c.wantBare {
+			t.Errorf("parseOmni(%q) = (%q,%q), want (%q,%q)", c.in, gotS, gotB, c.wantServer, c.wantBare)
+		}
+	}
+}

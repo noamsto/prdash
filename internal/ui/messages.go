@@ -22,12 +22,13 @@ type issuesFetchedMsg struct {
 	raw    []byte
 }
 
-// mineFetchedMsg carries both halves of the "mine" view (authored +
-// review-requested) so it can render them as two sections.
-type mineFetchedMsg struct {
+// sectionsFetchedMsg carries the two async halves of the empty-default open view
+// (review-requested + the limit-100 open list) so the handler can compose the
+// Review/Mine/Others sections via setSections.
+type sectionsFetchedMsg struct {
 	state              string // the PR state (open/merged/closed) this result is for
-	mine, review       []gh.PR
-	mineRaw, reviewRaw []byte
+	review, open       []gh.PR
+	reviewRaw, openRaw []byte
 }
 
 type fetchFailedMsg struct {
@@ -37,7 +38,15 @@ type fetchFailedMsg struct {
 
 type membersFetchedMsg struct{ users []gh.User }
 
+// viewerFetchedMsg carries the authenticated user's login, fetched once per
+// launch and cached indefinitely (see viewerKey).
+type viewerFetchedMsg struct{ login string }
+
 type detailDebounceMsg struct{ seq int }
+
+// omniDebounceMsg fires ~250ms after the omni server-qualifier last changed; only
+// the latest seq issues the SWR refetch for the composed query.
+type omniDebounceMsg struct{ seq int }
 
 // spinnerTickMsg advances the header refresh spinner; the loop runs only while a
 // fetch is in flight.
