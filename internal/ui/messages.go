@@ -37,6 +37,10 @@ type fetchFailedMsg struct {
 
 type membersFetchedMsg struct{ users []gh.User }
 
+// viewerFetchedMsg carries the authenticated user's login, fetched once per
+// launch and cached indefinitely (see viewerKey).
+type viewerFetchedMsg struct{ login string }
+
 type detailDebounceMsg struct{ seq int }
 
 // spinnerTickMsg advances the header refresh spinner; the loop runs only while a

@@ -78,6 +78,7 @@ type Model struct {
 	pickerMode      string // "author" | "reviewer"
 	pick            picker
 	members         []gh.User  // cached assignable users for this repo
+	viewerLogin     string     // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec     [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
 	themeMode       string     // "light"|"dark"; active palette mode
 	themeModTime    time.Time  // last-seen mtime of the theme-state file
@@ -446,9 +447,34 @@ func (m *Model) hydrateMembers() {
 	m.members = users
 }
 
+const viewerSchemaVer = "v1"
+
+// viewerKey scopes the cached viewer login globally: `gh api user` returns the
+// same login for every repo on a host, so it is neither repo- nor limit-scoped.
+func viewerKey() string { return cache.Key("viewer", "", 0, viewerSchemaVer) }
+
+// hydrateViewer paints the cached viewer login onto the model so the sections
+// view can split Mine from Others without waiting on a live fetch.
+func (m *Model) hydrateViewer() {
+	if m.cache == nil {
+		return
+	}
+	e, ok := m.cache.Get(viewerKey())
+	if !ok {
+		return
+	}
+	var login string
+	if err := json.Unmarshal(e.Rows, &login); err != nil {
+		slog.Debug("viewer cache unmarshal failed", "err", err)
+		return
+	}
+	m.viewerLogin = login
+}
+
 func (m *Model) Hydrate() {
 	m.hydrate()
 	m.hydrateMembers()
+	m.hydrateViewer()
 }
 
 // fetchCmd runs `gh pr list` for filter, tagging the result so a background
@@ -704,6 +730,17 @@ func (m Model) fetchMembersCmd() tea.Cmd {
 	}
 }
 
+func (m Model) fetchViewerCmd() tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		login, err := gh.FetchViewerLogin(r, dir)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return viewerFetchedMsg{login: login}
+	}
+}
+
 // confirmPicker applies the picker result based on the active mode.
 func (m *Model) confirmPicker() tea.Cmd {
 	checked := m.pick.checked
@@ -770,6 +807,9 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
 		cmds = append(cmds, m.fetchMembersCmd())
+	}
+	if m.viewerLogin == "" {
+		cmds = append(cmds, m.fetchViewerCmd())
 	}
 	return cmds
 }
@@ -854,6 +894,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.showPicker {
 			m.pick.cands = msg.users
+		}
+		return m, nil
+	case viewerFetchedMsg:
+		m.viewerLogin = msg.login
+		if m.cache != nil {
+			if raw, err := json.Marshal(msg.login); err == nil {
+				m.cache.Set(viewerKey(), raw)
+			}
 		}
 		return m, nil
 	case prDetailMsg:

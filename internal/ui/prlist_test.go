@@ -733,11 +733,13 @@ func warmLaunchCache(m Model, c *cache.Cache) {
 	c.Set(prKey(m.repo, "is:open", defaultLimit), json.RawMessage("[]"))
 	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody)), json.RawMessage("[]"))
 	c.Set(membersKey(m.repo), json.RawMessage("[]"))
+	c.Set(viewerKey(), json.RawMessage(`"me"`))
 }
 
 func TestLaunchReusesFreshCache(t *testing.T) {
 	m, c := launchModel(t)
 	warmLaunchCache(m, c)
+	m.hydrateViewer() // mirrors production: Hydrate() runs before Init()
 	rec := &countingRunner{}
 	m.SetRunner(rec)
 
@@ -761,9 +763,9 @@ func TestLaunchFetchesWhenCacheCold(t *testing.T) {
 			cmd()
 		}
 	}
-	// mine view (mine+review) + is:open + issues + members = 5 gh invocations.
-	if rec.calls != 5 {
-		t.Fatalf("cold cache should fire the full launch fan-out, got %d gh calls, want 5", rec.calls)
+	// mine view (mine+review) + is:open + issues + members + viewer = 6 gh invocations.
+	if rec.calls != 6 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d gh calls, want 6", rec.calls)
 	}
 }
 
@@ -810,5 +812,16 @@ func TestPrefetchSkipsFreshDiskDetails(t *testing.T) {
 	c.Set(detailKey(m.repo, 2), json.RawMessage("{}"))
 	if m.prefetchCmd() != nil {
 		t.Fatal("all-fresh window should skip prefetch entirely")
+	}
+}
+
+func TestHydrateViewerLogin(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	c.Set(viewerKey(), []byte(`"octocat"`))
+	m := NewModel("/tmp", "is:open", c)
+	m.SetRepo("o/r")
+	m.hydrateViewer()
+	if m.viewerLogin != "octocat" {
+		t.Fatalf("viewerLogin = %q", m.viewerLogin)
 	}
 }
