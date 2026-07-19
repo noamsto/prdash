@@ -3,6 +3,10 @@ package ui
 import (
 	"reflect"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/noamsto/prdash/internal/gh"
 )
 
 func TestStripTimestamp(t *testing.T) {
@@ -93,5 +97,54 @@ func TestCopyHelpers(t *testing.T) {
 	}
 	if copyLine(lines, 99) != "" {
 		t.Fatal("out-of-range copyLine should be empty")
+	}
+}
+
+func logViewModel(t *testing.T) Model {
+	t.Helper()
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.SetRunner(stubRunner{})
+	m.width, m.height = 120, 40
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Name: "test", DetailsUrl: "https://github.com/x/actions/runs/1/job/99"},
+	}}})
+	m.expanded = true
+	m.expandedTab = 2 // Checks
+	m.checkCursor = 0
+	m.renderExpanded()
+	return m
+}
+
+func TestEnterOpensLogView(t *testing.T) {
+	m := logViewModel(t)
+	u, cmd := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = u.(Model)
+	if !m.logView {
+		t.Fatal("enter on a check with a job ID should open the log view")
+	}
+	if m.logJobID != "99" || !m.logLoading {
+		t.Fatalf("logJobID=%q loading=%v", m.logJobID, m.logLoading)
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch command")
+	}
+}
+
+func TestLogFetchedPopulatesSteps(t *testing.T) {
+	m := logViewModel(t)
+	u, _ := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = u.(Model)
+	raw := []byte("build\tRun tests\t2024-01-02T03:04:05Z FAIL x\n")
+	u, _ = m.Update(logFetchedMsg{job: "99", all: false, raw: raw})
+	m = u.(Model)
+	if m.logLoading {
+		t.Fatal("loading should clear on fetch")
+	}
+	if len(m.logSteps) != 1 || m.logSteps[0].name != "Run tests" {
+		t.Fatalf("steps = %+v", m.logSteps)
+	}
+	if _, ok := m.logCache[logCacheKey("99", false)]; !ok {
+		t.Fatal("fetched log should be cached")
 	}
 }

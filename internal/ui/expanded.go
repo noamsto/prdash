@@ -290,6 +290,9 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
 	case "enter":
+		if m.expandedTab == 2 { // Checks: drill into the hovered check's logs
+			return m.enterLogView()
+		}
 		if a, ok := m.actions["enter"]; ok {
 			return m, m.runAction(a)
 		}

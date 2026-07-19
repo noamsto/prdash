@@ -1,6 +1,14 @@
 package ui
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/noamsto/prdash/internal/action"
+	"github.com/noamsto/prdash/internal/gh"
+)
 
 // logStep is one Actions step's log: its name, whether it's a failed step
 // (true for every step in --log-failed output), and its content lines.
@@ -110,3 +118,75 @@ func copyWhole(steps []logStep) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+func logCacheKey(job string, all bool) string { return fmt.Sprintf("%s|%t", job, all) }
+
+// hoveredCheck returns the check under the Checks-tab cursor.
+func (m Model) hoveredCheck() (gh.Check, bool) {
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return gh.Check{}, false
+	}
+	checks := ps.prAt(m.cursor).Checks()
+	if m.checkCursor < 0 || m.checkCursor >= len(checks) {
+		return gh.Check{}, false
+	}
+	return checks[m.checkCursor], true
+}
+
+// enterLogView opens the log sub-view for the hovered check. A cached log paints
+// instantly; otherwise it kicks an async fetch. External (StatusContext) checks
+// have no job log — Task 7 upgrades the notice below to open the browser.
+func (m Model) enterLogView() (tea.Model, tea.Cmd) {
+	c, ok := m.hoveredCheck()
+	if !ok {
+		return m, nil
+	}
+	if c.IsExternal() { // StatusContext: no job log (Task 7 opens the browser here)
+		m.actionStatus = &actionStat{fail: "external check — no job logs", settled: true,
+			err: fmt.Errorf("external check %q has no job logs", c.Label())}
+		return m, clearStatusCmd()
+	}
+	m.logView = true
+	m.logJobID = c.JobID()
+	m.logLabel = c.Label()
+	m.logCursor = 0
+	m.logShowAll = false
+	m.logErr = nil
+	if m.logJobID == "" { // Actions check with no job assigned yet (pending/queued)
+		m.logLoading = false
+		m.setLogSteps(nil) // renders "No logs."
+		return m, nil
+	}
+	if steps, hit := m.logCache[logCacheKey(m.logJobID, false)]; hit {
+		m.logLoading = false
+		m.setLogSteps(steps)
+		return m, nil
+	}
+	m.logLoading = true
+	m.logSteps, m.logLines = nil, nil
+	m.setLogContent()
+	return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, false), m.startSpinner())
+}
+
+// fetchJobLogCmd fetches a job log off the UI thread and reports it back.
+func (m Model) fetchJobLogCmd(job string, all bool) tea.Cmd {
+	r, dir := m.runner, m.dir
+	return func() tea.Msg {
+		out, err := action.JobLog(r, dir, job, !all)
+		return logFetchedMsg{job: job, all: all, raw: out, err: err}
+	}
+}
+
+// setLogSteps swaps in freshly parsed steps, clamps the cursor, and re-renders.
+func (m *Model) setLogSteps(steps []logStep) {
+	m.logSteps = steps
+	m.logLines = flattenLog(steps)
+	if m.logCursor >= len(m.logLines) {
+		m.logCursor = max(0, len(m.logLines)-1)
+	}
+	m.setLogContent()
+}
+
+// replaced in Task 5 (render)
+func (m *Model) setLogContent() {}
