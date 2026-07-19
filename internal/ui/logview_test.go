@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -224,6 +225,25 @@ func TestRenderLogBodyLoadingAndEmpty(t *testing.T) {
 	}
 }
 
+func TestRenderLogBodyErrorTruncates(t *testing.T) {
+	m := logViewModel(t)
+	m.logErr = errors.New(strings.Repeat("x", 300)) // long gh stderr
+	out := strings.TrimRight(m.renderLogBody(20), "\n")
+	if w := ansi.StringWidth(out); w > 20 {
+		t.Fatalf("error line width %d exceeds box width 20: %q", w, ansi.Strip(out))
+	}
+}
+
+func TestCopyStepOutOfRange(t *testing.T) {
+	// A line whose step index is beyond the steps slice must copy "" (like a
+	// stale steps/lines pairing) rather than panic.
+	steps := []logStep{{name: "A", lines: []string{"x"}}}
+	lines := []logLine{{text: "x", step: 5}}
+	if got := copyStep(steps, lines, 0); got != "" {
+		t.Fatalf("out-of-range step should copy empty, got %q", got)
+	}
+}
+
 func TestLogViewRenderDispatch(t *testing.T) {
 	m := logViewModel(t)
 	m.logView = true
@@ -246,6 +266,22 @@ func loadedLogModel(t *testing.T) Model {
 	m.logLines = flattenLog(m.logSteps) // [header, x, y]
 	m.setLogContent()
 	return m
+}
+
+// TestLogViewSurvivesResize guards the regression where a WindowSizeMsg while
+// the log view is open reflowed the Checks tab under it instead of the log.
+func TestLogViewSurvivesResize(t *testing.T) {
+	m := loadedLogModel(t)
+	for _, w := range []int{40, 200, 60} {
+		u, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
+		m = u.(Model)
+		if got, want := m.vp.Width(), max(1, m.expandedBoxWidth()-2); got != want {
+			t.Fatalf("width %d: viewport width %d, want %d", w, got, want)
+		}
+		if body := ansi.Strip(m.render()); !strings.Contains(body, "Run tests") {
+			t.Fatalf("log content lost after resize to %d: %q", w, body)
+		}
+	}
 }
 
 func TestLogViewCursorMoves(t *testing.T) {
