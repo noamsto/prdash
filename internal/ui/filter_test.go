@@ -53,3 +53,21 @@ func TestFilterPRsMatchesBody(t *testing.T) {
 		t.Fatalf("body match failed: got %+v", got)
 	}
 }
+
+func TestParseOmni(t *testing.T) {
+	cases := []struct{ in, wantServer, wantBare string }{
+		{"@alice", "involves:alice", ""},
+		{"label:bug flaky", "label:bug", "flaky"},
+		{"foo @bob is:open bar", "involves:bob is:open", "foo bar"},
+		{"just text", "", "just text"},
+		{"", "", ""},
+		{"is:open", "is:open", ""},
+		{"unknown:thing", "", "unknown:thing"}, // unknown prefix → bare text
+	}
+	for _, c := range cases {
+		gotS, gotB := parseOmni(c.in)
+		if gotS != c.wantServer || gotB != c.wantBare {
+			t.Errorf("parseOmni(%q) = (%q,%q), want (%q,%q)", c.in, gotS, gotB, c.wantServer, c.wantBare)
+		}
+	}
+}
