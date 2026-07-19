@@ -46,6 +46,13 @@ func (c Check) Label() string {
 	}
 }
 
+// IsExternal reports whether this check is a StatusContext (external CI) rather
+// than a GitHub Actions CheckRun. External checks have no name/workflow and no
+// job log — only a DetailsUrl to open in the browser.
+func (c Check) IsExternal() bool {
+	return c.Name == "" && c.WorkflowName == ""
+}
+
 type Label struct {
 	Name  string `json:"name"`
 	Color string `json:"color"` // 6-hex, no leading '#'

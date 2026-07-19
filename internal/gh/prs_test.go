@@ -136,6 +136,18 @@ func TestParsePRsReadsMergeAndCloseTimes(t *testing.T) {
 	}
 }
 
+func TestCheckIsExternal(t *testing.T) {
+	if !(Check{Context: "ci/ext"}).IsExternal() {
+		t.Fatal("StatusContext should be external")
+	}
+	if (Check{Name: "build"}).IsExternal() {
+		t.Fatal("named CheckRun is not external")
+	}
+	if (Check{WorkflowName: "CI"}).IsExternal() {
+		t.Fatal("workflow CheckRun is not external")
+	}
+}
+
 func TestPRListArgsRequestsTimestamps(t *testing.T) {
 	args := PRListArgs("is:merged", 20)
 	joined := strings.Join(args, " ")
