@@ -1468,6 +1468,9 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) render() string {
+	if m.logView {
+		return m.logViewRender()
+	}
 	if m.expanded {
 		return m.expandedView()
 	}

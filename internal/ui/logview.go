@@ -188,5 +188,114 @@ func (m *Model) setLogSteps(steps []logStep) {
 	m.setLogContent()
 }
 
-// replaced in Task 5 (render)
-func (m *Model) setLogContent() {}
+// logBoxHeight is the OUTER height of the log box: the frame minus the header
+// and footer (the log view has no metadata line).
+func (m Model) logBoxHeight() int {
+	h := m.height - 2
+	if h < 3 {
+		h = 3
+	}
+	return h
+}
+
+// setLogContent (re)fills the viewport with the rendered log at the current
+// geometry and keeps the cursor line on screen.
+func (m *Model) setLogContent() {
+	w := m.expandedBoxWidth() - 2
+	rows := m.logBoxHeight() - 2
+	if w < 1 {
+		w = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	m.vp.SetWidth(w)
+	m.vp.SetHeight(rows)
+	m.vp.SetContent(m.renderLogBody(w))
+	m.keepLogCursorVisible()
+}
+
+// keepLogCursorVisible scrolls the viewport so the cursor line stays in view.
+// One logLine renders to exactly one display line (each is truncated to width),
+// so the cursor index is its display row.
+func (m *Model) keepLogCursorVisible() {
+	h := m.vp.Height()
+	off := m.vp.YOffset()
+	switch {
+	case m.logCursor < off:
+		m.vp.SetYOffset(m.logCursor)
+	case m.logCursor >= off+h:
+		m.vp.SetYOffset(m.logCursor - h + 1)
+	}
+}
+
+// renderLogBody paints the flattened log: dim step headers (red for failed
+// steps), content lines colored by classifyLogLine, cursor line gutter-marked.
+func (m Model) renderLogBody(w int) string {
+	switch {
+	case m.logLoading:
+		frame := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		return dimStyle.Render("  " + frame + " Loading…")
+	case m.logErr != nil:
+		return failStyle.Render("  " + m.logErr.Error())
+	case len(m.logLines) == 0:
+		return dimStyle.Render("  No logs.")
+	}
+	var b strings.Builder
+	for i, ln := range m.logLines {
+		gutter := "  "
+		if i == m.logCursor {
+			gutter = focusBarStyle.Render("▎") + " "
+		}
+		text := truncate(ln.text, w-2)
+		var styled string
+		switch {
+		case ln.header:
+			if m.logSteps[ln.step].failed {
+				styled = failStyle.Bold(true).Render(text)
+			} else {
+				styled = dimStyle.Render(text)
+			}
+		default:
+			switch classifyLogLine(ln.text) {
+			case kindError:
+				styled = failStyle.Render(text)
+			case kindPass:
+				styled = passStyle.Render(text)
+			default:
+				styled = titleStyle.Render(text)
+			}
+		}
+		b.WriteString(gutter + styled + "\n")
+	}
+	return b.String()
+}
+
+// logFooter is the log view's key hint line; `a` toggles the log scope.
+func (m Model) logFooter() string {
+	word := "all steps"
+	if m.logShowAll {
+		word = "failed only"
+	}
+	return "  j/k move · y line · s step · Y all · a " + word + " · esc back"
+}
+
+// logViewRender is the full-screen log view: header, the log framed in a titled
+// box (the check label as title), and the key hint line — centered like the
+// expanded view.
+func (m Model) logViewRender() string {
+	n := 0
+	if v, ok := m.cursorVars(); ok {
+		n = v.Number
+	}
+	bw := m.expandedBoxWidth()
+	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
+	head += m.statusBadge()
+	foot := statusBarStyle.Render(m.logFooter())
+	box := titledBox(m.vp.View(), bw, m.logBoxHeight(), m.logLabel)
+	out := strings.Join([]string{head, box, foot}, "\n")
+	if bw < m.width {
+		out = indentLines(out, (m.width-bw)/2)
+	}
+	return out
+}

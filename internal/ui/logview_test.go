@@ -2,7 +2,10 @@ package ui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -146,5 +149,47 @@ func TestLogFetchedPopulatesSteps(t *testing.T) {
 	}
 	if _, ok := m.logCache[logCacheKey("99", false)]; !ok {
 		t.Fatal("fetched log should be cached")
+	}
+}
+
+func TestRenderLogBody(t *testing.T) {
+	m := logViewModel(t)
+	m.logSteps = []logStep{{name: "Run tests", failed: true, lines: []string{"FAIL foo", "ok done"}}}
+	m.logLines = flattenLog(m.logSteps)
+	m.logCursor = 1 // "FAIL foo"
+	out := m.renderLogBody(80)
+	plain := ansi.Strip(out)
+	if !strings.Contains(plain, "Run tests") || !strings.Contains(plain, "FAIL foo") {
+		t.Fatalf("body missing content: %q", plain)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[1], "▎") { // cursor gutter on the focused line
+		t.Fatalf("cursor gutter not on focused line: %q", lines)
+	}
+}
+
+func TestRenderLogBodyLoadingAndEmpty(t *testing.T) {
+	m := logViewModel(t)
+	m.logLoading = true
+	if !strings.Contains(ansi.Strip(m.renderLogBody(80)), "Loading") {
+		t.Fatal("loading state should say Loading")
+	}
+	m.logLoading = false
+	m.logSteps, m.logLines = nil, nil
+	if !strings.Contains(ansi.Strip(m.renderLogBody(80)), "No logs") {
+		t.Fatal("empty state should say No logs")
+	}
+}
+
+func TestLogViewRenderDispatch(t *testing.T) {
+	m := logViewModel(t)
+	m.logView = true
+	m.logLabel = "test (ubuntu)"
+	m.logSteps = []logStep{{name: "Run tests", lines: []string{"x"}}}
+	m.logLines = flattenLog(m.logSteps)
+	m.setLogContent()
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, "test (ubuntu)") {
+		t.Fatalf("log box title (check label) missing: %q", out)
 	}
 }
