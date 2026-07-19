@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
@@ -1159,5 +1160,154 @@ func TestOmniAutocomplete(t *testing.T) {
 	u, _ := m.Update(keyMsg("tab"))
 	if got := u.(Model).filterInput.Value(); got != "@alice" {
 		t.Fatalf("after tab = %q, want @alice", got)
+	}
+}
+
+// TestOmniEnterReconcilesServerQuery guards that committing a server qualifier
+// with Enter issues a reconcile fetch even when the 250ms debounce never fired,
+// so the board never keeps stale rows for the committed query.
+func TestOmniEnterReconcilesServerQuery(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.SetRunner(stubRunner{})
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("label:bu")
+	u, _ := m.Update(keyMsg("g")) // completes label:bug, arms the debounce
+	m = u.(Model)
+	if m.omniServer != "label:bug" {
+		t.Fatalf("omniServer = %q, want label:bug", m.omniServer)
+	}
+	u, cmd := m.Update(keyMsg("enter"))
+	m = u.(Model)
+	if m.filtering {
+		t.Fatal("enter should exit omni mode")
+	}
+	if cmd == nil {
+		t.Fatal("committing a server query on enter must issue a reconcile fetch")
+	}
+
+	// A bare-text-only commit has nothing to reconcile: no fetch, filter kept.
+	m2 := newTestModelWithRows(t)
+	m2.SetRunner(stubRunner{})
+	m2.filtering = true
+	m2.filterInput.Focus()
+	m2.filterInput.SetValue("flaky")
+	m2.applyFilter()
+	u2, cmd2 := m2.Update(keyMsg("enter"))
+	m2 = u2.(Model)
+	if m2.omniServer != "" {
+		t.Fatalf("bare text armed a server qualifier: %q", m2.omniServer)
+	}
+	if cmd2 != nil {
+		t.Fatal("bare-text commit should not issue a fetch")
+	}
+	if m2.filterInput.Value() != "flaky" {
+		t.Fatal("bare-text commit must keep the filter")
+	}
+}
+
+// TestStateTogglePreservesOmniQualifier guards that pressing s on the PR board
+// recomposes the filter from the committed omni qualifier, not the stale m.body.
+func TestStateTogglePreservesOmniQualifier(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.SetRunner(stubRunner{})
+	m.body = "author:@me" // must NOT be used to compose on the PR board
+	m.omniServer = "label:bug"
+	m.state = "open"
+	m.filter = "is:open label:bug"
+	u, _ := m.Update(keyMsg("s"))
+	m = u.(Model)
+	if want := searchFor("pr", "merged", "label:bug"); m.filter != want {
+		t.Fatalf("filter = %q, want %q", m.filter, want)
+	}
+}
+
+// TestHydrateViewerBeforeSectionsPartition guards that Hydrate loads the viewer
+// login before setSections runs, so the viewer's own PRs land in Mine on the
+// first warm-cache paint instead of Others.
+func TestHydrateViewerBeforeSectionsPartition(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("o/r")
+
+	c.Set(viewerKey(), []byte(`"me"`))
+	openRaw, _ := json.Marshal([]gh.PR{{Number: 1, Author: author("me")}})
+	c.Set(prKey(m.repo, "is:open", openListLimit), openRaw)
+	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit), json.RawMessage("[]"))
+
+	m.Hydrate()
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		t.Fatal("expected a PRSection after Hydrate")
+	}
+	if cat := ps.cats[1]; cat != "Mine" {
+		t.Fatalf("#1 = %q, want Mine (viewer login applied on first paint)", cat)
+	}
+}
+
+// TestOmniHintRowsReservesDropdown guards that the height render() draws under
+// the filter input is reserved by contentHeight, so the dropdown/hint never
+// overflows the frame.
+func TestOmniHintRowsReservesDropdown(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.members = []gh.User{
+		{Login: "aa1"}, {Login: "aa2"}, {Login: "aa3"}, {Login: "aa4"},
+		{Login: "aa5"}, {Login: "aa6"}, {Login: "aa7"}, {Login: "aa8"},
+	}
+	m.width = 80
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("@aa")
+	if got, want := m.omniHintRows(), lipgloss.Height(m.omniSuggestDropdown()); got != want {
+		t.Fatalf("omniHintRows with dropdown = %d, want %d", got, want)
+	}
+	if m.omniHintRows() <= 1 {
+		t.Fatalf("omniHintRows with a full dropdown = %d, want > 1", m.omniHintRows())
+	}
+
+	m.filterInput.SetValue("") // no @ partial: falls back to the static hint line
+	if got := m.omniHintRows(); got != 1 {
+		t.Fatalf("omniHintRows without a partial = %d, want 1", got)
+	}
+
+	m.mode = "issue"
+	if got := m.omniHintRows(); got != 0 {
+		t.Fatalf("omniHintRows on the issue board = %d, want 0", got)
+	}
+
+	// contentHeight shrinks by exactly the reserved rows vs a non-filtering baseline.
+	m.mode = "pr"
+	m.filterInput.SetValue("@aa")
+	l := Layout{ShowPanel: false, ContentHeight: 40}
+	filtered := m.contentHeight(l)
+	m.filtering = false
+	base := m.contentHeight(l)
+	m.filtering = true
+	if base-filtered != m.omniHintRows() {
+		t.Fatalf("contentHeight delta = %d, want %d", base-filtered, m.omniHintRows())
+	}
+}
+
+// TestOmniDropdownCursorClampedToWindow guards that arrowing past the visible
+// dropdown window keeps the cursor on a rendered row, so tab/enter never
+// completes an off-screen member.
+func TestOmniDropdownCursorClampedToWindow(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.members = []gh.User{
+		{Login: "aa1"}, {Login: "aa2"}, {Login: "aa3"}, {Login: "aa4"},
+		{Login: "aa5"}, {Login: "aa6"}, {Login: "aa7"}, {Login: "aa8"},
+	}
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("@aa")
+	if len(m.omniSuggestions()) <= omniSuggestDropdownRows {
+		t.Fatalf("need > %d matches to exercise the clamp", omniSuggestDropdownRows)
+	}
+	for i := 0; i < 10; i++ {
+		u, _ := m.Update(keyMsg("down"))
+		m = u.(Model)
+	}
+	if m.omniSuggestCursor > omniSuggestDropdownRows-1 {
+		t.Fatalf("cursor = %d, want <= %d", m.omniSuggestCursor, omniSuggestDropdownRows-1)
 	}
 }

@@ -306,13 +306,18 @@ func (m Model) previewTitle() string {
 // the frame instead of stranding the bottom border mid-screen.
 func (m Model) contentHeight(l Layout) int {
 	if !l.ShowPanel {
+		if m.filtering {
+			return l.ContentHeight - m.omniHintRows()
+		}
 		return l.ContentHeight
 	}
 	switch {
 	case m.previewMax:
 		return l.ContentHeight + l.PanelRows
-	case m.filtering || m.pending != nil:
-		return l.ContentHeight + l.PanelRows - 1 // minus the prompt/filter input line
+	case m.filtering:
+		return l.ContentHeight + l.PanelRows - 1 - m.omniHintRows() // minus the filter input line and its hint/dropdown
+	case m.pending != nil:
+		return l.ContentHeight + l.PanelRows - 1 // minus the prompt line
 	default:
 		return l.ContentHeight
 	}

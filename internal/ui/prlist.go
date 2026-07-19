@@ -342,10 +342,11 @@ func (m *Model) omniServerCmd() tea.Cmd {
 
 // omniActivePartial returns the @-login partial immediately left of the
 // cursor, and whether the cursor sits inside such a token. "@" alone yields
-// "". Position() is a rune index but Value() is sliced by byte; fine as long
-// as logins stay ASCII.
+// "".
 func (m Model) omniActivePartial() (string, bool) {
-	v := m.filterInput.Value()[:m.filterInput.Position()]
+	r := []rune(m.filterInput.Value())
+	pos := min(m.filterInput.Position(), len(r))
+	v := string(r[:pos])
 	i := strings.LastIndexAny(v, " ")
 	tok := v[i+1:]
 	if !strings.HasPrefix(tok, "@") {
@@ -411,6 +412,21 @@ func (m Model) omniSuggestDropdown() string {
 		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-2))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// omniHintRows is the height of the dropdown-or-hint block render() draws under the
+// filter input while filtering, so contentHeight can reserve it.
+func (m Model) omniHintRows() int {
+	if !m.filtering {
+		return 0
+	}
+	if dd := m.omniSuggestDropdown(); dd != "" {
+		return lipgloss.Height(dd)
+	}
+	if m.mode == "pr" {
+		return 1 // the "@user · is: · text" hint line
+	}
+	return 0
 }
 
 // prKey scopes the cached PR list by repo — the shared cache file holds every
@@ -597,9 +613,9 @@ func (m *Model) hydrateViewer() {
 }
 
 func (m *Model) Hydrate() {
+	m.hydrateViewer() // must precede hydrate(): setSections partitions Mine/Others by viewerLogin
 	m.hydrate()
 	m.hydrateMembers()
-	m.hydrateViewer()
 }
 
 // fetchCmd runs `gh pr list` for filter, tagging the result so a background
@@ -1202,10 +1218,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.filtering = false
 				m.filterInput.Blur()
-				return m, nil // keep the filter applied; hand keys back to the list
+				if m.omniServer != "" {
+					return m, m.switchToFilter() // committed a server query: reconcile now, in case the debounce never fired
+				}
+				return m, nil // bare-text/empty commit: rows already local, no refetch
 			case "up", "down", "ctrl+n", "ctrl+p", "pgup", "pgdown":
 				if sug := m.omniSuggestions(); len(sug) > 0 && (msg.String() == "up" || msg.String() == "down") {
-					m.omniSuggestCursor = max(0, min(m.omniSuggestCursor+cursorDelta(msg.String()), len(sug)-1))
+					m.omniSuggestCursor = max(0, min(m.omniSuggestCursor+cursorDelta(msg.String()), min(len(sug), omniSuggestDropdownRows)-1))
 					return m, nil
 				}
 				m.moveCursor(cursorDelta(msg.String())) // pass through to the list
@@ -1316,7 +1335,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchToFilter()
 		case "s":
 			m.state = nextState(m.state, statesFor(m.mode))
-			m.filter = searchFor(m.mode, m.state, m.body)
+			body := m.body
+			if m.mode == "pr" && m.omniServer != "" {
+				body = m.omniServer // a committed omni qualifier lives here, not in m.body
+			}
+			m.filter = searchFor(m.mode, m.state, body)
 			return m, m.switchToFilter()
 		case "tab":
 			return m, m.toggleMode()
@@ -1425,7 +1448,7 @@ func (m Model) render() string {
 		case dd != "":
 			out += "\n" + dd
 		case m.mode == "pr":
-			out += "\n" + dimStyle.Render("@user · is: · text")
+			out += "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
 		}
 		return out + "\n" + m.renderMain()
 	}
