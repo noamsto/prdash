@@ -1071,9 +1071,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
 		}
-		if m.expanded {
+		switch {
+		case m.logView:
+			m.setLogContent() // the log layers over the Checks tab; keep it painted
+		case m.expanded:
 			m.reflowExpanded() // fold in the fresh detail without losing the reader's place
-		} else {
+		default:
 			m.renderList()
 		}
 		return m, nil
@@ -1146,9 +1149,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.themeMode = mode
 			applyTheme(themeFor(mode))
 			preview.SetMode(mode)
-			if m.expanded {
+			switch {
+			case m.logView:
+				m.setLogContent() // re-tint the log under the new theme
+			case m.expanded:
 				m.reflowExpanded()
-			} else {
+			default:
 				m.renderList()
 			}
 		}
@@ -1181,9 +1187,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.expanded {
+		switch {
+		case m.logView:
+			m.setLogContent() // reflow the log to the new size (it layers over the Checks tab)
+		case m.expanded:
 			m.reflowExpanded() // reflow to the new size, keep the reader's place
-		} else {
+		default:
 			m.renderList()
 		}
 		return m, nil

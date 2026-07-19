@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
@@ -33,6 +34,10 @@ func parseJobLog(raw []byte, failedOnly bool) []logStep {
 			step = parts[1]
 			content = stripTimestamp(parts[2])
 		}
+		// CI job logs carry raw ANSI SGR codes; strip them so truncation counts
+		// real width and the viewer's own theme coloring isn't corrupted (a
+		// truncated escape can also bleed into the surrounding lipgloss style).
+		content = ansi.Strip(content)
 		i, seen := idx[step]
 		if !seen {
 			i = len(steps)
@@ -107,8 +112,11 @@ func copyStep(steps []logStep, lines []logLine, cursor int) string {
 	if cursor < 0 || cursor >= len(lines) {
 		return ""
 	}
-	s := steps[lines[cursor].step]
-	return s.name + "\n" + strings.Join(s.lines, "\n")
+	if step := lines[cursor].step; step >= 0 && step < len(steps) {
+		s := steps[step]
+		return s.name + "\n" + strings.Join(s.lines, "\n")
+	}
+	return ""
 }
 
 func copyWhole(steps []logStep) string {
@@ -164,7 +172,8 @@ func (m Model) enterLogView() (tea.Model, tea.Cmd) {
 	m.logLoading = true
 	m.logSteps, m.logLines = nil, nil
 	m.setLogContent()
-	return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, false), m.startSpinner())
+	spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
+	return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, false), spin)
 }
 
 // fetchJobLogCmd fetches a job log off the UI thread and reports it back.
@@ -235,7 +244,7 @@ func (m Model) renderLogBody(w int) string {
 		frame := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		return dimStyle.Render("  " + frame + " Loading…")
 	case m.logErr != nil:
-		return failStyle.Render("  " + m.logErr.Error())
+		return failStyle.Render("  " + truncate(m.logErr.Error(), w-2))
 	case len(m.logLines) == 0:
 		return dimStyle.Render("  No logs.")
 	}
@@ -305,7 +314,8 @@ func (m Model) updateLogView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logLoading = true
 		m.logSteps, m.logLines = nil, nil
 		m.setLogContent()
-		return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, m.logShowAll), m.startSpinner())
+		spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
+		return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, m.logShowAll), spin)
 	case "y":
 		return m.copyLogText(copyLine(m.logLines, m.logCursor), "Copied line")
 	case "s":
@@ -325,9 +335,10 @@ func (m Model) copyLogText(text, ok string) (tea.Model, tea.Cmd) {
 	}
 	if argv := clipboardArgv(); argv != nil {
 		m.actionStatus = &actionStat{run: "Copying", ok: ok, fail: "Copy failed"}
+		spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
 		return m, tea.Batch(func() tea.Msg {
 			return actionDoneMsg{err: writeClipboard(argv, text)}
-		}, m.startSpinner())
+		}, spin)
 	}
 	m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true}
 	return m, tea.Batch(tea.SetClipboard(text), clearStatusCmd())
@@ -339,25 +350,26 @@ func (m Model) openHoveredCheck() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if c.DetailsUrl == "" {
+	url := c.URL()
+	if url == "" {
 		m.actionStatus = &actionStat{fail: "no URL for this check", settled: true,
 			err: fmt.Errorf("check %q has no URL", c.Label())}
 		return m, clearStatusCmd()
 	}
-	url := c.DetailsUrl
 	m.actionStatus = &actionStat{run: "Opening", ok: "Opened in browser", fail: "Open failed"}
+	spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: openURL(url)}
-	}, m.startSpinner())
+	}, spin)
 }
 
 // copyHoveredCheckURL copies the hovered check's details URL.
 func (m Model) copyHoveredCheckURL() (tea.Model, tea.Cmd) {
 	c, ok := m.hoveredCheck()
-	if !ok || c.DetailsUrl == "" {
+	if !ok || c.URL() == "" {
 		return m, nil
 	}
-	return m.copyLogText(c.DetailsUrl, "Copied URL")
+	return m.copyLogText(c.URL(), "Copied URL")
 }
 
 // logFooter is the log view's key hint line; `a` toggles the log scope.

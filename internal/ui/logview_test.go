@@ -50,6 +50,19 @@ func TestParseJobLogFullNotFailed(t *testing.T) {
 	}
 }
 
+func TestParseJobLogStripsANSI(t *testing.T) {
+	// CI output often embeds SGR color codes; the viewer applies its own theme,
+	// so the stored line must be plain text (a leaked escape corrupts rendering).
+	raw := []byte("build\tRun tests\t2024-01-02T03:04:05Z \x1b[31mFAIL\x1b[0m foo_test.go\n")
+	steps := parseJobLog(raw, true)
+	if len(steps) != 1 || len(steps[0].lines) != 1 {
+		t.Fatalf("steps = %+v", steps)
+	}
+	if got := steps[0].lines[0]; got != "FAIL foo_test.go" {
+		t.Fatalf("ANSI not stripped: %q", got)
+	}
+}
+
 func TestFlattenLog(t *testing.T) {
 	steps := []logStep{
 		{name: "A", lines: []string{"a1", "a2"}},
@@ -149,6 +162,36 @@ func TestLogFetchedPopulatesSteps(t *testing.T) {
 	}
 	if _, ok := m.logCache[logCacheKey("99", false)]; !ok {
 		t.Fatal("fetched log should be cached")
+	}
+}
+
+// TestLogFetchedStaleIgnored pins the async staleness guard: a late fetch for a
+// different job or the wrong log variant must not clobber the active viewer.
+func TestLogFetchedStaleIgnored(t *testing.T) {
+	m := logViewModel(t)
+	u, _ := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = u.(Model) // log view open for job "99", loading
+
+	// A fetch for a different job is dropped.
+	u, _ = m.Update(logFetchedMsg{job: "77", all: false, raw: []byte("build\tS\t2024-01-02T03:04:05Z x\n")})
+	m = u.(Model)
+	if len(m.logSteps) != 0 || !m.logLoading {
+		t.Fatalf("stale job fetch applied: steps=%+v loading=%v", m.logSteps, m.logLoading)
+	}
+	if _, ok := m.logCache[logCacheKey("77", false)]; ok {
+		t.Fatal("stale job fetch should not populate the cache")
+	}
+
+	// A fetch for the wrong variant (full log while showing failed-only) is dropped.
+	u, _ = m.Update(logFetchedMsg{job: "99", all: true, raw: []byte("build\tS\t2024-01-02T03:04:05Z y\n")})
+	if s := u.(Model).logSteps; len(s) != 0 {
+		t.Fatalf("wrong-variant fetch applied: %+v", s)
+	}
+
+	// The matching fetch populates.
+	u, _ = m.Update(logFetchedMsg{job: "99", all: false, raw: []byte("build\tRun\t2024-01-02T03:04:05Z z\n")})
+	if s := u.(Model).logSteps; len(s) != 1 {
+		t.Fatalf("matching fetch should populate, got %+v", s)
 	}
 }
 
@@ -290,5 +333,27 @@ func TestExternalCheckEnterOpensBrowser(t *testing.T) {
 	}
 	if m.actionStatus == nil || cmd == nil {
 		t.Fatal("external check enter should open the browser with a status")
+	}
+}
+
+// TestExternalCheckTargetURLOpens covers the real StatusContext shape: the URL
+// arrives as targetUrl (not detailsUrl), so enter/o/Y must still find it.
+func TestExternalCheckTargetURLOpens(t *testing.T) {
+	m := logViewModel(t)
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Context: "ci/ext", TargetUrl: "https://ci.example.com/build/7"},
+	}}})
+	m.expanded, m.expandedTab, m.checkCursor = true, 2, 0
+	m.renderExpanded()
+	u, cmd := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = u.(Model)
+	if m.logView {
+		t.Fatal("external check should not open the log view")
+	}
+	if m.actionStatus == nil || cmd == nil {
+		t.Fatal("external check with targetUrl should open the browser")
+	}
+	if m.actionStatus.err != nil {
+		t.Fatalf("expected an open status, not a no-URL error: %v", m.actionStatus.err)
 	}
 }

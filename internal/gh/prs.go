@@ -20,7 +20,18 @@ type Check struct {
 	WorkflowName string `json:"workflowName"` // CheckRun
 	Context      string `json:"context"`      // StatusContext (no name)
 	DetailsUrl   string `json:"detailsUrl"`   // CheckRun: …/actions/runs/<run>/job/<job>
+	TargetUrl    string `json:"targetUrl"`    // StatusContext: external CI's page (CheckRuns leave this empty)
 	StartedAt    string `json:"startedAt"`    // CheckRun start time (RFC3339); newest run wins on dedup
+}
+
+// URL is the check's web page: a CheckRun's detailsUrl, or an external
+// StatusContext's targetUrl (the two halves of the union expose it under
+// different fields).
+func (c Check) URL() string {
+	if c.DetailsUrl != "" {
+		return c.DetailsUrl
+	}
+	return c.TargetUrl
 }
 
 // JobID extracts the Actions job ID from DetailsUrl so a single check can be
