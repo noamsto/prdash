@@ -271,6 +271,70 @@ func (m Model) renderLogBody(w int) string {
 	return b.String()
 }
 
+// updateLogView handles keys while the check-log sub-view is open.
+func (m Model) updateLogView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "h", "left":
+		m.logView = false
+		m.renderExpanded() // restore the Checks tab into the viewport
+		return m, nil
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		if m.logCursor < len(m.logLines)-1 {
+			m.logCursor++
+			m.setLogContent()
+		}
+		return m, nil
+	case "k", "up":
+		if m.logCursor > 0 {
+			m.logCursor--
+			m.setLogContent()
+		}
+		return m, nil
+	case "a": // toggle failed-only ↔ full job log
+		if m.logJobID == "" { // pending check with no job yet — nothing to fetch
+			return m, nil
+		}
+		m.logShowAll = !m.logShowAll
+		m.logCursor = 0
+		m.logErr = nil
+		if steps, hit := m.logCache[logCacheKey(m.logJobID, m.logShowAll)]; hit {
+			m.logLoading = false
+			m.setLogSteps(steps)
+			return m, nil
+		}
+		m.logLoading = true
+		m.logSteps, m.logLines = nil, nil
+		m.setLogContent()
+		return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, m.logShowAll), m.startSpinner())
+	case "y":
+		return m.copyLogText(copyLine(m.logLines, m.logCursor), "Copied line")
+	case "s":
+		return m.copyLogText(copyStep(m.logSteps, m.logLines, m.logCursor), "Copied step")
+	case "Y":
+		return m.copyLogText(copyWhole(m.logSteps), "Copied log")
+	}
+	return m, nil
+}
+
+// copyLogText copies text via the native clipboard tool, falling back to OSC 52,
+// mirroring runAction's copy path. Returns the mutated model so callers avoid the
+// return-value evaluation-order trap.
+func (m Model) copyLogText(text, ok string) (tea.Model, tea.Cmd) {
+	if text == "" {
+		return m, nil
+	}
+	if argv := clipboardArgv(); argv != nil {
+		m.actionStatus = &actionStat{run: "Copying", ok: ok, fail: "Copy failed"}
+		return m, tea.Batch(func() tea.Msg {
+			return actionDoneMsg{err: writeClipboard(argv, text)}
+		}, m.startSpinner())
+	}
+	m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true}
+	return m, tea.Batch(tea.SetClipboard(text), clearStatusCmd())
+}
+
 // logFooter is the log view's key hint line; `a` toggles the log scope.
 func (m Model) logFooter() string {
 	word := "all steps"

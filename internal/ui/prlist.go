@@ -1188,6 +1188,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		if m.logView {
+			return m.updateLogView(msg)
+		}
 		if m.expanded {
 			return m.updateExpanded(msg)
 		}

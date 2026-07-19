@@ -193,3 +193,54 @@ func TestLogViewRenderDispatch(t *testing.T) {
 		t.Fatalf("log box title (check label) missing: %q", out)
 	}
 }
+
+func loadedLogModel(t *testing.T) Model {
+	t.Helper()
+	m := logViewModel(t)
+	m.logView = true
+	m.logJobID = "99"
+	m.logSteps = []logStep{{name: "Run tests", lines: []string{"x", "y"}}}
+	m.logLines = flattenLog(m.logSteps) // [header, x, y]
+	m.setLogContent()
+	return m
+}
+
+func TestLogViewCursorMoves(t *testing.T) {
+	m := loadedLogModel(t)
+	u, _ := m.updateLogView(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = u.(Model)
+	if m.logCursor != 1 {
+		t.Fatalf("j should move cursor to 1, got %d", m.logCursor)
+	}
+	u, _ = m.updateLogView(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if u.(Model).logCursor != 0 {
+		t.Fatal("k should move cursor back to 0")
+	}
+}
+
+func TestLogViewEscClosesView(t *testing.T) {
+	m := loadedLogModel(t)
+	u, _ := m.updateLogView(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if u.(Model).logView {
+		t.Fatal("esc should close the log view")
+	}
+}
+
+func TestLogViewToggleRefetches(t *testing.T) {
+	m := loadedLogModel(t)
+	u, cmd := m.updateLogView(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = u.(Model)
+	if !m.logShowAll || !m.logLoading || cmd == nil {
+		t.Fatalf("a should switch to full log and refetch: all=%v loading=%v", m.logShowAll, m.logLoading)
+	}
+}
+
+func TestLogViewCopyStep(t *testing.T) {
+	m := loadedLogModel(t)
+	m.logCursor = 1 // "x", in step "Run tests"
+	u, _ := m.updateLogView(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = u.(Model)
+	if m.actionStatus == nil {
+		t.Fatal("s should set a copy status")
+	}
+}
