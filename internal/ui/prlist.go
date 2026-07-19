@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/sahilm/fuzzy"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -28,62 +29,63 @@ type boardView struct {
 }
 
 type Model struct {
-	dir             string
-	filter          string
-	state           string    // open | merged | closed; the s-toggle dimension
-	body            string    // state-agnostic qualifier (e.g. "author:@me", "")
-	mode            string    // "pr" | "issue"; the i-toggle dimension
-	omniServer      string    // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
-	omniSeq         int       // bumped on each server-qualifier change; gates the debounced SWR refetch
-	other           boardView // the inactive board's saved state/preset (restored on toggle-back)
-	issueDetail     map[int]gh.IssueDetail
-	issueFresh      map[int]bool // issue numbers whose body was refetched this session
-	cache           *cache.Cache
-	runner          gh.Runner
-	vp              viewport.Model
-	cursor          int // indexes the section's shown set
-	cursorLine      int // display-line offset of the cursor row (headers shift it)
-	previewOffset   int // ctrl+j/k scroll position within the side preview
-	width           int
-	height          int
-	section         Section
-	err             error
-	filtering       bool
-	filterInput     textinput.Model
-	repo            string
-	actions         map[string]action.Action
-	pending         *action.Action
-	showActions     bool
-	showLegend      bool
-	actionFilter    textinput.Model
-	actionCursor    int
-	sel             selection
-	detail          map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
-	fresh           map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
-	detailSeq       int                 // bumped on cursor move; gates the debounced detail fetch
-	previewExpanded bool
-	previewN        int
-	expanded        bool
-	expandedTab     int
-	checkCursor     int         // hovered check on the expanded Checks tab
-	loaded          bool        // first live fetch has returned; distinguishes empty from loading
-	emptyNotice     string      // overrides the empty-board hint (e.g. issues disabled on this repo)
-	refreshing      bool        // a list fetch for the current filter is in flight
-	spinning        bool        // the refresh spinner tick loop is running
-	spinnerFrame    int         // advancing index into spinnerFrames
-	polling         bool        // the live-checks poll tick loop is running
-	actionStatus    *actionStat // transient inline-action progress shown by the header
-	presetIdx       int         // index into defaultPresets; -1 when filter is a custom (author) query
-	previewMax      bool        // z: preview takes full width, list hidden
-	hideDrafts      bool        // D: exclude draft PRs from the board
-	showPicker      bool
-	pickerMode      string // "author" | "reviewer"
-	pick            picker
-	members         []gh.User  // cached assignable users for this repo
-	viewerLogin     string     // authenticated user's login; splits Mine from Others in the sections view
-	pendingExec     [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
-	themeMode       string     // "light"|"dark"; active palette mode
-	themeModTime    time.Time  // last-seen mtime of the theme-state file
+	dir               string
+	filter            string
+	state             string    // open | merged | closed; the s-toggle dimension
+	body              string    // state-agnostic qualifier (e.g. "author:@me", "")
+	mode              string    // "pr" | "issue"; the i-toggle dimension
+	omniServer        string    // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
+	omniSeq           int       // bumped on each server-qualifier change; gates the debounced SWR refetch
+	other             boardView // the inactive board's saved state/preset (restored on toggle-back)
+	issueDetail       map[int]gh.IssueDetail
+	issueFresh        map[int]bool // issue numbers whose body was refetched this session
+	cache             *cache.Cache
+	runner            gh.Runner
+	vp                viewport.Model
+	cursor            int // indexes the section's shown set
+	cursorLine        int // display-line offset of the cursor row (headers shift it)
+	previewOffset     int // ctrl+j/k scroll position within the side preview
+	width             int
+	height            int
+	section           Section
+	err               error
+	filtering         bool
+	filterInput       textinput.Model
+	omniSuggestCursor int // highlighted row in the @-mention autocomplete dropdown
+	repo              string
+	actions           map[string]action.Action
+	pending           *action.Action
+	showActions       bool
+	showLegend        bool
+	actionFilter      textinput.Model
+	actionCursor      int
+	sel               selection
+	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
+	previewExpanded   bool
+	previewN          int
+	expanded          bool
+	expandedTab       int
+	checkCursor       int         // hovered check on the expanded Checks tab
+	loaded            bool        // first live fetch has returned; distinguishes empty from loading
+	emptyNotice       string      // overrides the empty-board hint (e.g. issues disabled on this repo)
+	refreshing        bool        // a list fetch for the current filter is in flight
+	spinning          bool        // the refresh spinner tick loop is running
+	spinnerFrame      int         // advancing index into spinnerFrames
+	polling           bool        // the live-checks poll tick loop is running
+	actionStatus      *actionStat // transient inline-action progress shown by the header
+	presetIdx         int         // index into defaultPresets; -1 when filter is a custom (author) query
+	previewMax        bool        // z: preview takes full width, list hidden
+	hideDrafts        bool        // D: exclude draft PRs from the board
+	showPicker        bool
+	pickerMode        string // "author" | "reviewer"
+	pick              picker
+	members           []gh.User  // cached assignable users for this repo
+	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
+	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
+	themeMode         string     // "light"|"dark"; active palette mode
+	themeModTime      time.Time  // last-seen mtime of the theme-state file
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -362,6 +364,79 @@ func (m *Model) omniServerCmd() tea.Cmd {
 	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
 		return omniDebounceMsg{seq: seq}
 	})
+}
+
+// omniActivePartial returns the @-login partial immediately left of the
+// cursor, and whether the cursor sits inside such a token. "@" alone yields
+// "". Position() is a rune index but Value() is sliced by byte; fine as long
+// as logins stay ASCII.
+func (m Model) omniActivePartial() (string, bool) {
+	v := m.filterInput.Value()[:m.filterInput.Position()]
+	i := strings.LastIndexAny(v, " ")
+	tok := v[i+1:]
+	if !strings.HasPrefix(tok, "@") {
+		return "", false
+	}
+	return tok[1:], true
+}
+
+// omniSuggestions is the active @-partial's member candidates, narrowed by
+// fuzzy match; nil outside an @ token or off the PR omni bar.
+func (m Model) omniSuggestions() []gh.User {
+	if !m.filtering || m.mode != "pr" {
+		return nil
+	}
+	partial, ok := m.omniActivePartial()
+	if !ok {
+		return nil
+	}
+	if partial == "" {
+		return m.members
+	}
+	logins := make([]string, len(m.members))
+	for i, u := range m.members {
+		logins[i] = u.Login
+	}
+	out := []gh.User{}
+	for _, mt := range fuzzy.Find(partial, logins) {
+		out = append(out, m.members[mt.Index])
+	}
+	return out
+}
+
+// completeOmniAt replaces the active @-partial with @<login>, moving the
+// cursor past the inserted token.
+func (m *Model) completeOmniAt(login string) {
+	v := m.filterInput.Value()
+	pos := m.filterInput.Position()
+	left := v[:pos]
+	i := strings.LastIndexAny(left, " ")
+	rewritten := left[:i+1] + "@" + login + v[pos:]
+	m.filterInput.SetValue(rewritten)
+	m.filterInput.SetCursor(i + 1 + len("@"+login))
+}
+
+// omniSuggestDropdownRows caps how many members the @-mention dropdown lists
+// at once; the fuzzy partial narrows the set to reach the rest.
+const omniSuggestDropdownRows = 6
+
+// omniSuggestDropdown renders the @-mention candidate list under the omni bar,
+// highlighting m.omniSuggestCursor; "" when no suggestions are active.
+func (m Model) omniSuggestDropdown() string {
+	sug := m.omniSuggestions()
+	if len(sug) == 0 {
+		return ""
+	}
+	n := min(len(sug), omniSuggestDropdownRows)
+	lines := make([]string, n)
+	for i, u := range sug[:n] {
+		cur := "  "
+		if i == m.omniSuggestCursor {
+			cur = accentStyle.Render("▸ ")
+		}
+		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-2))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // prKey scopes the cached PR list by repo — the shared cache file holds every
@@ -1175,14 +1250,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterInput.SetValue("")
 				m.filterInput.Blur()
 				m.omniServer = ""
+				m.omniSuggestCursor = 0
 				m.filter = searchFor("pr", m.state, "")
 				m.sel.clear()
 				return m, m.switchToFilter() // restore the sections default
+			case "tab":
+				if sug := m.omniSuggestions(); len(sug) > 0 {
+					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
+					m.omniSuggestCursor = 0
+					m.applyFilter()
+					return m, m.omniServerCmd()
+				}
+				return m, nil // no suggestion active: tab is unbound in omni mode
 			case "enter":
+				if sug := m.omniSuggestions(); len(sug) > 0 {
+					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
+					m.omniSuggestCursor = 0
+					m.applyFilter()
+					return m, m.omniServerCmd()
+				}
 				m.filtering = false
 				m.filterInput.Blur()
 				return m, nil // keep the filter applied; hand keys back to the list
 			case "up", "down", "ctrl+n", "ctrl+p", "pgup", "pgdown":
+				if sug := m.omniSuggestions(); len(sug) > 0 && (msg.String() == "up" || msg.String() == "down") {
+					m.omniSuggestCursor = max(0, min(m.omniSuggestCursor+cursorDelta(msg.String()), len(sug)-1))
+					return m, nil
+				}
 				m.moveCursor(cursorDelta(msg.String())) // pass through to the list
 				m.detailSeq++
 				return m, m.debounceDetailCmd()
@@ -1195,6 +1289,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.omniSuggestCursor = 0 // the edit reshapes the @-partial; re-narrow from the top
 			m.sel.clear()
 			m.applyFilter() // bare text: instant, local
 			return m, tea.Batch(cmd, m.omniServerCmd())
@@ -1328,7 +1423,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "/":
 			m.filtering = true
-			return m, m.filterInput.Focus()
+			cmds := []tea.Cmd{m.filterInput.Focus()}
+			if m.mode == "pr" && m.members == nil {
+				cmds = append(cmds, m.fetchMembersCmd())
+			}
+			return m, tea.Batch(cmds...)
 		case "?":
 			m.showLegend = true
 			return m, nil
@@ -1392,7 +1491,11 @@ func (m Model) render() string {
 		return m.expandedView()
 	}
 	if m.filtering {
-		return m.header() + "\n" + m.filterInput.View() + "\n" + m.renderMain()
+		out := m.header() + "\n" + m.filterInput.View()
+		if dd := m.omniSuggestDropdown(); dd != "" {
+			out += "\n" + dd
+		}
+		return out + "\n" + m.renderMain()
 	}
 	// Overlays float over the live board so the layout stays put behind them.
 	board := m.board()

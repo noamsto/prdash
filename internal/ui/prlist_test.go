@@ -934,6 +934,8 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
 	case "ctrl+p":
 		return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
 	default:
 		r := []rune(s)[0]
 		return tea.KeyPressMsg{Code: r, Text: s}
@@ -1030,5 +1032,21 @@ func TestOmniIssueBoardUnaffected(t *testing.T) {
 	}
 	if m.filter != before {
 		t.Fatalf("esc rewrote issue filter to %q, want %q", m.filter, before)
+	}
+}
+
+func TestOmniAutocomplete(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.members = []gh.User{{Login: "alice"}, {Login: "bob"}}
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("@al")
+	sug := m.omniSuggestions()
+	if len(sug) != 1 || sug[0].Login != "alice" {
+		t.Fatalf("suggestions = %+v, want [alice]", sug)
+	}
+	u, _ := m.Update(keyMsg("tab"))
+	if got := u.(Model).filterInput.Value(); got != "@alice" {
+		t.Fatalf("after tab = %q, want @alice", got)
 	}
 }
