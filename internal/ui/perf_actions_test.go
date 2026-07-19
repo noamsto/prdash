@@ -30,18 +30,22 @@ func TestSpaceTogglesSelection(t *testing.T) {
 	}
 }
 
-func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
+func TestOmniEscPaintsCachedSectionsImmediately(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-all"}})
 	c.Set(prKey("x", "is:open", openListLimit), raw) // the sections default reads is:open at openListLimit
 
-	m := NewModel("/repo", "is:open author:@me", c)
+	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("x")
 	m.width, m.height = 120, 30
-	m.setPRs([]gh.PR{{Number: 1, Title: "mine"}}) // current preset's rows
+	m.setPRs([]gh.PR{{Number: 1, Title: "filtered"}}) // the active server-qualifier's rows
 	m.renderList()
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("label:bug")
+	m.omniServer = "label:bug"
 
-	u, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"}) // mine → all
+	u, _ := m.Update(keyMsg("esc")) // restores the sections default
 	m = u.(Model)
 
 	if m.filter != "is:open" {
@@ -49,7 +53,7 @@ func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	}
 	ps := m.section.(*PRSection)
 	if len(ps.prs) != 1 || ps.prs[0].Number != 99 {
-		t.Fatalf("switch did not paint cached rows before fetch: %+v", ps.prs)
+		t.Fatalf("esc did not paint cached sections rows before fetch: %+v", ps.prs)
 	}
 }
 
@@ -94,21 +98,21 @@ func TestStateToggleRecomputesFilter(t *testing.T) {
 	}
 }
 
-func TestMineFetchedCachesPerState(t *testing.T) {
+func TestSectionsFetchedCachesPerState(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
-	m := NewModel("/repo", "is:open author:@me", c) // mine view, open
+	m := NewModel("/repo", "is:open", c) // sections default, open
 	m.SetRepo("x")
 	m.width, m.height = 120, 30
 	m.loaded = true
 
-	// A merged-state mine result arriving while viewing open: cache only, no repaint.
-	mineRaw, _ := json.Marshal([]gh.PR{{Number: 7}})
+	// A merged-state sections result arriving while viewing open: cache only, no repaint.
+	openRaw, _ := json.Marshal([]gh.PR{{Number: 7}})
 	revRaw, _ := json.Marshal([]gh.PR{})
-	u, _ := m.Update(mineFetchedMsg{state: "merged", mine: []gh.PR{{Number: 7}}, mineRaw: mineRaw, reviewRaw: revRaw})
+	u, _ := m.Update(sectionsFetchedMsg{state: "merged", open: []gh.PR{{Number: 7}}, openRaw: openRaw, reviewRaw: revRaw})
 	m = u.(Model)
 
-	if _, ok := c.Get(prKey("x", "is:merged author:@me", defaultLimit)); !ok {
-		t.Fatal("merged mine result not cached under its per-state key")
+	if _, ok := c.Get(prKey("x", "is:merged review-requested:@me", defaultLimit)); !ok {
+		t.Fatal("merged review-requested result not cached under its per-state key")
 	}
 	if ps := m.section.(*PRSection); ps.Len() != 0 {
 		t.Fatalf("merged prewarm should not repaint the open view, got %d rows", ps.Len())
@@ -161,23 +165,25 @@ func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
 	}
 }
 
-func TestMineViewSections(t *testing.T) {
-	m := NewModel("/repo", "is:open author:@me", nil)
+func TestSectionsViewRendersBothHeaders(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
 	m.width, m.height = 130, 40
-	m.setMine(
-		[]gh.PR{{Number: 1, Title: "my pr"}, {Number: 2, Title: "also mine"}},
-		[]gh.PR{{Number: 2, Title: "also mine"}, {Number: 9, Title: "please review"}}, // #2 authored+requested → stays Mine
+	m.viewerLogin = "me"
+	m.setSections(
+		[]gh.PR{{Number: 2, Title: "also mine", Author: author("me")}, {Number: 9, Title: "please review", Author: author("someone")}}, // review requested; #2 authored by me too → stays Review requested
+		[]gh.PR{{Number: 1, Title: "my pr", Author: author("me")}, {Number: 2, Title: "also mine", Author: author("me")}},              // open list
+		"me",
 	)
 	m.renderList()
 
 	ps := m.section.(*PRSection)
 	if ps.Len() != 3 {
-		t.Fatalf("deduped mine view should show 3 PRs, got %d", ps.Len())
+		t.Fatalf("deduped sections view should show 3 PRs, got %d", ps.Len())
 	}
 	out := m.render()
 	if !strings.Contains(out, "Mine") || !strings.Contains(out, "Review requested") {
-		t.Fatalf("mine view should show both section headers:\n%s", out)
+		t.Fatalf("sections view should show both section headers:\n%s", out)
 	}
 }
 

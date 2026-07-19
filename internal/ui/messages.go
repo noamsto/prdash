@@ -22,17 +22,9 @@ type issuesFetchedMsg struct {
 	raw    []byte
 }
 
-// mineFetchedMsg carries both halves of the "mine" view (authored +
-// review-requested) so it can render them as two sections.
-type mineFetchedMsg struct {
-	state              string // the PR state (open/merged/closed) this result is for
-	mine, review       []gh.PR
-	mineRaw, reviewRaw []byte
-}
-
 // sectionsFetchedMsg carries the two async halves of the empty-default open view
 // (review-requested + the limit-100 open list) so the handler can compose the
-// Review/Mine/Others sections via setSections. Generalizes mineFetchedMsg.
+// Review/Mine/Others sections via setSections.
 type sectionsFetchedMsg struct {
 	state              string // the PR state (open/merged/closed) this result is for
 	review, open       []gh.PR

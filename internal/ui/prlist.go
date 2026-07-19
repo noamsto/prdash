@@ -116,10 +116,10 @@ func (m *Model) SetRepo(repo string)   { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
-		// Outside the "mine" view, group by author even with a single author, so
-		// you always see whose PRs you're looking at.
+		// Outside the sections default, group by author even with a single
+		// author, so you always see whose PRs you're looking at.
 		s.SetState(m.state)
-		s.SetForceGroup(!m.isMineView())
+		s.SetForceGroup(!m.sectionsDefault())
 		s.SetPRs(prs)
 	}
 	m.applyFilter()
@@ -131,32 +131,6 @@ func (m *Model) setPRs(prs []gh.PR) {
 func (m *Model) setIssues(is []gh.Issue) {
 	if s, ok := m.section.(*IssueSection); ok {
 		s.SetIssues(is)
-	}
-	m.applyFilter()
-	if n := m.section.Len(); m.cursor >= n {
-		m.cursor = max(0, n-1)
-	}
-}
-
-// setMine paints the mine view: authored PRs under "Mine", review-requested
-// under "Review requested". A PR that is both stays under Mine.
-func (m *Model) setMine(mine, review []gh.PR) {
-	cats := make(map[int]string, len(mine)+len(review))
-	all := make([]gh.PR, 0, len(mine)+len(review))
-	for _, p := range mine {
-		cats[p.Number] = "Mine"
-		all = append(all, p)
-	}
-	for _, p := range review {
-		if _, dup := cats[p.Number]; dup {
-			continue
-		}
-		cats[p.Number] = "Review requested"
-		all = append(all, p)
-	}
-	if s, ok := m.section.(*PRSection); ok {
-		s.SetState(m.state)
-		s.SetCategorized(all, cats, []string{"Mine", "Review requested"})
 	}
 	m.applyFilter()
 	if n := m.section.Len(); m.cursor >= n {
@@ -661,33 +635,6 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// mineFetchCmd fetches both halves of the mine view in one command, caching each
-// under its own filter key. Sequential (not parallel) — two quick gh calls.
-func (m Model) mineFetchCmd() tea.Cmd {
-	r, dir := m.runner, m.dir
-	state := m.state
-	mineF, reviewF := searchFor("pr", state, mineBody), searchFor("pr", state, reviewBody)
-	list := func(filter string) ([]gh.PR, []byte, error) {
-		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
-		if err != nil {
-			return nil, nil, err
-		}
-		prs, err := gh.ParsePRs(raw)
-		return prs, raw, err
-	}
-	return func() tea.Msg {
-		mine, mineRaw, err := list(mineF)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: mineF}
-		}
-		rev, revRaw, err := list(reviewF)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: mineF}
-		}
-		return mineFetchedMsg{state: state, mine: mine, mineRaw: mineRaw, review: rev, reviewRaw: revRaw}
-	}
-}
-
 // sectionsFetchCmd fetches both halves of the empty-default open view — the
 // review-requested search and the wider is:open list — caching each under its
 // own filter+limit key. Sequential (not parallel): two quick gh calls.
@@ -1035,22 +982,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		return m, m.detailCmdForCursor()
-	case mineFetchedMsg:
-		if m.cache != nil {
-			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, mineBody), defaultLimit), msg.mineRaw)
-			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
-		}
-		if !m.isMineView() || msg.state != m.state {
-			return m, nil // prewarm while viewing another preset/state
-		}
-		m.refreshing = false
-		m.loaded = true
-		m.sel.clear()
-		m.setMine(msg.mine, msg.review)
-		if m.expanded && m.section.Len() == 0 {
-			m.expanded = false
-		}
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case sectionsFetchedMsg:
 		if m.cache != nil {
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
@@ -1374,6 +1305,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showActions = true
 			return m, m.actionFilter.Focus()
 		case "f":
+			if m.mode != "issue" {
+				return m, nil // PR board: filtering is via / (omni); f is retired
+			}
 			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
 			ps := presetsFor(m.mode)
 			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
@@ -1408,11 +1342,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sel.clear() // the shown set changes; stale indexes would point elsewhere
 			m.applyFilter()
 			return m, nil
-		case "F":
-			if m.mode != "pr" {
-				return m, nil
-			}
-			return m, m.openPicker("author")
 		case "R":
 			if m.mode != "pr" {
 				return m, nil
@@ -1492,8 +1421,11 @@ func (m Model) render() string {
 	}
 	if m.filtering {
 		out := m.header() + "\n" + m.filterInput.View()
-		if dd := m.omniSuggestDropdown(); dd != "" {
+		switch dd := m.omniSuggestDropdown(); {
+		case dd != "":
 			out += "\n" + dd
+		case m.mode == "pr":
+			out += "\n" + dimStyle.Render("@user · is: · text")
 		}
 		return out + "\n" + m.renderMain()
 	}
@@ -1670,19 +1602,19 @@ func (m Model) titleGlyph() string {
 }
 
 // listTitle is the list pane's border title — the current view: state glyph +
-// preset (or custom author body) + state + shown count.
+// preset (or custom author body, or the active omni query) + state + shown count.
 func (m Model) listTitle() string {
 	label := m.body
-	if m.presetIdx >= 0 {
+	if m.mode == "issue" && m.presetIdx >= 0 {
 		label = presetsFor(m.mode)[m.presetIdx].name
+	} else if m.mode == "pr" {
+		if m.omniServer != "" {
+			label = m.omniServer
+		} else {
+			label = "all"
+		}
 	}
 	return fmt.Sprintf("%s %s · %s · %d", m.titleGlyph(), label, m.state, m.section.Len())
-}
-
-// isMineView reports whether the active view is the "mine" preset, where every
-// PR is the author's own — so grouping by author would be noise.
-func (m Model) isMineView() bool {
-	return m.mode == "pr" && m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
 }
 
 // sectionsDefault reports whether the board is the empty-default open PR view —
@@ -1727,9 +1659,9 @@ func (m Model) legendView() string {
 	}
 	nav = append(nav, key("⇥", "PRs/Issues"))
 
-	filters := []string{key("f", "filter"), key("s", "state")}
+	filters := []string{key("/", "filter (@user, is:, text)"), key("s", "state")}
 	if m.mode == "pr" {
-		filters = append(filters, key("F", "author"), key("R", "reviewers"), key("D", "drafts"))
+		filters = append(filters, key("R", "reviewers"), key("D", "drafts"))
 	}
 
 	preview := []string{}
@@ -1741,7 +1673,7 @@ func (m Model) legendView() string {
 	rows = append(rows,
 		row(nav...),
 		row(preview...),
-		row(key("/", "find"), key("space", "select"), key("V", "all")),
+		row(key("space", "select"), key("V", "all")),
 		row(filters...),
 		row(key("a", "actions"), key("ctrl+r", "refresh"), key("?", "legend"), key("q", "quit")),
 		"",
@@ -1764,13 +1696,13 @@ type keyHint struct{ key, label string }
 // drops the PR-only author/reviewer/drafts hints; both modes show the tab-toggle.
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
-		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"f", "filter"}, {"s", "state"},
+		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
 		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
 			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
-			{"F", "author"}, {"R", "reviewers"}, {"D", "drafts"},
+			{"R", "reviewers"}, {"D", "drafts"},
 		}
 		return append(base, pr...)
 	}

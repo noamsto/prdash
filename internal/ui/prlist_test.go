@@ -154,12 +154,12 @@ func TestViewShowsHeaderAndStatus(t *testing.T) {
 }
 
 func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
-	m := NewModel("/repo", "is:open author:@me", nil)
+	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("noamsto/prdash")
 	m.width, m.height = 100, 30
-	if m.presetIdx != -1 {
-		t.Fatalf("initial presetIdx = %d, want -1 (the PR board has no presets)", m.presetIdx)
-	}
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.presetIdx = 0 // issuePresets[0] == "mine"
 	m2, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	m = m2.(Model)
 	if m.filter != "is:open" {
@@ -167,6 +167,21 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 	}
 	if !strings.Contains(m.render(), "all") {
 		t.Fatalf("header should show the active preset name: %q", m.render())
+	}
+}
+
+// TestFAndBigFAreNoOpsOnPRBoard guards Phase E: on the PR board, filtering is
+// via / (omni) — f and F are retired (issue board f cycles presets unchanged).
+func TestFAndBigFAreNoOpsOnPRBoard(t *testing.T) {
+	m := newTestModelWithRows(t)
+	before := m.filter
+	u, _ := m.Update(keyMsg("f"))
+	if u.(Model).filter != before {
+		t.Error("f must be a no-op on the PR board")
+	}
+	u2, _ := u.(Model).Update(keyMsg("F"))
+	if u2.(Model).showPicker {
+		t.Error("F must not open the author picker anymore")
 	}
 }
 
@@ -276,7 +291,8 @@ func TestMineViewRendersFlatNoHeaders(t *testing.T) {
 }
 
 func TestNonMineSingleAuthorStillGroups(t *testing.T) {
-	m := NewModel("/repo", "is:open review-requested:@me", nil) // a non-"mine" preset
+	m := NewModel("/repo", "is:open review-requested:@me", nil)
+	m.omniServer = "review-requested:@me" // an active server qualifier: not the sections default
 	m.SetRepo("r")
 	m.width, m.height = 100, 30
 	p1 := gh.PR{Number: 1, Title: "one"}
@@ -473,11 +489,12 @@ func TestAnyChecksRunningDetectsPendingBehindAFailure(t *testing.T) {
 	}
 }
 
-func TestAnyChecksRunningScansMineViewBothHalves(t *testing.T) {
-	m := NewModel("/repo", "is:open author:@me", nil) // the mine preset
-	m.setMine(
-		[]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}},
-		[]gh.PR{{Number: 2, StatusCheckRollup: []gh.Check{{State: "PENDING"}}}},
+func TestAnyChecksRunningScansSectionsBothHalves(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil) // sections default
+	m.setSections(
+		[]gh.PR{{Number: 2, StatusCheckRollup: []gh.Check{{State: "PENDING"}}}}, // review requested
+		[]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}}, // open
+		"",
 	)
 	if !m.anyChecksRunning() {
 		t.Fatal("expected a running check in the review-requested half to be detected")
@@ -675,15 +692,6 @@ func TestChecksPollInertInIssueMode(t *testing.T) {
 	}
 	if u.(Model).mode != "issue" {
 		t.Error("checksPollMsg must not switch section in issue mode")
-	}
-}
-
-func TestIsMineViewFalseInIssueMode(t *testing.T) {
-	m := NewModel(".", "is:open", nil)
-	m.mode = "issue"
-	m.presetIdx = 0 // issuePresets[0] is also named "mine"
-	if m.isMineView() {
-		t.Error("isMineView should be false in issue mode, even at the issue 'mine' preset")
 	}
 }
 
