@@ -52,6 +52,10 @@ type viewerFetchedMsg struct{ login string }
 
 type detailDebounceMsg struct{ seq int }
 
+// omniDebounceMsg fires ~250ms after the omni server-qualifier last changed; only
+// the latest seq issues the SWR refetch for the composed query.
+type omniDebounceMsg struct{ seq int }
+
 // spinnerTickMsg advances the header refresh spinner; the loop runs only while a
 // fetch is in flight.
 type spinnerTickMsg struct{}

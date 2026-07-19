@@ -911,3 +911,124 @@ func TestApplyFilterRenderSwitch(t *testing.T) {
 		t.Fatal("clearing text should restore sections")
 	}
 }
+
+// keyMsg builds a tea.KeyMsg from a key string so tests can drive Update the way
+// the app's key switch reads it (msg.String()).
+func keyMsg(s string) tea.KeyMsg {
+	switch s {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "pgup":
+		return tea.KeyPressMsg{Code: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyPressMsg{Code: tea.KeyPgDown}
+	case "backspace":
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
+	case "ctrl+n":
+		return tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
+	case "ctrl+p":
+		return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
+	default:
+		r := []rune(s)[0]
+		return tea.KeyPressMsg{Code: r, Text: s}
+	}
+}
+
+// newTestModelWithRows returns a PR-board model with a few open PRs painted.
+func newTestModelWithRows(t *testing.T) Model {
+	t.Helper()
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setPRs([]gh.PR{
+		{Number: 1, Title: "one", Author: author("me")},
+		{Number: 2, Title: "two flaky", Author: author("x")},
+		{Number: 3, Title: "three", Author: author("y")},
+	})
+	return m
+}
+
+func TestOmniCommitThenAction(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("flaky")
+	m.applyFilter()
+	u, _ := m.Update(keyMsg("enter"))
+	m = u.(Model)
+	if m.filtering {
+		t.Fatal("enter should exit omni mode")
+	}
+	if m.filterInput.Value() != "flaky" {
+		t.Fatal("enter must keep the filter text")
+	}
+	// a following action key is now interpreted by the list, not the input:
+	u2, _ := m.Update(keyMsg("D"))
+	if !u2.(Model).hideDrafts {
+		t.Fatal("post-commit 'D' should toggle drafts (action, not text)")
+	}
+}
+
+func TestOmniServerQualifierRewritesFilter(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("label:bu")
+	u, _ := m.Update(keyMsg("g")) // completes the qualifier, triggers re-parse
+	m = u.(Model)
+	if m.omniServer != "label:bug" {
+		t.Fatalf("omniServer = %q, want label:bug", m.omniServer)
+	}
+	if m.filter != "is:open label:bug" {
+		t.Fatalf("filter = %q, want is:open label:bug", m.filter)
+	}
+	if m.sectionsDefault() {
+		t.Fatal("a server qualifier must leave the sections default")
+	}
+}
+
+func TestOmniNoClobberDropsStale(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.filter = "is:open label:new" // current composed query
+	stale := prsFetchedMsg{filter: "is:open label:old", prs: []gh.PR{{Number: 99}}}
+	u, _ := m.Update(stale)
+	got := u.(Model)
+	if got.section.Len() == 1 && got.section.(*PRSection).prAt(0).Number == 99 {
+		t.Fatal("stale server response for a superseded query must be dropped")
+	}
+}
+
+// TestOmniIssueBoardUnaffected guards PLAN_FIXES B3: the omni server-qualifier
+// machinery is PR-only. Entering the filter on the issue board and typing a
+// label:x-looking token then esc must not rewrite the issue filter with PR
+// semantics or leave a PR server qualifier armed.
+func TestOmniIssueBoardUnaffected(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection(m.filter)
+	before := m.filter
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("label:bug")
+	u, _ := m.Update(keyMsg("g"))
+	m = u.(Model)
+	if m.omniServer != "" {
+		t.Fatalf("issue board must not arm a server qualifier, got %q", m.omniServer)
+	}
+	if m.filter != before {
+		t.Fatalf("issue filter rewritten to %q, want unchanged %q", m.filter, before)
+	}
+	u2, _ := m.Update(keyMsg("esc"))
+	m = u2.(Model)
+	if m.filtering {
+		t.Fatal("esc should exit the issue filter")
+	}
+	if m.filter != before {
+		t.Fatalf("esc rewrote issue filter to %q, want %q", m.filter, before)
+	}
+}

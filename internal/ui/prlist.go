@@ -34,6 +34,7 @@ type Model struct {
 	body            string    // state-agnostic qualifier (e.g. "author:@me", "")
 	mode            string    // "pr" | "issue"; the i-toggle dimension
 	omniServer      string    // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
+	omniSeq         int       // bumped on each server-qualifier change; gates the debounced SWR refetch
 	other           boardView // the inactive board's saved state/preset (restored on toggle-back)
 	issueDetail     map[int]gh.IssueDetail
 	issueFresh      map[int]bool // issue numbers whose body was refetched this session
@@ -328,6 +329,39 @@ func (m *Model) applyFilter() {
 		m.cursor = 0
 	}
 	m.renderList()
+}
+
+// cursorDelta maps an omni-mode navigation key to a signed row delta; page keys
+// jump a screenful, arrows/ctrl-n/p one row. moveCursor clamps the result.
+func cursorDelta(key string) int {
+	switch key {
+	case "up", "ctrl+p":
+		return -1
+	case "down", "ctrl+n":
+		return 1
+	case "pgup":
+		return -10
+	case "pgdown":
+		return 10
+	}
+	return 0
+}
+
+// omniServerCmd re-parses the omni input; when the server-qualifier half changed,
+// it repoints m.filter and arms a debounced SWR refetch. Bare text is handled by
+// applyFilter (instant), so a pure-text edit arms nothing.
+func (m *Model) omniServerCmd() tea.Cmd {
+	server, _ := parseOmni(m.filterInput.Value())
+	if server == m.omniServer {
+		return nil
+	}
+	m.omniServer = server
+	m.filter = searchFor("pr", m.state, server)
+	m.omniSeq++
+	seq := m.omniSeq
+	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
+		return omniDebounceMsg{seq: seq}
+	})
 }
 
 // prKey scopes the cached PR list by repo — the shared cache file holds every
@@ -1023,6 +1057,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	case omniDebounceMsg:
+		if msg.seq != m.omniSeq || !m.filtering {
+			return m, nil // superseded by a later keystroke, or already committed
+		}
+		return m, m.switchToFilter() // SWR: hydrate cached instant, fetch to reconcile
 	case fetchSkippedMsg:
 		// Current view served from a fresh cache: no fetch ran, so settle the
 		// state the hydrated rows were painted under and warm detail/poll.
@@ -1108,24 +1147,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.confirmAnswer(false)
 		}
 		if m.filtering {
+			if m.mode != "pr" {
+				// Issue board: plain local fuzzy filter, untouched by the omni
+				// server-qualifier machinery.
+				switch msg.String() {
+				case "esc":
+					m.filtering = false
+					m.filterInput.SetValue("")
+					m.filterInput.Blur()
+					m.sel.clear() // shown set changes; stale indexes would point elsewhere
+					m.applyFilter()
+					return m, nil
+				case "enter":
+					m.filtering = false
+					m.filterInput.Blur()
+					return m, nil
+				}
+				var cmd tea.Cmd
+				m.filterInput, cmd = m.filterInput.Update(msg)
+				m.sel.clear() // editing the query reorders the shown set
+				m.applyFilter()
+				return m, cmd
+			}
 			switch msg.String() {
 			case "esc":
 				m.filtering = false
 				m.filterInput.SetValue("")
 				m.filterInput.Blur()
-				m.sel.clear() // shown set changes; stale indexes would point elsewhere
-				m.applyFilter()
-				return m, nil
+				m.omniServer = ""
+				m.filter = searchFor("pr", m.state, "")
+				m.sel.clear()
+				return m, m.switchToFilter() // restore the sections default
 			case "enter":
 				m.filtering = false
 				m.filterInput.Blur()
-				return m, nil
+				return m, nil // keep the filter applied; hand keys back to the list
+			case "up", "down", "ctrl+n", "ctrl+p", "pgup", "pgdown":
+				m.moveCursor(cursorDelta(msg.String())) // pass through to the list
+				m.detailSeq++
+				return m, m.debounceDetailCmd()
+			case "backspace":
+				if m.filterInput.Value() == "" {
+					m.filtering = false
+					m.filterInput.Blur()
+					return m, nil
+				}
 			}
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
-			m.sel.clear() // editing the query reorders the shown set
-			m.applyFilter()
-			return m, cmd
+			m.sel.clear()
+			m.applyFilter() // bare text: instant, local
+			return m, tea.Batch(cmd, m.omniServerCmd())
 		}
 		if m.showPicker {
 			switch msg.String() {
