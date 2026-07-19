@@ -33,6 +33,7 @@ type Model struct {
 	state           string    // open | merged | closed; the s-toggle dimension
 	body            string    // state-agnostic qualifier (e.g. "author:@me", "")
 	mode            string    // "pr" | "issue"; the i-toggle dimension
+	omniServer      string    // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
 	other           boardView // the inactive board's saved state/preset (restored on toggle-back)
 	issueDetail     map[int]gh.IssueDetail
 	issueFresh      map[int]bool // issue numbers whose body was refetched this session
@@ -153,6 +154,38 @@ func (m *Model) setMine(mine, review []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
 		s.SetState(m.state)
 		s.SetCategorized(all, cats, []string{"Mine", "Review requested"})
+	}
+	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n {
+		m.cursor = max(0, n-1)
+	}
+}
+
+// setSections paints the empty-default open view: Review requested → Mine →
+// Others. Precedence is Review > Mine > Others (first match wins). Mine needs the
+// real viewer login to split one open list client-side; an empty viewer (login
+// not yet resolved) collapses Mine into Others until viewerFetchedMsg re-runs this.
+func (m *Model) setSections(review, open []gh.PR, viewer string) {
+	cats := make(map[int]string, len(open)+len(review))
+	all := make([]gh.PR, 0, len(open)+len(review))
+	for _, p := range review {
+		cats[p.Number] = "Review requested"
+		all = append(all, p)
+	}
+	for _, p := range open {
+		if _, dup := cats[p.Number]; dup {
+			continue // already Review requested; precedence wins
+		}
+		if viewer != "" && p.Author.Login == viewer {
+			cats[p.Number] = "Mine"
+		} else {
+			cats[p.Number] = "Others"
+		}
+		all = append(all, p)
+	}
+	if s, ok := m.section.(*PRSection); ok {
+		s.SetState(m.state)
+		s.SetCategorized(all, cats, []string{"Review requested", "Mine", "Others"})
 	}
 	m.applyFilter()
 	if n := m.section.Len(); m.cursor >= n {
@@ -1414,6 +1447,13 @@ func (m Model) listTitle() string {
 // PR is the author's own — so grouping by author would be noise.
 func (m Model) isMineView() bool {
 	return m.mode == "pr" && m.presetIdx >= 0 && defaultPresets[m.presetIdx].name == "mine"
+}
+
+// sectionsDefault reports whether the board is the empty-default open PR view —
+// the sole state that shows the Review/Mine/Others sections. Any active server
+// qualifier or a non-open state drops to the flat setPRs path.
+func (m Model) sectionsDefault() bool {
+	return m.mode == "pr" && m.state == "open" && m.omniServer == ""
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.

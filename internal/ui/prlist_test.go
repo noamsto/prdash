@@ -825,3 +825,34 @@ func TestHydrateViewerLogin(t *testing.T) {
 		t.Fatalf("viewerLogin = %q", m.viewerLogin)
 	}
 }
+
+// author builds a gh.PR.Author value from a login, for concise test literals.
+func author(login string) struct {
+	Login string `json:"login"`
+} {
+	return struct {
+		Login string `json:"login"`
+	}{Login: login}
+}
+
+func TestSetSections(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	me := "me"
+	review := []gh.PR{{Number: 1, Author: author("me")}}
+	open := []gh.PR{
+		{Number: 1, Author: author("me")},
+		{Number: 2, Author: author("me")},
+		{Number: 3, Author: author("someone")},
+	}
+	m.setSections(review, open, me)
+	ps := m.section.(*PRSection)
+	if cat := ps.cats[1]; cat != "Review requested" {
+		t.Errorf("#1 = %q, want Review requested (review beats mine)", cat)
+	}
+	if cat := ps.cats[2]; cat != "Mine" {
+		t.Errorf("#2 = %q, want Mine", cat)
+	}
+	if cat := ps.cats[3]; cat != "Others" {
+		t.Errorf("#3 = %q, want Others", cat)
+	}
+}
