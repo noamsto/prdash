@@ -33,7 +33,7 @@ func TestSpaceTogglesSelection(t *testing.T) {
 func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-all"}})
-	c.Set(prKey("x", "is:open", defaultLimit), raw)
+	c.Set(prKey("x", "is:open", openListLimit), raw) // the sections default reads is:open at openListLimit
 
 	m := NewModel("/repo", "is:open author:@me", c)
 	m.SetRepo("x")

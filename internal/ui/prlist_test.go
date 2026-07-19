@@ -47,7 +47,7 @@ func TestHydrateFromCache(t *testing.T) {
 
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	c.Set(prKey(m.repo, "is:open", defaultLimit), raw)
+	c.Set(prKey(m.repo, "is:open", openListLimit), raw) // the sections default reads is:open at openListLimit
 	m.hydrate()
 	sec := m.section.(*PRSection)
 	if len(sec.prs) != 1 || sec.prs[0].Number != 42 {
@@ -157,8 +157,8 @@ func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("noamsto/prdash")
 	m.width, m.height = 100, 30
-	if m.presetIdx != 0 {
-		t.Fatalf("initial presetIdx = %d, want 0 (mine)", m.presetIdx)
+	if m.presetIdx != -1 {
+		t.Fatalf("initial presetIdx = %d, want -1 (the PR board has no presets)", m.presetIdx)
 	}
 	m2, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	m = m2.(Model)
@@ -258,6 +258,7 @@ func TestGroupedRenderEmitsHeadersAndTracksCursorLine(t *testing.T) {
 
 func TestMineViewRendersFlatNoHeaders(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil) // the "mine" preset
+	m.presetIdx = 0                                   // NewModel no longer infers the preset from body
 	m.SetRepo("r")
 	m.width, m.height = 100, 30
 	p1 := gh.PR{Number: 1, Title: "one"}
@@ -728,9 +729,8 @@ func launchModel(t *testing.T) (Model, *cache.Cache) {
 
 // warmLaunchCache seeds every key Init reconciles so the whole launch is fresh.
 func warmLaunchCache(m Model, c *cache.Cache) {
-	c.Set(prKey(m.repo, searchFor("pr", m.state, mineBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit), json.RawMessage("[]"))
-	c.Set(prKey(m.repo, "is:open", defaultLimit), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, "is:open", openListLimit), json.RawMessage("[]"))
 	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody)), json.RawMessage("[]"))
 	c.Set(membersKey(m.repo), json.RawMessage("[]"))
 	c.Set(viewerKey(), json.RawMessage(`"me"`))
@@ -763,9 +763,9 @@ func TestLaunchFetchesWhenCacheCold(t *testing.T) {
 			cmd()
 		}
 	}
-	// mine view (mine+review) + is:open + issues + members + viewer = 6 gh invocations.
-	if rec.calls != 6 {
-		t.Fatalf("cold cache should fire the full launch fan-out, got %d gh calls, want 6", rec.calls)
+	// sections (review+is:open) + issues + members + viewer = 5 gh invocations.
+	if rec.calls != 5 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d gh calls, want 5", rec.calls)
 	}
 }
 
@@ -872,5 +872,15 @@ func TestSectionsFetchedMsgPaints(t *testing.T) {
 	ps := u.(Model).section.(*PRSection)
 	if ps.Len() != 2 {
 		t.Fatalf("shown = %d, want 2", ps.Len())
+	}
+}
+
+func TestDefaultViewIsSections(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	c.Set(prKey("o/r", searchFor("pr", "open", reviewBody), defaultLimit), nil) // shape only
+	m := NewModel("/tmp", "is:open", c)
+	m.SetRepo("o/r")
+	if !m.sectionsDefault() {
+		t.Fatalf("fresh default is not sectionsDefault: state=%q omni=%q", m.state, m.omniServer)
 	}
 }

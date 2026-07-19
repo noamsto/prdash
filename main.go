@@ -35,7 +35,7 @@ func main() {
 	}
 	c := cache.Open(filepath.Join(stateDir, "prdash", "results-cache.json"))
 
-	m := ui.NewModel(dir, "is:open author:@me", c)
+	m := ui.NewModel(dir, "is:open", c)
 	m.SetRunner(runner)
 	m.SetRepo(repo)
 	m.InitTheme()

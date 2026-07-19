@@ -104,7 +104,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
-		presetIdx: presetIndexFor(body, defaultPresets), refreshing: true,
+		presetIdx: -1, refreshing: true, // the PR board has no presets; sections replace them
 	}
 }
 
@@ -379,13 +379,13 @@ func (m *Model) hydrate() bool {
 		m.hydrateIssueDetail()
 		return true
 	}
-	if m.isMineView() {
-		mine, ok1 := m.cachedPRs(searchFor("pr", m.state, mineBody), defaultLimit)
-		rev, ok2 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+	if m.sectionsDefault() {
+		rev, ok1 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+		open, ok2 := m.cachedPRs("is:open", openListLimit)
 		if !ok1 && !ok2 {
 			return false
 		}
-		m.setMine(mine, rev)
+		m.setSections(rev, open, m.viewerLogin)
 		m.hydrateDetail()
 		return true
 	}
@@ -692,8 +692,8 @@ func (m *Model) maybeStartPoll() tea.Cmd {
 func (m *Model) backgroundRefresh() tea.Cmd {
 	m.refreshing = true
 	fetch := m.fetchCmd(m.filter)
-	if m.isMineView() {
-		fetch = m.mineFetchCmd()
+	if m.sectionsDefault() {
+		fetch = m.sectionsFetchCmd()
 	}
 	return tea.Batch(fetch, m.startSpinner())
 }
@@ -715,11 +715,15 @@ func (m *Model) switchToFilter() tea.Cmd {
 		return tea.Batch(m.issueFetchCmd(m.filter), m.startSpinner())
 	}
 	if !hit {
-		m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
+		if m.sectionsDefault() {
+			m.setSections(nil, nil, m.viewerLogin) // drop stale rows while the fetch is in flight
+		} else {
+			m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
+		}
 	}
 	fetch := m.fetchCmd(m.filter)
-	if m.isMineView() {
-		fetch = m.mineFetchCmd()
+	if m.sectionsDefault() {
+		fetch = m.sectionsFetchCmd()
 	}
 	return tea.Batch(fetch, m.startSpinner())
 }
@@ -845,22 +849,19 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// launchFetchCmds returns the startup reconcile fetches — the current "mine"
-// view plus the prewarmed is:open/issue boards and member list — omitting any
-// whose cache is still fresh. When the current view is reused, it emits
+// launchFetchCmds returns the startup reconcile fetches — the sections default
+// view plus the prewarmed issue board, member list, and viewer login — omitting
+// any whose cache is still fresh. When the current view is reused, it emits
 // fetchSkippedMsg so the refresh spinner still clears. Split out so the
 // freshness gating is unit-testable without the ticker commands.
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
-	mineFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, mineBody), defaultLimit)) &&
-		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit))
-	if mineFresh {
+	sectionsFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit)) &&
+		m.cacheFresh(prKey(m.repo, "is:open", openListLimit))
+	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {
-		cmds = append(cmds, m.mineFetchCmd())
-	}
-	if !m.cacheFresh(prKey(m.repo, "is:open", defaultLimit)) {
-		cmds = append(cmds, m.fetchCmd("is:open"))
+		cmds = append(cmds, m.sectionsFetchCmd())
 	}
 	issueF := searchFor("issue", "open", assigneeBody)
 	if !m.cacheFresh(issueKey(m.repo, issueF)) {
