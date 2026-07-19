@@ -33,7 +33,7 @@ func TestSpaceTogglesSelection(t *testing.T) {
 func TestPresetSwitchPaintsCachedRowsImmediately(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	raw, _ := json.Marshal([]gh.PR{{Number: 99, Title: "cached-all"}})
-	c.Set(prKey("x", "is:open"), raw)
+	c.Set(prKey("x", "is:open", defaultLimit), raw)
 
 	m := NewModel("/repo", "is:open author:@me", c)
 	m.SetRepo("x")
@@ -70,7 +70,7 @@ func TestBackgroundFetchCachesWithoutClobbering(t *testing.T) {
 	if len(ps.prs) != 1 || ps.prs[0].Number != 1 {
 		t.Fatalf("background fetch clobbered the current view: %+v", ps.prs)
 	}
-	if _, ok := c.Get(prKey("x", other)); !ok {
+	if _, ok := c.Get(prKey("x", other, defaultLimit)); !ok {
 		t.Fatal("background fetch did not populate the cache")
 	}
 }
@@ -107,7 +107,7 @@ func TestMineFetchedCachesPerState(t *testing.T) {
 	u, _ := m.Update(mineFetchedMsg{state: "merged", mine: []gh.PR{{Number: 7}}, mineRaw: mineRaw, reviewRaw: revRaw})
 	m = u.(Model)
 
-	if _, ok := c.Get(prKey("x", "is:merged author:@me")); !ok {
+	if _, ok := c.Get(prKey("x", "is:merged author:@me", defaultLimit)); !ok {
 		t.Fatal("merged mine result not cached under its per-state key")
 	}
 	if ps := m.section.(*PRSection); ps.Len() != 0 {
@@ -266,7 +266,7 @@ func TestPRListCacheScopedByRepo(t *testing.T) {
 
 	b := NewModel("/b", filter, c)
 	b.SetRepo("owner/repo-b")
-	if prs, ok := b.cachedPRs(filter); ok {
+	if prs, ok := b.cachedPRs(filter, defaultLimit); ok {
 		t.Fatalf("repo-b must not hydrate repo-a's cached PR list; got %d rows", len(prs))
 	}
 }

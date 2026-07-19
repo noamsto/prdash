@@ -290,13 +290,13 @@ func (m *Model) applyFilter() {
 // prKey scopes the cached PR list by repo — the shared cache file holds every
 // repo's lists, and a filter like "is:open author:@me" is identical across them,
 // so without the repo they collide and bleed between repos.
-func prKey(repo, filter string) string {
-	return cache.Key("pr", repo+"\x00"+filter, defaultLimit, schemaVer)
+func prKey(repo, filter string, limit int) string {
+	return cache.Key("pr", repo+"\x00"+filter, limit, schemaVer)
 }
 
 // cachedPRs returns the cached PR list for a filter, if present and parseable.
-func (m *Model) cachedPRs(filter string) ([]gh.PR, bool) {
-	e, ok := m.cache.Get(prKey(m.repo, filter))
+func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
+	e, ok := m.cache.Get(prKey(m.repo, filter, limit))
 	if !ok {
 		return nil, false
 	}
@@ -346,8 +346,8 @@ func (m *Model) hydrate() bool {
 		return true
 	}
 	if m.isMineView() {
-		mine, ok1 := m.cachedPRs(searchFor("pr", m.state, mineBody))
-		rev, ok2 := m.cachedPRs(searchFor("pr", m.state, reviewBody))
+		mine, ok1 := m.cachedPRs(searchFor("pr", m.state, mineBody), defaultLimit)
+		rev, ok2 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
 		if !ok1 && !ok2 {
 			return false
 		}
@@ -355,7 +355,7 @@ func (m *Model) hydrate() bool {
 		m.hydrateDetail()
 		return true
 	}
-	prs, ok := m.cachedPRs(m.filter)
+	prs, ok := m.cachedPRs(m.filter, defaultLimit)
 	if !ok {
 		return false
 	}
@@ -754,14 +754,14 @@ func (m Model) Init() tea.Cmd {
 // freshness gating is unit-testable without the ticker commands.
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
-	mineFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, mineBody))) &&
-		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody)))
+	mineFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, mineBody), defaultLimit)) &&
+		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit))
 	if mineFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {
 		cmds = append(cmds, m.mineFetchCmd())
 	}
-	if !m.cacheFresh(prKey(m.repo, "is:open")) {
+	if !m.cacheFresh(prKey(m.repo, "is:open", defaultLimit)) {
 		cmds = append(cmds, m.fetchCmd("is:open"))
 	}
 	issueF := searchFor("issue", "open", assigneeBody)
@@ -787,7 +787,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case prsFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(prKey(m.repo, msg.filter), msg.raw)
+			m.cache.Set(prKey(m.repo, msg.filter, defaultLimit), msg.raw)
 		}
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // background prewarm of another preset: cache only
@@ -817,8 +817,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detailCmdForCursor()
 	case mineFetchedMsg:
 		if m.cache != nil {
-			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, mineBody)), msg.mineRaw)
-			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody)), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, mineBody), defaultLimit), msg.mineRaw)
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
 		}
 		if !m.isMineView() || msg.state != m.state {
 			return m, nil // prewarm while viewing another preset/state

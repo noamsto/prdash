@@ -47,7 +47,7 @@ func TestHydrateFromCache(t *testing.T) {
 
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	c.Set(prKey(m.repo, "is:open"), raw)
+	c.Set(prKey(m.repo, "is:open", defaultLimit), raw)
 	m.hydrate()
 	sec := m.section.(*PRSection)
 	if len(sec.prs) != 1 || sec.prs[0].Number != 42 {
@@ -59,8 +59,16 @@ func TestHydrateFromCache(t *testing.T) {
 }
 
 func TestIssueKeyDistinctFromPRKey(t *testing.T) {
-	if issueKey("r", "is:open") == prKey("r", "is:open") {
+	if issueKey("r", "is:open") == prKey("r", "is:open", defaultLimit) {
 		t.Error("issue and pr cache keys collide")
+	}
+}
+
+func TestPRKeyLimitDistinct(t *testing.T) {
+	k20 := prKey("o/r", "is:open", defaultLimit)
+	k100 := prKey("o/r", "is:open", openListLimit)
+	if k20 == k100 {
+		t.Fatalf("limit-20 and limit-100 keys collide: %q", k20)
 	}
 }
 
@@ -720,9 +728,9 @@ func launchModel(t *testing.T) (Model, *cache.Cache) {
 
 // warmLaunchCache seeds every key Init reconciles so the whole launch is fresh.
 func warmLaunchCache(m Model, c *cache.Cache) {
-	c.Set(prKey(m.repo, searchFor("pr", m.state, mineBody)), json.RawMessage("[]"))
-	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody)), json.RawMessage("[]"))
-	c.Set(prKey(m.repo, "is:open"), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, searchFor("pr", m.state, mineBody), defaultLimit), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, "is:open", defaultLimit), json.RawMessage("[]"))
 	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody)), json.RawMessage("[]"))
 	c.Set(membersKey(m.repo), json.RawMessage("[]"))
 }
