@@ -42,3 +42,14 @@ func TestFilterByBranch(t *testing.T) {
 		t.Fatalf("query 'render' = %+v", got)
 	}
 }
+
+func TestFilterPRsMatchesBody(t *testing.T) {
+	prs := []gh.PR{
+		{Number: 1, Title: "fix header", Body: "resolves a flaky race in the poller"},
+		{Number: 2, Title: "add cache"},
+	}
+	got := filterPRs(prs, "flaky")
+	if len(got) != 1 || got[0].Number != 1 {
+		t.Fatalf("body match failed: got %+v", got)
+	}
+}

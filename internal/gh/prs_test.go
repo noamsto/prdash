@@ -20,7 +20,7 @@ func TestPRListArgs(t *testing.T) {
 	want := []string{
 		"pr", "list", "--search", "is:open author:@me",
 		"-L", "20", "--json",
-		"number,title,author,statusCheckRollup,reviewDecision,labels,assignees,headRefName,baseRefName,url,updatedAt,mergedAt,closedAt,isDraft,state",
+		"number,title,author,statusCheckRollup,reviewDecision,labels,assignees,headRefName,baseRefName,url,updatedAt,mergedAt,closedAt,isDraft,state,body",
 	}
 	if len(args) != len(want) {
 		t.Fatalf("args len = %d, want %d (%v)", len(args), len(want), args)

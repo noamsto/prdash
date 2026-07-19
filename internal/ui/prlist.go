@@ -1633,8 +1633,12 @@ func (m Model) statusBar() string {
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
-const schemaVer = "v2"
+const schemaVer = "v3"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.
 const defaultLimit = 20
+
+// openListLimit is the tail depth for the empty-default open list; the 3-section
+// partition needs more than the focused review/terminal boards' defaultLimit.
+const openListLimit = 100

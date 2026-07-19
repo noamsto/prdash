@@ -13,7 +13,7 @@ import (
 func haystack(p gh.PR) string {
 	parts := []string{
 		fmt.Sprintf("#%d", p.Number), p.Title, p.Author.Login,
-		p.HeadRefName, p.BaseRefName, p.ReviewDecision, p.CIState(),
+		p.HeadRefName, p.BaseRefName, p.ReviewDecision, p.CIState(), p.Body,
 	}
 	for _, a := range p.Assignees {
 		parts = append(parts, a.Login)
