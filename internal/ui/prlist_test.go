@@ -1255,6 +1255,7 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 		{Login: "aa5"}, {Login: "aa6"}, {Login: "aa7"}, {Login: "aa8"},
 	}
 	m.width = 80
+	m.height = 24 // tall enough that the dropdown-row cap (FIX B) doesn't kick in
 	m.filtering = true
 	m.filterInput.Focus()
 	m.filterInput.SetValue("@aa")
@@ -1275,7 +1276,8 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 		t.Fatalf("omniHintRows on the issue board = %d, want 0", got)
 	}
 
-	// contentHeight shrinks by exactly the reserved rows vs a non-filtering baseline.
+	// contentHeight shrinks by exactly the reserved rows, minus the +1 the
+	// filter input reclaims from the statusBar footer it replaces.
 	m.mode = "pr"
 	m.filterInput.SetValue("@aa")
 	l := Layout{ShowPanel: false, ContentHeight: 40}
@@ -1283,8 +1285,33 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 	m.filtering = false
 	base := m.contentHeight(l)
 	m.filtering = true
-	if base-filtered != m.omniHintRows() {
-		t.Fatalf("contentHeight delta = %d, want %d", base-filtered, m.omniHintRows())
+	if base-filtered != m.omniHintRows()-1 {
+		t.Fatalf("contentHeight delta = %d, want %d", base-filtered, m.omniHintRows()-1)
+	}
+}
+
+// TestContentHeightFilteringNoPanel guards FIX A: with no docked panel, the
+// 2-line statusBar footer is replaced by the 1-line filter input, so filtering
+// with only the static hint line (omniHintRows()==1) reclaims exactly enough
+// to match the non-filtering baseline.
+func TestContentHeightFilteringNoPanel(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width = 80
+	m.height = 24
+	m.mode = "pr"
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("") // no @ partial: omniHintRows() == 1
+	if got := m.omniHintRows(); got != 1 {
+		t.Fatalf("omniHintRows = %d, want 1", got)
+	}
+
+	l := Layout{ShowPanel: false, ContentHeight: 40}
+	filtered := m.contentHeight(l)
+	m.filtering = false
+	base := m.contentHeight(l)
+	if filtered != base {
+		t.Fatalf("contentHeight while filtering = %d, want %d (baseline)", filtered, base)
 	}
 }
 

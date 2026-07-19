@@ -382,13 +382,13 @@ func (m Model) omniSuggestions() []gh.User {
 // completeOmniAt replaces the active @-partial with @<login>, moving the
 // cursor past the inserted token.
 func (m *Model) completeOmniAt(login string) {
-	v := m.filterInput.Value()
-	pos := m.filterInput.Position()
-	left := v[:pos]
+	r := []rune(m.filterInput.Value())
+	pos := min(m.filterInput.Position(), len(r))
+	left := string(r[:pos])
 	i := strings.LastIndexAny(left, " ")
-	rewritten := left[:i+1] + "@" + login + v[pos:]
+	rewritten := left[:i+1] + "@" + login + string(r[pos:])
 	m.filterInput.SetValue(rewritten)
-	m.filterInput.SetCursor(i + 1 + len("@"+login))
+	m.filterInput.SetCursor(i + 1 + len([]rune("@"+login)))
 }
 
 // omniSuggestDropdownRows caps how many members the @-mention dropdown lists
@@ -402,7 +402,7 @@ func (m Model) omniSuggestDropdown() string {
 	if len(sug) == 0 {
 		return ""
 	}
-	n := min(len(sug), omniSuggestDropdownRows)
+	n := min(len(sug), omniSuggestDropdownRows, max(1, m.height-4))
 	lines := make([]string, n)
 	for i, u := range sug[:n] {
 		cur := "  "

@@ -307,7 +307,9 @@ func (m Model) previewTitle() string {
 func (m Model) contentHeight(l Layout) int {
 	if !l.ShowPanel {
 		if m.filtering {
-			return l.ContentHeight - m.omniHintRows()
+			// The 2-line statusBar footer is replaced by the 1-line filter input
+			// (net +1), then the hint/dropdown block below it is reserved.
+			return max(1, l.ContentHeight+1-m.omniHintRows())
 		}
 		return l.ContentHeight
 	}
@@ -315,7 +317,7 @@ func (m Model) contentHeight(l Layout) int {
 	case m.previewMax:
 		return l.ContentHeight + l.PanelRows
 	case m.filtering:
-		return l.ContentHeight + l.PanelRows - 1 - m.omniHintRows() // minus the filter input line and its hint/dropdown
+		return max(1, l.ContentHeight+l.PanelRows-1-m.omniHintRows()) // minus the filter input line and its hint/dropdown
 	case m.pending != nil:
 		return l.ContentHeight + l.PanelRows - 1 // minus the prompt line
 	default:
