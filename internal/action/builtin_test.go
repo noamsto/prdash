@@ -115,7 +115,7 @@ func TestJobLogArgs(t *testing.T) {
 	}
 
 	r2 := &argRunner{}
-	JobLog(r2, "/repo", "123", false)
+	_, _ = JobLog(r2, "/repo", "123", false)
 	wantAll := []string{"run", "view", "--job", "123", "--log"}
 	if !reflect.DeepEqual(r2.args, wantAll) {
 		t.Fatalf("full args = %v, want %v", r2.args, wantAll)
