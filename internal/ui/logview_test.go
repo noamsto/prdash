@@ -265,6 +265,16 @@ func TestCheckTabCopyURL(t *testing.T) {
 	}
 }
 
+func TestChecksFooterShowsLogKeys(t *testing.T) {
+	m := logViewModel(t)
+	foot := m.expandedFooter()
+	for _, want := range []string{"logs", "open", "rerun"} {
+		if !strings.Contains(foot, want) {
+			t.Fatalf("Checks footer missing %q: %q", want, foot)
+		}
+	}
+}
+
 func TestExternalCheckEnterOpensBrowser(t *testing.T) {
 	m := logViewModel(t)
 	// Replace the check with an external one (no /job/ in the URL → JobID "").

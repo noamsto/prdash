@@ -412,7 +412,7 @@ func (m Model) expandedMeta(pr gh.PR, w int) string {
 // expandedFooter is the bottom hint line: the Checks tab swaps in the rerun keys.
 func (m Model) expandedFooter() string {
 	if m.expandedTab == 2 {
-		return "  j/k move · r rerun · R rerun all · h/l tabs · J/K PR · esc back"
+		return "  ↵ logs · o open · Y url · r rerun · R all · j/k move · esc back"
 	}
 	return "  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back"
 }
