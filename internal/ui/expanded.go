@@ -261,6 +261,14 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.expandedTab == 2 {
 			return m.rerunAllFailedChecks()
 		}
+	case "o": // Checks tab: open the hovered check in the browser
+		if m.expandedTab == 2 {
+			return m.openHoveredCheck()
+		}
+	case "Y": // Checks tab: copy the hovered check's URL
+		if m.expandedTab == 2 {
+			return m.copyHoveredCheckURL()
+		}
 	case "j", "down":
 		if m.expandedTab == 2 {
 			m.moveCheckCursor(1)

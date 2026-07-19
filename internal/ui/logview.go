@@ -136,16 +136,14 @@ func (m Model) hoveredCheck() (gh.Check, bool) {
 
 // enterLogView opens the log sub-view for the hovered check. A cached log paints
 // instantly; otherwise it kicks an async fetch. External (StatusContext) checks
-// have no job log — Task 7 upgrades the notice below to open the browser.
+// have no job log, so enter opens the check's page in the browser instead.
 func (m Model) enterLogView() (tea.Model, tea.Cmd) {
 	c, ok := m.hoveredCheck()
 	if !ok {
 		return m, nil
 	}
-	if c.IsExternal() { // StatusContext: no job log (Task 7 opens the browser here)
-		m.actionStatus = &actionStat{fail: "external check — no job logs", settled: true,
-			err: fmt.Errorf("external check %q has no job logs", c.Label())}
-		return m, clearStatusCmd()
+	if c.IsExternal() { // StatusContext: no job log — open its page in the browser
+		return m.openHoveredCheck()
 	}
 	m.logView = true
 	m.logJobID = c.JobID()
@@ -333,6 +331,33 @@ func (m Model) copyLogText(text, ok string) (tea.Model, tea.Cmd) {
 	}
 	m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true}
 	return m, tea.Batch(tea.SetClipboard(text), clearStatusCmd())
+}
+
+// openHoveredCheck opens the hovered check's details URL in the browser.
+func (m Model) openHoveredCheck() (tea.Model, tea.Cmd) {
+	c, ok := m.hoveredCheck()
+	if !ok {
+		return m, nil
+	}
+	if c.DetailsUrl == "" {
+		m.actionStatus = &actionStat{fail: "no URL for this check", settled: true,
+			err: fmt.Errorf("check %q has no URL", c.Label())}
+		return m, clearStatusCmd()
+	}
+	url := c.DetailsUrl
+	m.actionStatus = &actionStat{run: "Opening", ok: "Opened in browser", fail: "Open failed"}
+	return m, tea.Batch(func() tea.Msg {
+		return actionDoneMsg{err: openURL(url)}
+	}, m.startSpinner())
+}
+
+// copyHoveredCheckURL copies the hovered check's details URL.
+func (m Model) copyHoveredCheckURL() (tea.Model, tea.Cmd) {
+	c, ok := m.hoveredCheck()
+	if !ok || c.DetailsUrl == "" {
+		return m, nil
+	}
+	return m.copyLogText(c.DetailsUrl, "Copied URL")
 }
 
 // logFooter is the log view's key hint line; `a` toggles the log scope.

@@ -244,3 +244,41 @@ func TestLogViewCopyStep(t *testing.T) {
 		t.Fatal("s should set a copy status")
 	}
 }
+
+func TestCheckTabOpenSetsStatus(t *testing.T) {
+	m := logViewModel(t) // hovered check has a DetailsUrl
+	u, cmd := m.updateExpanded(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	m = u.(Model)
+	if m.actionStatus == nil || cmd == nil {
+		t.Fatal("o on the Checks tab should open the check URL and set a status")
+	}
+	if m.logView {
+		t.Fatal("o should not enter the log view")
+	}
+}
+
+func TestCheckTabCopyURL(t *testing.T) {
+	m := logViewModel(t)
+	u, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'Y', Text: "Y"})
+	if u.(Model).actionStatus == nil {
+		t.Fatal("Y on the Checks tab should copy the check URL")
+	}
+}
+
+func TestExternalCheckEnterOpensBrowser(t *testing.T) {
+	m := logViewModel(t)
+	// Replace the check with an external one (no /job/ in the URL → JobID "").
+	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
+		{State: "FAILURE", Context: "ci/ext", DetailsUrl: "https://ci.example.com/build/7"},
+	}}})
+	m.expanded, m.expandedTab, m.checkCursor = true, 2, 0
+	m.renderExpanded()
+	u, cmd := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = u.(Model)
+	if m.logView {
+		t.Fatal("external check has no job logs; enter should not open the log view")
+	}
+	if m.actionStatus == nil || cmd == nil {
+		t.Fatal("external check enter should open the browser with a status")
+	}
+}
