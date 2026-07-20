@@ -89,11 +89,12 @@ const (
 // ExpandedLayout is the computed geometry for the expanded detail frame. It is
 // the single height/width authority for that view — callers never re-derive.
 type ExpandedLayout struct {
-	TwoCol   bool
-	RailW    int
-	RailH    int
-	ContentW int
-	VPHeight int
+	TwoCol     bool
+	ShowFooter bool
+	RailW      int
+	RailH      int
+	ContentW   int
+	VPHeight   int
 }
 
 // computeExpandedLayout derives the expanded-view geometry from the terminal
@@ -105,17 +106,22 @@ type ExpandedLayout struct {
 // setExpandedContent (min-1) so tiny terminals never hand vp a negative.
 func computeExpandedLayout(w, h int, isPR bool) ExpandedLayout {
 	twoCol := isPR && w >= expandedTwoColMin
+	footer := showFooter(w, h)
 
 	metaRows := 0
 	if isPR && !twoCol {
 		metaRows = 1
 	}
-	body := h - (2 + metaRows) // head + footer (+ narrow-PR meta)
+	footRows := 0
+	if footer {
+		footRows = 1
+	}
+	body := h - (1 + footRows + metaRows) // head (+ footer) (+ narrow-PR meta)
 	if body < 3 {
 		body = 3
 	}
 
-	l := ExpandedLayout{TwoCol: twoCol}
+	l := ExpandedLayout{TwoCol: twoCol, ShowFooter: footer}
 	if twoCol {
 		l.ContentW = expandedContentCap
 		l.RailW = min(max(w-expandedColGap-l.ContentW, expandedRailMin), expandedRailMax)

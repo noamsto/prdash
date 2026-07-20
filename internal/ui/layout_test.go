@@ -139,3 +139,23 @@ func TestComputeExpandedLayoutSectionAwareHeight(t *testing.T) {
 		t.Errorf("two-col PR VPHeight = %d, want %d (no phantom meta row)", twoCol.VPHeight, iss.VPHeight)
 	}
 }
+
+func TestComputeExpandedLayoutHidesFooterOnSmallWindow(t *testing.T) {
+	small := computeExpandedLayout(90, 14, true) // below footerMinHeight
+	if small.ShowFooter {
+		t.Fatal("small window should hide the expanded footer")
+	}
+	large := computeExpandedLayout(90, 40, true)
+	if !large.ShowFooter {
+		t.Fatal("large window should show the expanded footer")
+	}
+	// Hiding the footer gives its row back to the viewport: VPHeight at the
+	// same width/isPR should be exactly one taller with the footer hidden than
+	// shown, all else equal (compare two heights one apart, straddling the
+	// footer floor, at the same metaRows state).
+	shown := computeExpandedLayout(90, footerMinHeight, true)
+	hidden := computeExpandedLayout(90, footerMinHeight-1, true)
+	if hidden.VPHeight != shown.VPHeight {
+		t.Fatalf("hidden.VPHeight=%d shown.VPHeight=%d, want equal (one less input row, one fewer footer row, cancel out)", hidden.VPHeight, shown.VPHeight)
+	}
+}

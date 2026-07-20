@@ -436,3 +436,19 @@ func TestExpandedTwoColRailFrameStaysWithinBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestExpandedViewHidesFooterOnSmallWindow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 90, 14 // below footerMinHeight
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.enterExpanded()
+
+	out := m.expandedView()
+	if strings.Contains(out, "esc back") {
+		t.Fatalf("small window should not render the expanded footer: %q", out)
+	}
+	if lines := strings.Count(out, "\n") + 1; lines > m.height {
+		t.Fatalf("expanded output has %d lines, exceeds terminal height %d", lines, m.height)
+	}
+}

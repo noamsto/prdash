@@ -488,7 +488,6 @@ func (m Model) expandedView() string {
 		}
 	}
 	head += m.statusBadge() // rerun feedback: the header badge isn't visible here otherwise
-	foot := statusBarStyle.Render(m.expandedFooter())
 
 	contentBox := tabbedBox(m.vp.View(), l.ContentW, l.VPHeight+2, expandedTabs, m.expandedTab)
 
@@ -506,7 +505,11 @@ func (m Model) expandedView() string {
 		mid = strings.Join(parts, "\n")
 	}
 
-	out := strings.Join([]string{head, mid, foot}, "\n")
+	parts := []string{head, mid}
+	if l.ShowFooter {
+		parts = append(parts, statusBarStyle.Render(m.expandedFooter()))
+	}
+	out := strings.Join(parts, "\n")
 	if blockW < m.width { // center the block in a wide terminal
 		out = indentLines(out, (m.width-blockW)/2)
 	}
