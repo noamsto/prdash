@@ -11,10 +11,26 @@ const chromeRows = 4
 // to the one-line status bar so short terminals aren't crowded out.
 const minMainRows = 8
 
+// footerMinHeight/footerMinWidth are the smallest terminal at which the
+// always-on keybinding footer (board status bar/panel, expanded footer, log
+// footer) earns its row. Below either floor, `?` becomes the only way to see
+// the keys and the footer's row(s) go back to content instead.
+const (
+	footerMinHeight = 20
+	footerMinWidth  = 70
+)
+
+// showFooter is the one threshold every view (board, expanded, log) calls to
+// decide whether to render its always-on keybinding footer.
+func showFooter(w, h int) bool {
+	return w >= footerMinWidth && h >= footerMinHeight
+}
+
 // Layout is the computed geometry for one frame.
 type Layout struct {
 	ShowSide      bool
-	ShowPanel     bool // dock the keys/actions panel instead of the status bar
+	ShowFooter    bool // false hides the footer entirely, reclaiming its row(s) for content
+	ShowPanel     bool // dock the keys/actions panel instead of the status bar (only when ShowFooter)
 	ListWidth     int
 	SideWidth     int
 	Gap           int // columns between list and side pane
@@ -31,27 +47,33 @@ func computeLayout(w, h int) Layout {
 	side := w * 55 / 100
 	list := w - side - gap
 	showSide := w >= sideThreshold
+	footer := showFooter(w, h)
 
 	panelCol := w // narrow: panel spans the whole width
 	if showSide {
 		panelCol = list // wide: panel sits under the list only
 	}
 	pr := panelRowsFor(panelCol - 2)
-	showPanel := h-2-pr >= minMainRows
+	showPanel := footer && h-2-pr >= minMainRows
 
-	ch := h - chromeRows
-	if showPanel {
-		ch = h - 2 - pr // header + spacer above; panel (or its column) below
-	} else {
+	var ch int
+	switch {
+	case !footer:
 		pr = 0
+		ch = h - 2 // header + one row of slack; no footer rows to reserve
+	case showPanel:
+		ch = h - 2 - pr // header + spacer above; panel (or its column) below
+	default:
+		pr = 0
+		ch = h - chromeRows
 	}
 	if ch < 1 {
 		ch = 1
 	}
 	if !showSide {
-		return Layout{ShowSide: false, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch}
+		return Layout{ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch}
 	}
-	return Layout{ShowSide: true, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
+	return Layout{ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
 }
 
 const (
@@ -67,11 +89,12 @@ const (
 // ExpandedLayout is the computed geometry for the expanded detail frame. It is
 // the single height/width authority for that view — callers never re-derive.
 type ExpandedLayout struct {
-	TwoCol   bool
-	RailW    int
-	RailH    int
-	ContentW int
-	VPHeight int
+	TwoCol     bool
+	ShowFooter bool
+	RailW      int
+	RailH      int
+	ContentW   int
+	VPHeight   int
 }
 
 // computeExpandedLayout derives the expanded-view geometry from the terminal
@@ -83,17 +106,22 @@ type ExpandedLayout struct {
 // setExpandedContent (min-1) so tiny terminals never hand vp a negative.
 func computeExpandedLayout(w, h int, isPR bool) ExpandedLayout {
 	twoCol := isPR && w >= expandedTwoColMin
+	footer := showFooter(w, h)
 
 	metaRows := 0
 	if isPR && !twoCol {
 		metaRows = 1
 	}
-	body := h - (2 + metaRows) // head + footer (+ narrow-PR meta)
+	footRows := 0
+	if footer {
+		footRows = 1
+	}
+	body := h - (1 + footRows + metaRows) // head (+ footer) (+ narrow-PR meta)
 	if body < 3 {
 		body = 3
 	}
 
-	l := ExpandedLayout{TwoCol: twoCol}
+	l := ExpandedLayout{TwoCol: twoCol, ShowFooter: footer}
 	if twoCol {
 		l.ContentW = expandedContentCap
 		l.RailW = min(max(w-expandedColGap-l.ContentW, expandedRailMin), expandedRailMax)

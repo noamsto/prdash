@@ -408,3 +408,53 @@ func TestExternalCheckTargetURLOpens(t *testing.T) {
 		t.Fatalf("expected an open status, not a no-URL error: %v", m.actionStatus.err)
 	}
 }
+
+func TestLogViewHidesFooterOnSmallWindow(t *testing.T) {
+	m := logViewModel(t)
+	m.width, m.height = 90, 14 // below footerMinHeight
+	m.logView = true
+	m.logLabel = "build"
+	m.logSteps = []logStep{{name: "Run tests", lines: []string{"line one"}}}
+	m.logLines = flattenLog(m.logSteps)
+	m.setLogContent()
+
+	out := m.logViewRender()
+	if strings.Contains(out, "esc back") {
+		t.Fatalf("small window should not render the log footer: %q", out)
+	}
+	if lines := strings.Count(out, "\n") + 1; lines > m.height {
+		t.Fatalf("log view output has %d lines, exceeds terminal height %d", lines, m.height)
+	}
+
+	m.width, m.height = 90, 30
+	out = m.logViewRender()
+	if !strings.Contains(out, "esc back") {
+		t.Fatalf("large window should render the log footer: %q", out)
+	}
+}
+
+func TestLogViewLegendTogglesAndDismisses(t *testing.T) {
+	m := logViewModel(t)
+	m.width, m.height = 90, 14 // footer hidden; ? is the only way to see keys
+	m.logView = true
+	m.logLabel = "build"
+	m.logSteps = []logStep{{name: "Run tests", lines: []string{"line one"}}}
+	m.logLines = flattenLog(m.logSteps)
+	m.setLogContent()
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = u.(Model)
+	if !m.showLegend {
+		t.Fatal("? should open the log-view legend")
+	}
+	out := m.render()
+	if !strings.Contains(out, "step") {
+		t.Fatalf("log legend should list its own keys: %q", out)
+	}
+
+	u, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = u.(Model)
+	if m.showLegend {
+		t.Fatal("a key should close the log-view legend")
+	}
+}

@@ -436,3 +436,43 @@ func TestExpandedTwoColRailFrameStaysWithinBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestExpandedViewHidesFooterOnSmallWindow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 90, 14 // below footerMinHeight
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.enterExpanded()
+
+	out := m.expandedView()
+	if strings.Contains(out, "esc back") {
+		t.Fatalf("small window should not render the expanded footer: %q", out)
+	}
+	if lines := strings.Count(out, "\n") + 1; lines > m.height {
+		t.Fatalf("expanded output has %d lines, exceeds terminal height %d", lines, m.height)
+	}
+}
+
+func TestExpandedLegendTogglesAndDismisses(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 90, 14 // footer hidden; ? is the only way to see keys
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.enterExpanded()
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = u.(Model)
+	if !m.showLegend {
+		t.Fatal("? should open the expanded-view legend")
+	}
+	out := m.render()
+	if !strings.Contains(out, "worktree") {
+		t.Fatalf("expanded legend should list its own keys: %q", out)
+	}
+
+	u, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = u.(Model)
+	if m.showLegend {
+		t.Fatal("a key should close the expanded-view legend")
+	}
+}

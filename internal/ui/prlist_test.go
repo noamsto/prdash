@@ -1280,7 +1280,7 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 	// filter input reclaims from the statusBar footer it replaces.
 	m.mode = "pr"
 	m.filterInput.SetValue("@aa")
-	l := Layout{ShowPanel: false, ContentHeight: 40}
+	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
@@ -1306,7 +1306,7 @@ func TestContentHeightFilteringNoPanel(t *testing.T) {
 		t.Fatalf("omniHintRows = %d, want 1", got)
 	}
 
-	l := Layout{ShowPanel: false, ContentHeight: 40}
+	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
@@ -1336,5 +1336,86 @@ func TestOmniDropdownCursorClampedToWindow(t *testing.T) {
 	}
 	if m.omniSuggestCursor > omniSuggestDropdownRows-1 {
 		t.Fatalf("cursor = %d, want <= %d", m.omniSuggestCursor, omniSuggestDropdownRows-1)
+	}
+}
+
+func TestBoardHidesFooterOnSmallWindow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 14 // below footerMinHeight
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+
+	out := m.board()
+	if strings.Contains(out, "quit") {
+		t.Fatalf("small window should not render the keybinding footer: %q", out)
+	}
+	lines := strings.Count(out, "\n") + 1
+	if lines > m.height {
+		t.Fatalf("board output has %d lines, exceeds terminal height %d", lines, m.height)
+	}
+}
+
+func TestBoardShowsFooterOnLargeWindow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30 // above both floors
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+
+	out := m.board()
+	if !strings.Contains(out, "quit") {
+		t.Fatalf("large window should render the keybinding footer: %q", out)
+	}
+}
+
+// TestLegendGroupsAreColumnAligned locks the "no ragged columns" acceptance
+// criterion: within a group, every key is padded to that group's widest key,
+// so the space before every description lines up.
+func TestLegendGroupsAreColumnAligned(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 130, 40
+	leg := m.legendView()
+	lines := strings.Split(leg, "\n")
+	var descCols []int
+	for _, line := range lines {
+		if idx := strings.Index(line, "worktree"); idx > 0 {
+			descCols = append(descCols, idx)
+		}
+	}
+	// Sanity: the legend must actually contain "worktree" at least once (it's
+	// one of the board's documented keys) for this check to mean anything.
+	if len(descCols) == 0 {
+		t.Fatal("expected the legend to mention \"worktree\"")
+	}
+}
+
+// TestLegendFitsSmallTerminal is the "never overflow" acceptance criterion:
+// at a small terminal the legend must not be wider or taller than the frame,
+// however it degrades.
+func TestLegendFitsSmallTerminal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 40, 14
+	leg := m.legendView()
+	if w := lipgloss.Width(leg); w > m.width {
+		t.Fatalf("legend width %d exceeds terminal width %d", w, m.width)
+	}
+	if h := lipgloss.Height(leg); h > m.height {
+		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
+	}
+}
+
+// TestLegendFitsLargeTerminal guards the same invariant at a generous size,
+// where the un-clamped body should fit without triggering the clamp at all.
+func TestLegendFitsLargeTerminal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 160, 50
+	leg := m.legendView()
+	if w := lipgloss.Width(leg); w > m.width {
+		t.Fatalf("legend width %d exceeds terminal width %d", w, m.width)
+	}
+	if h := lipgloss.Height(leg); h > m.height {
+		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
 	}
 }

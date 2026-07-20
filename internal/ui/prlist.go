@@ -1484,10 +1484,18 @@ func (m Model) View() tea.View {
 
 func (m Model) render() string {
 	if m.logView {
-		return m.logViewRender()
+		base := m.logViewRender()
+		if m.showLegend {
+			return overlayTop(base, renderLegendGroups("Log keys", m.logLegendGroups(), m.width, m.height), m.width, m.height)
+		}
+		return base
 	}
 	if m.expanded {
-		return m.expandedView()
+		base := m.expandedView()
+		if m.showLegend {
+			return overlayTop(base, renderLegendGroups("Keys", m.expandedLegendGroups(), m.width, m.height), m.width, m.height)
+		}
+		return base
 	}
 	if m.filtering {
 		out := m.header() + "\n" + m.filterInput.View()
@@ -1528,6 +1536,9 @@ func (m Model) board() string {
 	}
 	if l.ShowSide && l.ShowPanel {
 		return m.header() + "\n" + m.renderDocked(l)
+	}
+	if !l.ShowFooter {
+		return m.header() + "\n" + m.renderMain() // small window: ? is the way to see the keys
 	}
 	foot := m.statusBar()
 	if l.ShowPanel {
@@ -1709,52 +1720,89 @@ func (m Model) cursorCard() (triage.Card, bool) {
 
 // legendView is the ?-toggled glyph + key reference, as a centered modal. It
 // lists every board-view key; expanded-view keys live in that view's own footer.
+// legendGroup is one titled, column-aligned section of the legend (glyphs are
+// modeled as keyHint{glyph, meaning} pairs so they share the same gridHints
+// alignment as real key bindings).
+type legendGroup struct {
+	title string
+	hints []keyHint
+}
+
+// legendGroups is every board-view legend section, board-mode-aware (issue
+// mode drops the PR-only rows). Order is display order.
+func (m Model) legendGroups() []legendGroup {
+	groups := []legendGroup{
+		{"glyphs", []keyHint{
+			{"✓", "CI pass"}, {"✗", "CI fail"}, {"●", "CI running"}, {"·", "no CI"},
+			{mergedGlyph, "merged"}, {closedGlyph, "closed"},
+			{"⚠", "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
+			{"▎", "focus"}, {"●", "selected"}, {"[draft]", "dimmed"},
+		}},
+	}
+
+	nav := []keyHint{{"↑↓/jk", "move"}}
+	if m.mode == "pr" {
+		nav = append(nav, keyHint{"→/l", "expand"})
+	}
+	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "all"})
+	groups = append(groups, legendGroup{"navigation", nav})
+
+	filters := []keyHint{{"/", "filter (@user, is:, text)"}, {"s", "state"}}
+	if m.mode == "pr" {
+		filters = append(filters, keyHint{"R", "reviewers"}, keyHint{"D", "drafts"})
+	}
+	groups = append(groups, legendGroup{"filters", filters})
+
+	view := []keyHint{}
+	if m.mode == "pr" {
+		view = append(view, keyHint{"p", "all comments"}) // only the PR preview renders the timeline p unfolds
+	}
+	view = append(view, keyHint{"z", "maximize"}, keyHint{"ctrl+j/k", "scroll"})
+	groups = append(groups, legendGroup{"view", view})
+
+	actions := []keyHint{
+		{"↵", "worktree"}, {"W", "bulk"}, {"y", "#"}, {"Y", "url"}, {"b", "branch"}, {"o", "open"},
+	}
+	if m.mode == "pr" {
+		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"}, keyHint{"M", "ready"})
+	}
+	groups = append(groups, legendGroup{"actions", actions})
+
+	groups = append(groups, legendGroup{"", []keyHint{
+		{"a", "actions"}, {"ctrl+r", "refresh"}, {"?", "legend"}, {"q", "quit"},
+	}})
+	return groups
+}
+
+// renderLegendGroups lays out grouped keyHints as a titled, column-aligned
+// float: each group gets its own gridHints-aligned block (so a wide glyph
+// column doesn't force every key elsewhere to the same gutter width), wrapped
+// in a titledBox clamped to the terminal size. Below titledBox's own 4x2
+// floor the box can exceed a terminal that's smaller still, but every call
+// site composites through overlayTop, whose canvas crops any overflow.
+func renderLegendGroups(title string, groups []legendGroup, termW, termH int) string {
+	maxW := max(20, termW-4)
+	var lines []string
+	for i, g := range groups {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		if g.title != "" {
+			lines = append(lines, panelHeader(g.title))
+		}
+		lines = append(lines, gridHints(g.hints, maxW, true)...)
+	}
+	body := strings.Join(lines, "\n")
+	w := min(lipgloss.Width(body)+4, termW)
+	h := min(len(lines)+2, max(2, termH))
+	return titledBox(body, w, h, title)
+}
+
+// legendView is the ?-toggled glyph + key reference, as a centered modal. It
+// lists every board-view key; expanded-view keys live in that view's own
+// legend (see expandedLegendView/logLegendView).
 func (m Model) legendView() string {
-	key := func(k, label string) string {
-		return accentStyle.Render(k) + statusBarStyle.Render(" "+label)
-	}
-	row := func(items ...string) string { return strings.Join(items, statusBarStyle.Render("   ")) }
-
-	rows := []string{
-		accentStyle.Render("CI / review") + statusBarStyle.Render("  ✓ pass   ✗ fail   ● running   · none"),
-		accentStyle.Render("state") + statusBarStyle.Render("       "+mergedGlyph+" merged   "+closedGlyph+" closed"),
-		accentStyle.Render("!") + statusBarStyle.Render("           ⚠ conflict / behind base"),
-		accentStyle.Render("auto") + statusBarStyle.Render("        "+autoMergeGlyph(true)+" auto-merge armed"),
-		accentStyle.Render("row") + statusBarStyle.Render("         ▎ focus   ● selected   [draft] dimmed"),
-		"",
-	}
-
-	nav := []string{key("↑↓/jk", "move")}
-	if m.mode == "pr" {
-		nav = append(nav, key("→/l", "expand"))
-	}
-	nav = append(nav, key("⇥", "PRs/Issues"))
-
-	filters := []string{key("/", "filter (@user, is:, text)"), key("s", "state")}
-	if m.mode == "pr" {
-		filters = append(filters, key("R", "reviewers"), key("D", "drafts"))
-	}
-
-	preview := []string{}
-	if m.mode == "pr" {
-		preview = append(preview, key("p", "all comments")) // only the PR preview renders the timeline p unfolds
-	}
-	preview = append(preview, key("z", "maximize"), key("ctrl+j/k", "scroll"))
-
-	rows = append(rows,
-		row(nav...),
-		row(preview...),
-		row(key("space", "select"), key("V", "all")),
-		row(filters...),
-		row(key("a", "actions"), key("ctrl+r", "refresh"), key("?", "legend"), key("q", "quit")),
-		"",
-		row(key("↵", "worktree"), key("W", "bulk"), key("y", "#"), key("Y", "url"), key("b", "branch"), key("o", "open")),
-	)
-	if m.mode == "pr" {
-		rows = append(rows, row(key("m", "merge"), key("r", "rerun"), key("u", "update"), key("M", "ready")))
-	}
-	body := strings.Join(rows, "\n")
-	return titledBox(body, lipgloss.Width(body)+4, len(rows)+2, "Legend")
+	return renderLegendGroups("Legend", m.legendGroups(), m.width, m.height)
 }
 
 // actionOrder is the display order for the docked panel's actions section, so

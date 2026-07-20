@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -194,6 +195,52 @@ func TestBoardFitsWidthAndSurvivesResize(t *testing.T) {
 		}
 		if want := w >= sideThreshold; computeLayout(w, h).ShowSide != want {
 			t.Errorf("%dx%d: ShowSide = %v, want %v (side threshold is %d)", w, h, !want, want, sideThreshold)
+		}
+	}
+}
+
+// TestFooterToggleNeverOverflowsAcrossResizeSweep locks the no-off-by-one
+// acceptance criterion: sweeping heights straddling footerMinHeight (and a
+// couple of widths straddling footerMinWidth), the board, expanded, and log
+// views must never render more lines than the terminal is tall, and the
+// board must never render wider than the terminal, regardless of which side
+// of the footer-visibility threshold the size falls on.
+func TestFooterToggleNeverOverflowsAcrossResizeSweep(t *testing.T) {
+	widths := []int{40, footerMinWidth - 1, footerMinWidth, footerMinWidth + 1, 160}
+	heights := []int{10, footerMinHeight - 1, footerMinHeight, footerMinHeight + 1, 50}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			t.Run(fmt.Sprintf("w=%d,h=%d", w, h), func(t *testing.T) {
+				m := NewModel("/repo", "is:open", nil)
+				m.SetRepo("r")
+				m.width, m.height = w, h
+				m.setPRs(sweepPRs())
+
+				board := m.board()
+				if lines := strings.Count(board, "\n") + 1; lines > h {
+					t.Errorf("board: %d lines exceeds height %d", lines, h)
+				}
+				if width := ansi.StringWidth(strings.SplitN(board, "\n", 2)[0]); width > w {
+					t.Errorf("board header line width %d exceeds terminal width %d", width, w)
+				}
+
+				m.enterExpanded()
+				expanded := m.expandedView()
+				if lines := strings.Count(expanded, "\n") + 1; lines > h {
+					t.Errorf("expanded: %d lines exceeds height %d", lines, h)
+				}
+
+				u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+				m2 := u.(Model)
+				withLegend := m2.render()
+				if lines := strings.Count(withLegend, "\n") + 1; lines > h {
+					t.Errorf("expanded+legend: %d lines exceeds height %d", lines, h)
+				}
+				if width := lipgloss.Width(withLegend); width > w {
+					t.Errorf("expanded+legend: width %d exceeds terminal width %d", width, w)
+				}
+			})
 		}
 	}
 }

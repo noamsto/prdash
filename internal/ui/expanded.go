@@ -230,7 +230,14 @@ func (m *Model) reflowExpanded() {
 
 // updateExpanded handles keys while in expanded mode.
 func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.showLegend {
+		m.showLegend = false // any key dismisses the legend
+		return m, nil
+	}
 	switch msg.String() {
+	case "?":
+		m.showLegend = true
+		return m, nil
 	case "esc":
 		m.expanded = false
 		m.renderList()
@@ -463,6 +470,20 @@ func (m Model) expandedFooter() string {
 	return "  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back"
 }
 
+// expandedLegendGroups is the ?-toggled legend for the expanded view — the
+// same keys expandedFooter lists, grouped for the aligned-column legend.
+func (m Model) expandedLegendGroups() []legendGroup {
+	if m.expandedTab == tabChecks {
+		return []legendGroup{{"", []keyHint{
+			{"↵", "logs"}, {"o", "open"}, {"Y", "url"}, {"r", "rerun"}, {"R", "all"},
+			{"j/k", "move"}, {"esc", "back"},
+		}}}
+	}
+	return []legendGroup{{"", []keyHint{
+		{"j/k", "scroll"}, {"h/l", "tabs"}, {"J/K", "PR"}, {"↵", "worktree"}, {"esc", "back"},
+	}}}
+}
+
 // expandedView is the full-screen detail: header, metadata line, then the
 // active tab's content framed in a tabbed box — the same rounded chrome as the
 // board's titled boxes — with the keys hint beneath.
@@ -488,7 +509,6 @@ func (m Model) expandedView() string {
 		}
 	}
 	head += m.statusBadge() // rerun feedback: the header badge isn't visible here otherwise
-	foot := statusBarStyle.Render(m.expandedFooter())
 
 	contentBox := tabbedBox(m.vp.View(), l.ContentW, l.VPHeight+2, expandedTabs, m.expandedTab)
 
@@ -506,7 +526,11 @@ func (m Model) expandedView() string {
 		mid = strings.Join(parts, "\n")
 	}
 
-	out := strings.Join([]string{head, mid, foot}, "\n")
+	parts := []string{head, mid}
+	if l.ShowFooter {
+		parts = append(parts, statusBarStyle.Render(m.expandedFooter()))
+	}
+	out := strings.Join(parts, "\n")
 	if blockW < m.width { // center the block in a wide terminal
 		out = indentLines(out, (m.width-blockW)/2)
 	}

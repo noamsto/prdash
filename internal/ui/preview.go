@@ -335,6 +335,14 @@ func (m Model) previewTitle() string {
 // (zoom, filtering, a confirm prompt) reclaim its reserved rows so the box fills
 // the frame instead of stranding the bottom border mid-screen.
 func (m Model) contentHeight(l Layout) int {
+	if !l.ShowFooter {
+		if m.filtering {
+			// No footer row to give up when filtering starts: the 1-line filter
+			// input is a net new row, not a swap.
+			return max(1, l.ContentHeight-1-m.omniHintRows())
+		}
+		return l.ContentHeight
+	}
 	if !l.ShowPanel {
 		if m.filtering {
 			// The 2-line statusBar footer is replaced by the 1-line filter input

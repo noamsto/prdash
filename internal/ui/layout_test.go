@@ -35,9 +35,54 @@ func TestLayoutContentHeight(t *testing.T) {
 	if want := 40 - 2 - l.PanelRows; l.ContentHeight != want {
 		t.Fatalf("tall ContentHeight = %d, want %d", l.ContentHeight, want)
 	}
-	// Short terminal: no panel, so the main area is h - chromeRows(4) = 12.
-	if l := computeLayout(160, 16); l.ShowPanel || l.ContentHeight != 12 {
-		t.Fatalf("short: ShowPanel=%v ContentHeight=%d, want false/12", l.ShowPanel, l.ContentHeight)
+	// Short terminal (footer shown, panel not reserved): main area is
+	// h - chromeRows(4) = 18.
+	if l := computeLayout(160, 22); l.ShowPanel || !l.ShowFooter || l.ContentHeight != 18 {
+		t.Fatalf("short: ShowFooter=%v ShowPanel=%v ContentHeight=%d, want true/false/18", l.ShowFooter, l.ShowPanel, l.ContentHeight)
+	}
+}
+
+func TestShowFooterThreshold(t *testing.T) {
+	cases := []struct {
+		name string
+		w, h int
+		want bool
+	}{
+		{"large", 120, 30, true},
+		{"short height", 120, 14, false},
+		{"narrow width", 50, 30, false},
+		{"both small", 50, 14, false},
+		{"just above both floors", footerMinWidth, footerMinHeight, true},
+		{"just below height floor", footerMinWidth, footerMinHeight - 1, false},
+		{"just below width floor", footerMinWidth - 1, footerMinHeight, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := showFooter(c.w, c.h); got != c.want {
+				t.Errorf("showFooter(%d,%d) = %v, want %v", c.w, c.h, got, c.want)
+			}
+		})
+	}
+}
+
+func TestLayoutHidesFooterOnSmallWindow(t *testing.T) {
+	l := computeLayout(120, 14) // below footerMinHeight
+	if l.ShowFooter {
+		t.Fatal("small window should hide the footer")
+	}
+	if l.ShowPanel {
+		t.Fatal("panel must never show when the footer itself is hidden")
+	}
+	// Every row the footer would have used goes back to content: ContentHeight
+	// is now h - 2 (header + one row of breathing room, matching the existing
+	// slack in the ShowPanel/chromeRows branches), not h - chromeRows(4).
+	if want := 14 - 2; l.ContentHeight != want {
+		t.Fatalf("ContentHeight = %d, want %d (footer rows reclaimed)", l.ContentHeight, want)
+	}
+
+	wide := computeLayout(120, 30)
+	if !wide.ShowFooter {
+		t.Fatal("large window should show the footer")
 	}
 }
 
@@ -92,5 +137,25 @@ func TestComputeExpandedLayoutSectionAwareHeight(t *testing.T) {
 	twoCol := computeExpandedLayout(160, h, true)
 	if twoCol.VPHeight != iss.VPHeight {
 		t.Errorf("two-col PR VPHeight = %d, want %d (no phantom meta row)", twoCol.VPHeight, iss.VPHeight)
+	}
+}
+
+func TestComputeExpandedLayoutHidesFooterOnSmallWindow(t *testing.T) {
+	small := computeExpandedLayout(90, 14, true) // below footerMinHeight
+	if small.ShowFooter {
+		t.Fatal("small window should hide the expanded footer")
+	}
+	large := computeExpandedLayout(90, 40, true)
+	if !large.ShowFooter {
+		t.Fatal("large window should show the expanded footer")
+	}
+	// Hiding the footer gives its row back to the viewport: VPHeight at the
+	// same width/isPR should be exactly one taller with the footer hidden than
+	// shown, all else equal (compare two heights one apart, straddling the
+	// footer floor, at the same metaRows state).
+	shown := computeExpandedLayout(90, footerMinHeight, true)
+	hidden := computeExpandedLayout(90, footerMinHeight-1, true)
+	if hidden.VPHeight != shown.VPHeight {
+		t.Fatalf("hidden.VPHeight=%d shown.VPHeight=%d, want equal (one less input row, one fewer footer row, cancel out)", hidden.VPHeight, shown.VPHeight)
 	}
 }

@@ -198,7 +198,10 @@ func (m *Model) setLogSteps(steps []logStep) {
 // logBoxHeight is the OUTER height of the log box: the frame minus the header
 // and footer (the log view has no metadata line).
 func (m Model) logBoxHeight() int {
-	h := m.height - 2
+	h := m.height - 1
+	if showFooter(m.width, m.height) {
+		h-- // reserve the footer's row
+	}
 	if h < 3 {
 		h = 3
 	}
@@ -280,7 +283,14 @@ func (m Model) renderLogBody(w int) string {
 
 // updateLogView handles keys while the check-log sub-view is open.
 func (m Model) updateLogView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.showLegend {
+		m.showLegend = false // any key dismisses the legend
+		return m, nil
+	}
 	switch msg.String() {
+	case "?":
+		m.showLegend = true
+		return m, nil
 	case "esc", "h", "left":
 		m.logView = false
 		m.renderExpanded() // restore the Checks tab into the viewport
@@ -381,6 +391,18 @@ func (m Model) logFooter() string {
 	return "  j/k move · y line · s step · Y all · a " + word + " · esc back"
 }
 
+// logLegendGroups is the ?-toggled legend for the log view — the same keys
+// logFooter lists, grouped for the aligned-column legend.
+func (m Model) logLegendGroups() []legendGroup {
+	word := "all steps"
+	if m.logShowAll {
+		word = "failed only"
+	}
+	return []legendGroup{{"", []keyHint{
+		{"j/k", "move"}, {"y", "line"}, {"s", "step"}, {"Y", "all"}, {"a", word}, {"esc", "back"},
+	}}}
+}
+
 // logViewRender is the full-screen log view: header, the log framed in a titled
 // box (the check label as title), and the key hint line — centered like the
 // expanded view.
@@ -392,9 +414,12 @@ func (m Model) logViewRender() string {
 	bw := m.expandedBoxWidth()
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
 	head += m.statusBadge()
-	foot := statusBarStyle.Render(m.logFooter())
 	box := titledBox(m.vp.View(), bw, m.logBoxHeight(), m.logLabel)
-	out := strings.Join([]string{head, box, foot}, "\n")
+	parts := []string{head, box}
+	if showFooter(m.width, m.height) {
+		parts = append(parts, statusBarStyle.Render(m.logFooter()))
+	}
+	out := strings.Join(parts, "\n")
 	if bw < m.width {
 		out = indentLines(out, (m.width-bw)/2)
 	}
