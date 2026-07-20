@@ -59,6 +59,26 @@ func TestPreliminary(t *testing.T) {
 	}
 }
 
+func TestChangesRequestedHeadlineNamesReviewers(t *testing.T) {
+	rv := func(login string) gh.Review {
+		r := gh.Review{State: "CHANGES_REQUESTED"}
+		r.Author.Login = login
+		return r
+	}
+	p := gh.PR{Number: 1, ReviewDecision: "CHANGES_REQUESTED", StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}
+
+	c := Compute(p, gh.PRDetail{MergeStateStatus: "BLOCKED", LatestReviews: []gh.Review{rv("alice"), rv("bob")}})
+	if c.Headline != "Changes requested by @alice, @bob" {
+		t.Fatalf("Headline = %q, want %q", c.Headline, "Changes requested by @alice, @bob")
+	}
+
+	// No reviewer in detail (e.g. team review) → bare headline.
+	c = Compute(p, gh.PRDetail{MergeStateStatus: "BLOCKED"})
+	if c.Headline != "Changes requested" {
+		t.Fatalf("Headline = %q, want %q", c.Headline, "Changes requested")
+	}
+}
+
 func TestFailingChecksListed(t *testing.T) {
 	card := Compute(pr(gh.Check{State: "FAILURE", Name: "lint"}, gh.Check{State: "SUCCESS", Name: "build"}),
 		gh.PRDetail{MergeStateStatus: "BLOCKED"})

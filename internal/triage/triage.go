@@ -2,6 +2,7 @@ package triage
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -60,7 +61,7 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string)
 	case len(failing) > 0:
 		return checksFailingCard(failing, pending)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
-		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
+		return Card{Kind: KindChangesRequested, Headline: changesRequestedHeadline(d),
 			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}
 	case mss == "BEHIND":
 		return Card{Kind: KindBehind, Headline: "Behind base",
@@ -169,4 +170,20 @@ func awaitingHeadline(d gh.PRDetail) string {
 		return "Waiting on @" + d.ReviewRequests[0].Login
 	}
 	return "Awaiting review"
+}
+
+// changesRequestedHeadline names who requested changes, from the latest review
+// per author. Falls back to the bare headline when detail carries no reviewer
+// (e.g. a team review), so Preliminary and detail-less cases still read sanely.
+func changesRequestedHeadline(d gh.PRDetail) string {
+	var who []string
+	for _, r := range d.LatestReviews {
+		if r.State == "CHANGES_REQUESTED" {
+			who = append(who, "@"+r.Author.Login)
+		}
+	}
+	if len(who) == 0 {
+		return "Changes requested"
+	}
+	return "Changes requested by " + strings.Join(who, ", ")
 }
