@@ -20,7 +20,7 @@ func TestPRListArgs(t *testing.T) {
 	want := []string{
 		"pr", "list", "--search", "is:open author:@me",
 		"-L", "20", "--json",
-		"number,title,author,statusCheckRollup,reviewDecision,labels,assignees,headRefName,baseRefName,url,updatedAt,mergedAt,closedAt,isDraft,state,body",
+		"number,title,author,statusCheckRollup,reviewDecision,labels,assignees,headRefName,baseRefName,url,updatedAt,mergedAt,closedAt,isDraft,state,body,autoMergeRequest",
 	}
 	if len(args) != len(want) {
 		t.Fatalf("args len = %d, want %d (%v)", len(args), len(want), args)
@@ -167,5 +167,30 @@ func TestPRListArgsRequestsTimestamps(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "mergedAt") || !strings.Contains(joined, "closedAt") {
 		t.Fatalf("PRListArgs must request mergedAt,closedAt: %q", joined)
+	}
+}
+
+func TestPRListArgsIncludesAutoMergeRequest(t *testing.T) {
+	args := PRListArgs("is:open author:@me", 20)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "autoMergeRequest") {
+		t.Fatalf("args missing autoMergeRequest field: %v", args)
+	}
+}
+
+func TestFetchPRsParsesAutoMergeRequest(t *testing.T) {
+	f := &fakeRunner{out: []byte(`[
+		{"number":7,"title":"armed","state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"}},
+		{"number":8,"title":"not armed","state":"OPEN","autoMergeRequest":null}
+	]`)}
+	prs, err := FetchPRs(f, "/repo", "is:open", 20)
+	if err != nil {
+		t.Fatalf("FetchPRs: %v", err)
+	}
+	if !prs[0].AutoMergeEnabled() {
+		t.Errorf("PR 7 should have auto-merge enabled: %+v", prs[0])
+	}
+	if prs[1].AutoMergeEnabled() {
+		t.Errorf("PR 8 should not have auto-merge enabled: %+v", prs[1])
 	}
 }

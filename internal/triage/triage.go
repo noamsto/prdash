@@ -32,6 +32,7 @@ type Card struct {
 	ActionKey   string   // key the user presses to act ("" if none)
 	ActionLabel string
 	JumpTab     string // "" | "checks" | "reviews" | "conversation"
+	AutoMerge   bool   // GitHub auto-merge is armed on this PR (display-only)
 }
 
 // Compute returns the highest-priority triage card for pr given its detail.
@@ -41,6 +42,14 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 	failing := checksByState(pr, "fail")
 	pending := checksByState(pr, "pending")
 
+	c := computeCard(pr, d, mss, failing, pending)
+	c.AutoMerge = pr.AutoMergeEnabled()
+	return c
+}
+
+// computeCard is Compute's original branch logic, unchanged, extracted so
+// Compute can stamp AutoMerge onto whichever branch fires.
+func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string) Card {
 	switch {
 	case pr.IsDraft || mss == "DRAFT":
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
@@ -82,6 +91,12 @@ func Compute(pr gh.PR, d gh.PRDetail) Card {
 // so the quick view can show something the instant the cursor lands — before the
 // per-PR detail fetch returns. Compute supersedes it once detail is cached.
 func Preliminary(pr gh.PR) Card {
+	c := preliminaryCard(pr)
+	c.AutoMerge = pr.AutoMergeEnabled()
+	return c
+}
+
+func preliminaryCard(pr gh.PR) Card {
 	failing := checksByState(pr, "fail")
 	pending := checksByState(pr, "pending")
 	switch {

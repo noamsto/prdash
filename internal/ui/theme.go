@@ -239,6 +239,22 @@ func ciGlyph(state string) string {
 	}
 }
 
+// autoMergeGlyphRune marks a PR with GitHub auto-merge armed — it will land on
+// its own once checks and reviews clear. Distinct from mergedGlyph (a terminal
+// state); this one appears only on still-open PRs.
+const autoMergeGlyphRune = "" // nerd: nf-fa-refresh
+
+// autoMergeGlyph is the dense-row/triage-card auto-merge marker. Blank when
+// disabled so it never crowds the row — mirrors ciGlyph/reviewDot's "unknown"
+// convention but with true silence instead of a dim placeholder, since an
+// un-armed PR has nothing to say here.
+func autoMergeGlyph(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return mergedStyle.Render(autoMergeGlyphRune)
+}
+
 // mergedGlyph is the status mark for a merged PR — mauve, matching GitHub's
 // purple and the lazytmux status line, and distinct from the CI pass/fail marks.
 const mergedGlyph = "󰘭" // nerd: nf-md-source-merge (U+F062D)
