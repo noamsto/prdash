@@ -1392,10 +1392,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
-		case "ctrl+j":
+		case "alt+j":
 			m.previewScrollBy(1)
 			return m, nil
-		case "ctrl+k":
+		case "alt+k":
 			m.previewScrollBy(-1)
 			return m, nil
 		case "D":
@@ -1445,11 +1445,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewExpanded = !m.previewExpanded
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
-		case "down", "j":
+		case "down", "j", "ctrl+j":
 			m.moveCursor(1)
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
-		case "up", "k":
+		case "up", "k", "ctrl+k":
 			m.moveCursor(-1)
 			m.detailSeq++
 			return m, m.debounceDetailCmd()

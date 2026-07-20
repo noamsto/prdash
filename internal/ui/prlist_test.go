@@ -1002,8 +1002,18 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
 	case "ctrl+p":
 		return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
+	case "ctrl+j":
+		return tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl}
+	case "ctrl+k":
+		return tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl}
+	case "alt+j":
+		return tea.KeyPressMsg{Code: 'j', Mod: tea.ModAlt}
+	case "alt+k":
+		return tea.KeyPressMsg{Code: 'k', Mod: tea.ModAlt}
 	case "tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "f1":
+		return tea.KeyPressMsg{Code: tea.KeyF1}
 	default:
 		r := []rune(s)[0]
 		return tea.KeyPressMsg{Code: r, Text: s}
@@ -1417,5 +1427,27 @@ func TestLegendFitsLargeTerminal(t *testing.T) {
 	}
 	if h := lipgloss.Height(leg); h > m.height {
 		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
+	}
+}
+
+func TestCtrlJKMovesSelectionAltJKScrollsPreview(t *testing.T) {
+	m := newTestModelWithRows(t)
+	start := m.cursor
+	u, _ := m.Update(keyMsg("ctrl+j"))
+	m = u.(Model)
+	if m.cursor != start+1 {
+		t.Fatalf("ctrl+j should move selection down: cursor=%d want=%d", m.cursor, start+1)
+	}
+	u, _ = m.Update(keyMsg("ctrl+k"))
+	m = u.(Model)
+	if m.cursor != start {
+		t.Fatalf("ctrl+k should move selection up: cursor=%d want=%d", m.cursor, start)
+	}
+	// alt+j/alt+k drive the preview offset, not the cursor.
+	before := m.cursor
+	u, _ = m.Update(keyMsg("alt+j"))
+	m = u.(Model)
+	if m.cursor != before {
+		t.Fatalf("alt+j must not move the cursor: cursor=%d want=%d", m.cursor, before)
 	}
 }
