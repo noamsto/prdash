@@ -432,3 +432,29 @@ func TestLogViewHidesFooterOnSmallWindow(t *testing.T) {
 		t.Fatalf("large window should render the log footer: %q", out)
 	}
 }
+
+func TestLogViewLegendTogglesAndDismisses(t *testing.T) {
+	m := logViewModel(t)
+	m.width, m.height = 90, 14 // footer hidden; ? is the only way to see keys
+	m.logView = true
+	m.logLabel = "build"
+	m.logSteps = []logStep{{name: "Run tests", lines: []string{"line one"}}}
+	m.logLines = flattenLog(m.logSteps)
+	m.setLogContent()
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = u.(Model)
+	if !m.showLegend {
+		t.Fatal("? should open the log-view legend")
+	}
+	out := m.render()
+	if !strings.Contains(out, "step") {
+		t.Fatalf("log legend should list its own keys: %q", out)
+	}
+
+	u, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = u.(Model)
+	if m.showLegend {
+		t.Fatal("a key should close the log-view legend")
+	}
+}

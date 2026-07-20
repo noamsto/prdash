@@ -1484,10 +1484,18 @@ func (m Model) View() tea.View {
 
 func (m Model) render() string {
 	if m.logView {
-		return m.logViewRender()
+		base := m.logViewRender()
+		if m.showLegend {
+			return overlayTop(base, renderLegendGroups("Log keys", m.logLegendGroups(), m.width, m.height), m.width, m.height)
+		}
+		return base
 	}
 	if m.expanded {
-		return m.expandedView()
+		base := m.expandedView()
+		if m.showLegend {
+			return overlayTop(base, renderLegendGroups("Keys", m.expandedLegendGroups(), m.width, m.height), m.width, m.height)
+		}
+		return base
 	}
 	if m.filtering {
 		out := m.header() + "\n" + m.filterInput.View()

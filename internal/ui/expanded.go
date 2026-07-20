@@ -230,7 +230,14 @@ func (m *Model) reflowExpanded() {
 
 // updateExpanded handles keys while in expanded mode.
 func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.showLegend {
+		m.showLegend = false // any key dismisses the legend
+		return m, nil
+	}
 	switch msg.String() {
+	case "?":
+		m.showLegend = true
+		return m, nil
 	case "esc":
 		m.expanded = false
 		m.renderList()
@@ -461,6 +468,20 @@ func (m Model) expandedFooter() string {
 		return "  ↵ logs · o open · Y url · r rerun · R all · j/k move · esc back"
 	}
 	return "  j/k scroll · h/l tabs · J/K PR · ↵ worktree · esc back"
+}
+
+// expandedLegendGroups is the ?-toggled legend for the expanded view — the
+// same keys expandedFooter lists, grouped for the aligned-column legend.
+func (m Model) expandedLegendGroups() []legendGroup {
+	if m.expandedTab == tabChecks {
+		return []legendGroup{{"", []keyHint{
+			{"↵", "logs"}, {"o", "open"}, {"Y", "url"}, {"r", "rerun"}, {"R", "all"},
+			{"j/k", "move"}, {"esc", "back"},
+		}}}
+	}
+	return []legendGroup{{"", []keyHint{
+		{"j/k", "scroll"}, {"h/l", "tabs"}, {"J/K", "PR"}, {"↵", "worktree"}, {"esc", "back"},
+	}}}
 }
 
 // expandedView is the full-screen detail: header, metadata line, then the
