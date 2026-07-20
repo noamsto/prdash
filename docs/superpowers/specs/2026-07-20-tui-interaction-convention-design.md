@@ -33,10 +33,9 @@ cost you those single-key actions. Always-on type-to-filter is delivered only on
 the pickers, where letters have no other job.
 
 This is a deliberate, eyes-open reversal of the literal ask on the two boards.
-It was confirmed for **wtc** (2026-07-20) and for **prdash** via approval of the
-"prdash keeps `/`" direction. If, in daily use, the `/` on prdash is the specific
-friction that prompted the request, that decision should be re-opened before any
-prdash work begins — see the note in "Per-app migration impact".
+Both were confirmed with the user on 2026-07-20: **wtc** as a delete-heavy
+manager, and **prdash** explicitly ("keep `/` on prdash" chosen over prototyping
+always-on type-to-filter). The trade-off is settled; no re-open pending.
 
 ## The generating rule
 
@@ -63,7 +62,8 @@ Applying the rule classifies every surface into one of three archetypes.
 Apps: **lazytmux** (has always-on filter today), **tmux-remux** (target
 classification; no text filter today — see phasing below).
 
-- **Type → filter**, always on, fuzzy, live.
+- The filter box is **always visible and focused** — type filters immediately,
+  fuzzy, live (no `/`). See "Filter presentation".
 - Move selection: `ctrl+j/k` + arrows. **Where a text filter is active, plain
   `j/k` are filter text** (so lazytmux navigates with `ctrl+j/k`/arrows). An app
   with no text filter yet (tmux-remux) may keep bare `j/k` *in addition to* the
@@ -76,11 +76,11 @@ classification; no text filter today — see phasing below).
 ### Board — *browse, then do many things*
 Apps: **prdash**, **wtc**.
 
-- `/` → live incremental fuzzy filter (one keystroke of ceremony, then it
-  behaves like a picker's filter). prdash's server+local omni-filter is a
-  superset and stays.
+- The filter box is **always visible** (see "Filter presentation") but starts
+  **blurred**. `/` focuses it → live incremental fuzzy filter; `esc` blurs it
+  back. prdash's server+local omni-filter is a superset and stays.
 - Bare single-letter keys → actions (`m` merge, `r` rerun, `o` open, `a`
-  actions palette, …). Unchanged.
+  actions palette, …) while the box is blurred. Unchanged.
 - `tab` → switch board (PR ↔ issue). Plain `j/k` + arrows move selection
   (letters are free here because filter is gated).
 - `?` → which-key / keymap overlay (see Discoverability).
@@ -128,6 +128,26 @@ a picker both are filter text; the generating rule is applied honestly to them.
 The truly universal keys are `enter`, `ctrl+c`, the non-printable help key, and
 (on list surfaces) `ctrl+j/k`+arrows and two-stage `esc`.
 
+## Filter presentation (always visible)
+
+The filter/search input is a **persistent, always-rendered UI element** on every
+surface that filters — it never pops in and out. This is the strongest single
+source of visual coherence, and it makes prdash's `/` discoverable (you can see
+the box you're activating). The archetypes differ only in **focus**, not
+presence:
+
+| Archetype | Box shown? | Focused by default? | Activate |
+|---|---|---|---|
+| Picker | yes | **yes** — typing filters immediately | (already focused) |
+| Board | yes | no — blurred; letters are actions | `/` focuses; `esc` blurs |
+| Viewer | no (aeye has no filter) | — | — |
+
+Concretely: prdash and wtc render their filter bar at all times (like gh-dash's
+persistent search bar) rather than only while filtering. The bar shows a
+placeholder ("type to filter…" / the omni-filter hint) when blurred, and the
+live query when focused. This is a real change for prdash and wtc, which today
+show the input only after `/`.
+
 ## Concrete key decisions (resolving current conflicts)
 
 1. **`ctrl+j/k` is reserved for list-selection movement on list surfaces.**
@@ -162,8 +182,8 @@ The truly universal keys are `enter`, `ctrl+c`, the non-printable help key, and
 | App | Archetype | Changes |
 |---|---|---|
 | **lazytmux** | Picker (reference) | Migrate raw `switch` → `key.Binding` + `help.Model`; add `?` overlay; `esc` two-stage replaces `q`-clear-quit. Behavior otherwise unchanged. |
-| **wtc** | Board | Keep `/` filter and bare-letter actions (`d/D` delete, `space` multi-select, `a` select-stale, `e` expand). Align to spine (`esc` two-stage, `ctrl+c`, `?` overlay, `ctrl+j/k` nav, `alt+hjkl` preview scroll); migrate to `key.Binding`. |
-| **prdash** | Board | Keep `/` + all actions **(re-confirm `/`-retention before starting — B1)**. Filter → live incremental fuzzy. `esc` two-stage. Move main-list preview-scroll `ctrl+j/k` → `alt+j/k` (palette `ctrl+j/k` stays). Add searchable help overlay + `?` alias. Migrate to `key.Binding` over time. |
+| **wtc** | Board | Keep `/` filter and bare-letter actions (`d/D` delete, `space` multi-select, `a` select-stale, `e` expand). **Render the filter bar always-visible** (blurred until `/`). Align to spine (`esc` two-stage, `ctrl+c`, `?` overlay, `ctrl+j/k` nav, `alt+hjkl` preview scroll); migrate to `key.Binding`. |
+| **prdash** | Board | Keep `/` + all actions (confirmed 2026-07-20). Filter → live incremental fuzzy, **filter bar always-visible** (blurred until `/`). `esc` two-stage. Move main-list preview-scroll `ctrl+j/k` → `alt+j/k` (palette `ctrl+j/k` stays). Add searchable help overlay + `?` alias. Migrate to `key.Binding` over time. |
 | **tmux-remux** | Picker *(target)* | Already on `key.Binding`/`help.Model`. **This pass:** add `ctrl+j/k`+arrows spine nav *alongside* existing bare `j/k` (no removal), `ctrl+c` hard quit, non-printable help key + `?` alias, two-stage `esc`. **Deferred:** always-on type-to-filter and the resulting `s/d/a` relocation — until then it keeps bare `j/k` nav and boolean toggles. |
 | **aeye** | Viewer | Adopt `enter`, `ctrl+c`, non-printable help + `?` alias only. Keep `ctrl+hjkl` (window nav) and `esc` (reset zoom). No filter; spatial nav unchanged. |
 
@@ -214,7 +234,8 @@ aeye get lighter spine-only units.
 - The universal escape hatches (`enter`, `ctrl+c`, the non-printable help key)
   behave identically in all five apps; `esc` and `ctrl+j/k` behave identically on
   the list surfaces (picker + board), with the viewer's documented exemptions.
-- Pickers filter as you type with zero ceremony; the boards filter after one
-  `/`, then behave identically.
+- The filter bar is always visible on every filtering surface; pickers filter as
+  you type with zero ceremony; the boards focus the bar with one `/`, then behave
+  identically.
 - `KEYMAP.md` exists and each migrated app conforms to its archetype table.
 - prdash, wtc, and lazytmux are migrated; tmux-remux and aeye satisfy the spine.
