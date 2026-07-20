@@ -280,6 +280,20 @@ func (m *Model) scrollToCursor() {
 	m.vp.SetYOffset(off)
 }
 
+// repaintActive rebuilds the shared viewport for whichever view currently owns
+// it. A background data update must repaint the log or expanded box it's under —
+// not the list — or list rows bleed through into a non-list view.
+func (m *Model) repaintActive() {
+	switch {
+	case m.logView:
+		m.setLogContent()
+	case m.expanded:
+		m.reflowExpanded()
+	default:
+		m.renderList()
+	}
+}
+
 // previewScrollBy scrolls the side preview by delta lines, clamped so the last
 // line can't scroll above the top of the pane.
 func (m *Model) previewScrollBy(delta int) {
@@ -993,6 +1007,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
+		m.repaintActive() // keep the log/expanded box painted; don't bleed list rows in
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case issuesFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
@@ -1008,6 +1023,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
+		m.repaintActive()
 		return m, m.detailCmdForCursor()
 	case sectionsFetchedMsg:
 		if m.cache != nil {
@@ -1024,6 +1040,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
+		m.repaintActive()
 		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
 		if msg.filter != "" && msg.filter != m.filter {
@@ -1071,14 +1088,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
 		}
-		switch {
-		case m.logView:
-			m.setLogContent() // the log layers over the Checks tab; keep it painted
-		case m.expanded:
-			m.reflowExpanded() // fold in the fresh detail without losing the reader's place
-		default:
-			m.renderList()
-		}
+		m.repaintActive() // fold the fresh detail into the active view without losing place
 		return m, nil
 	case logFetchedMsg:
 		if !m.logView || msg.job != m.logJobID || msg.all != m.logShowAll {
@@ -1187,14 +1197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		switch {
-		case m.logView:
-			m.setLogContent() // reflow the log to the new size (it layers over the Checks tab)
-		case m.expanded:
-			m.reflowExpanded() // reflow to the new size, keep the reader's place
-		default:
-			m.renderList()
-		}
+		m.repaintActive() // reflow whichever view owns the viewport to the new size
 		return m, nil
 	case tea.KeyMsg:
 		if m.logView {

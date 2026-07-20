@@ -268,6 +268,21 @@ func loadedLogModel(t *testing.T) Model {
 	return m
 }
 
+// TestLogViewSurvivesBackgroundRefresh guards the regression where a background
+// poll completing while the log view is open repainted the PR list into the
+// shared viewport, bleeding list rows into the log box.
+func TestLogViewSurvivesBackgroundRefresh(t *testing.T) {
+	m := loadedLogModel(t)
+	u, _ := m.Update(prsFetchedMsg{filter: "", prs: []gh.PR{
+		{Number: 7, Title: "some other pr"},
+		{Number: 8, Title: "and another"},
+	}})
+	m = u.(Model)
+	if body := ansi.Strip(m.render()); !strings.Contains(body, "Run tests") {
+		t.Fatalf("log content lost after background refresh: %q", body)
+	}
+}
+
 // TestLogViewSurvivesResize guards the regression where a WindowSizeMsg while
 // the log view is open reflowed the Checks tab under it instead of the log.
 func TestLogViewSurvivesResize(t *testing.T) {
