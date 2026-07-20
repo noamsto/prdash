@@ -374,3 +374,21 @@ func TestPreviewPaneShowsDescriptionSection(t *testing.T) {
 		t.Fatalf("preview should show the description section:\n%s", out)
 	}
 }
+
+func TestContentHeightReclaimsHiddenFooterRows(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 14
+	l := computeLayout(m.width, m.height)
+	if l.ShowFooter {
+		t.Fatal("test setup: expected footer hidden at h=14")
+	}
+	if got := m.contentHeight(l); got != l.ContentHeight {
+		t.Fatalf("contentHeight() = %d, want l.ContentHeight (%d) when footer is hidden and not filtering", got, l.ContentHeight)
+	}
+
+	m.filtering = true
+	if got, want := m.contentHeight(l), max(1, l.ContentHeight-1-m.omniHintRows()); got != want {
+		t.Fatalf("contentHeight() while filtering with no footer = %d, want %d (filter input costs a row that wasn't budgeted for a footer)", got, want)
+	}
+}

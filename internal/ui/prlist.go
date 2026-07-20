@@ -1529,6 +1529,9 @@ func (m Model) board() string {
 	if l.ShowSide && l.ShowPanel {
 		return m.header() + "\n" + m.renderDocked(l)
 	}
+	if !l.ShowFooter {
+		return m.header() + "\n" + m.renderMain() // small window: ? is the way to see the keys
+	}
 	foot := m.statusBar()
 	if l.ShowPanel {
 		foot = m.keysActionsPanel(m.width)

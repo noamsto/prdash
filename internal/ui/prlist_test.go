@@ -1280,7 +1280,7 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 	// filter input reclaims from the statusBar footer it replaces.
 	m.mode = "pr"
 	m.filterInput.SetValue("@aa")
-	l := Layout{ShowPanel: false, ContentHeight: 40}
+	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
@@ -1306,7 +1306,7 @@ func TestContentHeightFilteringNoPanel(t *testing.T) {
 		t.Fatalf("omniHintRows = %d, want 1", got)
 	}
 
-	l := Layout{ShowPanel: false, ContentHeight: 40}
+	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
@@ -1336,5 +1336,33 @@ func TestOmniDropdownCursorClampedToWindow(t *testing.T) {
 	}
 	if m.omniSuggestCursor > omniSuggestDropdownRows-1 {
 		t.Fatalf("cursor = %d, want <= %d", m.omniSuggestCursor, omniSuggestDropdownRows-1)
+	}
+}
+
+func TestBoardHidesFooterOnSmallWindow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 14 // below footerMinHeight
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+
+	out := m.board()
+	if strings.Contains(out, "quit") {
+		t.Fatalf("small window should not render the keybinding footer: %q", out)
+	}
+	lines := strings.Count(out, "\n") + 1
+	if lines > m.height {
+		t.Fatalf("board output has %d lines, exceeds terminal height %d", lines, m.height)
+	}
+}
+
+func TestBoardShowsFooterOnLargeWindow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 120, 30 // above both floors
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+
+	out := m.board()
+	if !strings.Contains(out, "quit") {
+		t.Fatalf("large window should render the keybinding footer: %q", out)
 	}
 }
