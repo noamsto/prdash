@@ -198,7 +198,10 @@ func (m *Model) setLogSteps(steps []logStep) {
 // logBoxHeight is the OUTER height of the log box: the frame minus the header
 // and footer (the log view has no metadata line).
 func (m Model) logBoxHeight() int {
-	h := m.height - 2
+	h := m.height - 1
+	if showFooter(m.width, m.height) {
+		h-- // reserve the footer's row
+	}
 	if h < 3 {
 		h = 3
 	}
@@ -392,9 +395,12 @@ func (m Model) logViewRender() string {
 	bw := m.expandedBoxWidth()
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
 	head += m.statusBadge()
-	foot := statusBarStyle.Render(m.logFooter())
 	box := titledBox(m.vp.View(), bw, m.logBoxHeight(), m.logLabel)
-	out := strings.Join([]string{head, box, foot}, "\n")
+	parts := []string{head, box}
+	if showFooter(m.width, m.height) {
+		parts = append(parts, statusBarStyle.Render(m.logFooter()))
+	}
+	out := strings.Join(parts, "\n")
 	if bw < m.width {
 		out = indentLines(out, (m.width-bw)/2)
 	}

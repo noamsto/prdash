@@ -408,3 +408,27 @@ func TestExternalCheckTargetURLOpens(t *testing.T) {
 		t.Fatalf("expected an open status, not a no-URL error: %v", m.actionStatus.err)
 	}
 }
+
+func TestLogViewHidesFooterOnSmallWindow(t *testing.T) {
+	m := logViewModel(t)
+	m.width, m.height = 90, 14 // below footerMinHeight
+	m.logView = true
+	m.logLabel = "build"
+	m.logSteps = []logStep{{name: "Run tests", lines: []string{"line one"}}}
+	m.logLines = flattenLog(m.logSteps)
+	m.setLogContent()
+
+	out := m.logViewRender()
+	if strings.Contains(out, "esc back") {
+		t.Fatalf("small window should not render the log footer: %q", out)
+	}
+	if lines := strings.Count(out, "\n") + 1; lines > m.height {
+		t.Fatalf("log view output has %d lines, exceeds terminal height %d", lines, m.height)
+	}
+
+	m.width, m.height = 90, 30
+	out = m.logViewRender()
+	if !strings.Contains(out, "esc back") {
+		t.Fatalf("large window should render the log footer: %q", out)
+	}
+}
