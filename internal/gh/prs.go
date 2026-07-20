@@ -10,7 +10,7 @@ import (
 var prFields = []string{
 	"number", "title", "author", "statusCheckRollup", "reviewDecision",
 	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt",
-	"mergedAt", "closedAt", "isDraft", "state", "body",
+	"mergedAt", "closedAt", "isDraft", "state", "body", "autoMergeRequest",
 }
 
 type Check struct {
@@ -69,6 +69,12 @@ type Label struct {
 	Color string `json:"color"` // 6-hex, no leading '#'
 }
 
+// AutoMergeRequest mirrors GitHub's non-null-when-armed autoMergeRequest
+// object; only the merge method is currently surfaced in the UI.
+type AutoMergeRequest struct {
+	MergeMethod string `json:"mergeMethod"` // MERGE | SQUASH | REBASE
+}
+
 type PR struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
@@ -81,20 +87,26 @@ type PR struct {
 	Assignees         []struct {
 		Login string `json:"login"`
 	} `json:"assignees"`
-	HeadRefName string    `json:"headRefName"`
-	BaseRefName string    `json:"baseRefName"`
-	URL         string    `json:"url"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	MergedAt    time.Time `json:"mergedAt"` // zero unless State == MERGED
-	ClosedAt    time.Time `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
-	IsDraft     bool      `json:"isDraft"`
-	State       string    `json:"state"` // OPEN | CLOSED | MERGED
-	Body        string    `json:"body"`
+	HeadRefName      string            `json:"headRefName"`
+	BaseRefName      string            `json:"baseRefName"`
+	URL              string            `json:"url"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+	MergedAt         time.Time         `json:"mergedAt"` // zero unless State == MERGED
+	ClosedAt         time.Time         `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
+	IsDraft          bool              `json:"isDraft"`
+	State            string            `json:"state"` // OPEN | CLOSED | MERGED
+	Body             string            `json:"body"`
+	AutoMergeRequest *AutoMergeRequest `json:"autoMergeRequest"`
 }
 
 // IsMerged reports whether the PR landed — its status mark and color differ from
 // an open PR's CI rollup (merged is terminal; the checks no longer matter).
 func (p PR) IsMerged() bool { return p.State == "MERGED" }
+
+// AutoMergeEnabled reports whether GitHub auto-merge is armed on this PR —
+// autoMergeRequest is null unless a merge has been queued to land once checks
+// and reviews are satisfied.
+func (p PR) AutoMergeEnabled() bool { return p.AutoMergeRequest != nil }
 
 func PRListArgs(filter string, limit int) []string {
 	return []string{
