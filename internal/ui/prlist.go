@@ -1959,7 +1959,7 @@ func (m Model) statusBar() string {
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
-const schemaVer = "v3"
+const schemaVer = "v4"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.
