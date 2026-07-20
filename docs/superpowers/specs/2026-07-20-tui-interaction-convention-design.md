@@ -1,7 +1,8 @@
 # TUI Interaction Convention — Design
 
 **Date:** 2026-07-20
-**Status:** Approved direction; spec under review
+**Status:** Approved direction; revised after adversarial review (spec-critic,
+2026-07-20); under user review
 **Scope:** A coherent navigation / filter / keybinding convention shared across
 Noam's Go/Bubble Tea TUIs. First migrations: `prdash`, `wtc`, `lazytmux`.
 `tmux-remux` and `aeye` adopt the shared spine only.
@@ -21,6 +22,21 @@ Five Bubble Tea TUIs have drifted into five different interaction models:
 Four filter models, two nav conventions, five hand-rolled help renderings, and
 only one app on the idiomatic `key.Binding`/`help.Model` machinery. Muscle memory
 does not transfer between them.
+
+## The trade-off against the original ask (read this first)
+
+The request that started this was: *"allow filtering by typing by default, not by
+pressing `/`."* This spec **does not** grant that everywhere. The two boards
+(prdash, wtc) keep `/`, because on an action-rich surface the letters are spent
+on verbs (prdash's ~20 actions; wtc's `d`/`D` delete) and typing-to-filter would
+cost you those single-key actions. Always-on type-to-filter is delivered only on
+the pickers, where letters have no other job.
+
+This is a deliberate, eyes-open reversal of the literal ask on the two boards.
+It was confirmed for **wtc** (2026-07-20) and for **prdash** via approval of the
+"prdash keeps `/`" direction. If, in daily use, the `/` on prdash is the specific
+friction that prompted the request, that decision should be re-opened before any
+prdash work begins — see the note in "Per-app migration impact".
 
 ## The generating rule
 
@@ -44,12 +60,17 @@ behind `/`; fzf / telescope / lazytmux (pure pickers) all filter as you type.
 Applying the rule classifies every surface into one of three archetypes.
 
 ### Picker — *choose one thing*
-Apps: **lazytmux**, **tmux-remux**.
+Apps: **lazytmux** (has always-on filter today), **tmux-remux** (target
+classification; no text filter today — see phasing below).
 
 - **Type → filter**, always on, fuzzy, live.
-- Move selection: `ctrl+j/k` + arrows (plain `j/k` are filter text).
+- Move selection: `ctrl+j/k` + arrows. **Where a text filter is active, plain
+  `j/k` are filter text** (so lazytmux navigates with `ctrl+j/k`/arrows). An app
+  with no text filter yet (tmux-remux) may keep bare `j/k` *in addition to* the
+  spine's `ctrl+j/k`+arrows until it gains a filter.
 - `enter` → select and act.
 - `esc` → two-stage: clear query if present, else quit.
+- Help: a **non-printable** key (see Discoverability) — `?` is filter text here.
 - Secondary actions (few) are `ctrl`-modified; they must fit the ctrl keyspace.
 
 ### Board — *browse, then do many things*
@@ -74,48 +95,67 @@ Apps: **aeye**.
 
 - `h/j/k/l` + arrows → pan / move; `g/G` ends; `1-9` jump; `z/Z` zoom; `tab`
   region drill. Unchanged.
-- No filter. Participates in the convention **only through the shared spine.**
+- No filter. Participates in the spine **partially** — a viewer has no list
+  selection, so the spine's `ctrl+j/k` selection nav does not apply, and aeye
+  already owns `ctrl+h/j/k/l` for crossing to the neighbouring kitty/tmux window
+  (`gallery.go:296`). Those stay.
+- **`esc` exemption:** aeye's `esc` resets zoom / exits region drill-down
+  (`gallery.go:339`). It keeps that meaning; quit is `q` / `ctrl+c` only. The
+  spine's two-stage `esc`→quit does **not** override viewer `esc`.
+- Spine keys aeye *does* adopt: `q`/`ctrl+c` quit, `enter` primary (open), and a
+  non-printable help key.
 
-## The shared spine (identical in every app)
+## The shared spine
 
 The felt coherence lives here — the escape hatches behave the same everywhere,
-which matters more than the filter-entry key.
+which matters more than the filter-entry key. Two keys have **honest exceptions**
+that follow directly from the rule (a printable key cannot be reserved on a
+surface where every printable key is filter input): they are marked below.
 
-| Key | Meaning | Notes |
+| Key | Meaning | Universal? |
 |---|---|---|
-| `enter` | primary action | select (picker) / context action (board) / open (viewer) |
-| `esc` | two-stage: clear filter/selection → back/quit | uniform exit grammar |
-| `ctrl+c` | hard quit | always, immediate, from any mode |
-| `?` | full keymap overlay | every app; board adds in-overlay search |
-| arrows | move selection | filter-safe everywhere |
-| `ctrl+j` / `ctrl+k` | move selection down / up | filter-safe everywhere; the one nav pair that works in all archetypes |
+| `enter` | primary action (select / context action / open) | yes |
+| `ctrl+c` | hard quit — immediate, from any mode | yes |
+| help key (non-printable, e.g. `F1`) | full keymap overlay | yes — see Discoverability |
+| `ctrl+j` / `ctrl+k` + arrows | move list selection | **list surfaces only** (picker + board); viewer has no list and owns `ctrl+hjkl` for window nav |
+| `esc` | two-stage: clear filter/selection → back/quit | **list surfaces only**; viewer `esc` = reset view |
 | `alt+j/k` / `alt+h/l` | preview scroll (vert / horiz) | where a preview pane exists |
+| `?` | keymap overlay (alias) | **board + viewer only** — in a picker `?` is filter text |
+| `q` | quit | **board + viewer only** — in a picker `q` is filter text; use `esc`/`ctrl+c` |
 
-`q` is quit **only** where letters are verbs (board, viewer). In a picker `q` is
-filter text; quit-from-empty is `esc` or `ctrl+c`. This is the generating rule
-applied honestly to `q` itself.
+`q` and `?` are quit / help **only** where letters are verbs (board, viewer). In
+a picker both are filter text; the generating rule is applied honestly to them.
+The truly universal keys are `enter`, `ctrl+c`, the non-printable help key, and
+(on list surfaces) `ctrl+j/k`+arrows and two-stage `esc`.
 
 ## Concrete key decisions (resolving current conflicts)
 
-1. **`ctrl+j/k` is reserved for selection movement, spine-wide.** prdash
-   currently uses `ctrl+j/k` for *preview scroll* — that moves to `alt+j/k`
-   (matching lazytmux, which already scrolls its preview with `alt+j/k`).
+1. **`ctrl+j/k` is reserved for list-selection movement on list surfaces.**
+   prdash currently uses `ctrl+j/k` in two places: main-list *preview scroll*
+   (`prlist.go:1395,1398`) and actions-palette *selection nav*
+   (`prlist.go:1346,1351`). Only the **preview-scroll** usage moves to `alt+j/k`;
+   the palette usage already matches the spine and stays.
 2. **Preview scroll = `alt+hjkl`** everywhere a preview exists (lazytmux's
-   existing choice; keeps `alt` = "the other pane").
-3. **Two-stage `esc`** replaces lazytmux's current `q`-clears-then-quits, so the
-   exit grammar is identical across archetypes. lazytmux gains `q` as filter
-   text as a side effect (a fix, not a regression).
-4. **`?` overlay** is added to lazytmux, wtc, and aeye (prdash and tmux-remux
-   already have help surfaces).
+   existing choice; keeps `alt` = "the other pane"). Verified collision-free in
+   lazytmux, tmux-remux, wtc.
+3. **Two-stage `esc`** (list surfaces) replaces lazytmux's current
+   `q`-clears-then-quits, so the exit grammar is identical across picker+board.
+   lazytmux gains `q` as filter text as a side effect (a fix, not a regression).
+4. **Help overlay** is added to lazytmux, wtc, and aeye (prdash and tmux-remux
+   already have help surfaces), bound to the non-printable help key below.
 
-## Discoverability (`?`)
+## Discoverability (help)
 
-- **All apps:** `?` opens a full keymap overlay, grouped and scaled to the
-  current mode. Prefer `bubbles/help` `FullHelp()` so it is generated from the
-  `key.Binding` set, not hand-maintained.
+- **Help key:** a **non-printable** key, canonically **`F1`** (`ctrl+g` is the
+  fallback if `F1` proves unreliable in a target terminal — settle in the plan).
+  It works in every archetype including pickers, where `?` is filter text.
+- **`?` as alias:** on board + viewer surfaces (letters free), `?` also opens the
+  overlay — the conventional muscle-memory key stays where it can.
+- **All apps:** the overlay is generated from the `key.Binding` set via
+  `bubbles/help` `FullHelp()`, not hand-maintained.
 - **Board (prdash):** the overlay is *searchable* — type to filter the keymap
-  list (the open lazygit request, applied here). This is the discoverability
-  analogue of Helix's which-key menu.
+  list (the open lazygit request, applied here). The discoverability analogue of
+  Helix's which-key menu.
 
 ## Per-app migration impact
 
@@ -123,9 +163,9 @@ applied honestly to `q` itself.
 |---|---|---|
 | **lazytmux** | Picker (reference) | Migrate raw `switch` → `key.Binding` + `help.Model`; add `?` overlay; `esc` two-stage replaces `q`-clear-quit. Behavior otherwise unchanged. |
 | **wtc** | Board | Keep `/` filter and bare-letter actions (`d/D` delete, `space` multi-select, `a` select-stale, `e` expand). Align to spine (`esc` two-stage, `ctrl+c`, `?` overlay, `ctrl+j/k` nav, `alt+hjkl` preview scroll); migrate to `key.Binding`. |
-| **prdash** | Board | Keep `/` + all actions. Filter → live incremental fuzzy. `esc` two-stage. Move preview-scroll `ctrl+j/k` → `alt+j/k`. Add searchable `?` overlay. Migrate to `key.Binding` over time. |
-| **tmux-remux** | Picker | Already on `key.Binding`/`help.Model`. Reconcile nav (`ctrl+j/k` + arrows) and quit (`esc` two-stage, `ctrl+c`) to spine. |
-| **aeye** | Viewer | Adopt spine keys only (`enter`, `esc`, `ctrl+c`, `?`). No filter, spatial nav unchanged. |
+| **prdash** | Board | Keep `/` + all actions **(re-confirm `/`-retention before starting — B1)**. Filter → live incremental fuzzy. `esc` two-stage. Move main-list preview-scroll `ctrl+j/k` → `alt+j/k` (palette `ctrl+j/k` stays). Add searchable help overlay + `?` alias. Migrate to `key.Binding` over time. |
+| **tmux-remux** | Picker *(target)* | Already on `key.Binding`/`help.Model`. **This pass:** add `ctrl+j/k`+arrows spine nav *alongside* existing bare `j/k` (no removal), `ctrl+c` hard quit, non-printable help key + `?` alias, two-stage `esc`. **Deferred:** always-on type-to-filter and the resulting `s/d/a` relocation — until then it keeps bare `j/k` nav and boolean toggles. |
+| **aeye** | Viewer | Adopt `enter`, `ctrl+c`, non-printable help + `?` alias only. Keep `ctrl+hjkl` (window nav) and `esc` (reset zoom). No filter; spatial nav unchanged. |
 
 ## Resolved: wtc is a board
 
@@ -139,6 +179,14 @@ tmux-remux); the two boards (prdash, wtc) keep `/`.
 
 ## Implementation strategy — spec now, library at second use
 
+**Decomposition.** These are five separate Go modules in five repos
+(`github.com/noamsto/prdash`, `github.com/noamsto/wt`, lazytmux, tmux-remux,
+aeye) — no single branch or PR can span them. The work decomposes into
+independent units, each its own branch/PR: (0) the `KEYMAP.md` convention doc,
+then one migration per repo. The implementation plan produced from this spec
+covers unit 0 plus the **prdash / wtc / lazytmux** migrations; tmux-remux and
+aeye get lighter spine-only units.
+
 1. **Now:** write `KEYMAP.md` (this convention: rule + spine + three archetype
    tables). Canonical home recommended: **lazytmux** (the reference picker) or a
    dedicated docs location — to confirm during review. Each repo links to it.
@@ -148,7 +196,10 @@ tmux-remux); the two boards (prdash, wtc) keep `/`.
    likely a spine `key.Binding` set + a help renderer. The filterable-list
    widget's natural birth is the wtc conversion: port lazytmux's fuzzy filter;
    if it transplants cleanly, that becomes the library. No framework is built
-   upfront for five small apps.
+   upfront for five small apps. **Cross-module distribution is unsolved and
+   deferred:** sharing one package across five separate private modules needs a
+   published module or a `replace`/monorepo strategy (note: prdash's private-repo
+   nix refs already fail — see project memory), to be designed at extraction time.
 
 ## Non-goals
 
@@ -160,9 +211,10 @@ tmux-remux); the two boards (prdash, wtc) keep `/`.
 
 ## Success criteria
 
-- The escape hatches (`enter`, `esc`, `ctrl+c`, `?`) behave identically in all
-  five apps.
-- Pickers filter as you type with zero ceremony; the board filters after one
-  `/`, then behaves identically.
+- The universal escape hatches (`enter`, `ctrl+c`, the non-printable help key)
+  behave identically in all five apps; `esc` and `ctrl+j/k` behave identically on
+  the list surfaces (picker + board), with the viewer's documented exemptions.
+- Pickers filter as you type with zero ceremony; the boards filter after one
+  `/`, then behave identically.
 - `KEYMAP.md` exists and each migrated app conforms to its archetype table.
 - prdash, wtc, and lazytmux are migrated; tmux-remux and aeye satisfy the spine.
