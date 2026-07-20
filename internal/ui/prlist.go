@@ -1777,8 +1777,9 @@ func (m Model) legendGroups() []legendGroup {
 // renderLegendGroups lays out grouped keyHints as a titled, column-aligned
 // float: each group gets its own gridHints-aligned block (so a wide glyph
 // column doesn't force every key elsewhere to the same gutter width), wrapped
-// in a titledBox clamped to fit inside the terminal so it degrades instead of
-// overflowing on a small window.
+// in a titledBox clamped to the terminal size. Below titledBox's own 4x2
+// floor the box can exceed a terminal that's smaller still, but every call
+// site composites through overlayTop, whose canvas crops any overflow.
 func renderLegendGroups(title string, groups []legendGroup, termW, termH int) string {
 	maxW := max(20, termW-4)
 	var lines []string
