@@ -44,7 +44,7 @@ behind `/`; fzf / telescope / lazytmux (pure pickers) all filter as you type.
 Applying the rule classifies every surface into one of three archetypes.
 
 ### Picker — *choose one thing*
-Apps: **lazytmux**, **wtc**, **tmux-remux**.
+Apps: **lazytmux**, **tmux-remux**.
 
 - **Type → filter**, always on, fuzzy, live.
 - Move selection: `ctrl+j/k` + arrows (plain `j/k` are filter text).
@@ -53,7 +53,7 @@ Apps: **lazytmux**, **wtc**, **tmux-remux**.
 - Secondary actions (few) are `ctrl`-modified; they must fit the ctrl keyspace.
 
 ### Board — *browse, then do many things*
-Apps: **prdash**.
+Apps: **prdash**, **wtc**.
 
 - `/` → live incremental fuzzy filter (one keystroke of ceremony, then it
   behaves like a picker's filter). prdash's server+local omni-filter is a
@@ -63,6 +63,11 @@ Apps: **prdash**.
 - `tab` → switch board (PR ↔ issue). Plain `j/k` + arrows move selection
   (letters are free here because filter is gated).
 - `?` → which-key / keymap overlay (see Discoverability).
+
+**wtc** is a board too — its job is managing and deleting worktrees. `/`
+filters; `d`/`D` delete / force-delete, `space` multi-selects, `a` selects all
+stale, `e` expands, `enter` switches to the worktree — all bare letters,
+unchanged. Deletion stays a single keystroke.
 
 ### Viewer — *spatial navigation, no filter*
 Apps: **aeye**.
@@ -117,25 +122,20 @@ applied honestly to `q` itself.
 | App | Archetype | Changes |
 |---|---|---|
 | **lazytmux** | Picker (reference) | Migrate raw `switch` → `key.Binding` + `help.Model`; add `?` overlay; `esc` two-stage replaces `q`-clear-quit. Behavior otherwise unchanged. |
-| **wtc** | Picker *(judgment call — see below)* | Drop the `/` gate → always-on type-to-filter; relocate `space/a/e/d/D` to `ctrl`-modified actions; `?` overlay; migrate to `key.Binding`. |
+| **wtc** | Board | Keep `/` filter and bare-letter actions (`d/D` delete, `space` multi-select, `a` select-stale, `e` expand). Align to spine (`esc` two-stage, `ctrl+c`, `?` overlay, `ctrl+j/k` nav, `alt+hjkl` preview scroll); migrate to `key.Binding`. |
 | **prdash** | Board | Keep `/` + all actions. Filter → live incremental fuzzy. `esc` two-stage. Move preview-scroll `ctrl+j/k` → `alt+j/k`. Add searchable `?` overlay. Migrate to `key.Binding` over time. |
 | **tmux-remux** | Picker | Already on `key.Binding`/`help.Model`. Reconcile nav (`ctrl+j/k` + arrows) and quit (`esc` two-stage, `ctrl+c`) to spine. |
 | **aeye** | Viewer | Adopt spine keys only (`enter`, `esc`, `ctrl+c`, `?`). No filter, spatial nav unchanged. |
 
-## Open judgment call: wtc picker vs board
+## Resolved: wtc is a board
 
-wtc's explorer has real verbs (`space` multi-select, `a` select-stale, `e`
-expand, `d/D` delete) — that reads board-ish. It is classified as a **picker**
-because:
+wtc's primary use is *managing and deleting* worktrees, not switching to one.
+Its verbs (`d/D` delete, `space` multi-select, `a` select-stale, `e` expand)
+are the point, so by the rule it keeps `/`-gated filter and single-key actions —
+deletion stays one keystroke. (Confirmed with the user, 2026-07-20.)
 
-- Its *primary* verb is "switch to one worktree" (`enter`); management is
-  secondary.
-- Its action set is small (~4) and **fits** the ctrl keyspace (unlike prdash's
-  20), so `ctrl`-modifiers are viable: `ctrl+space`/`ctrl+d`/`ctrl+e` etc.
-
-If you use wtc mostly to *manage* worktrees rather than *switch*, it should
-instead be a board (keep `/`, keep bare-letter actions). **This is the one
-classification to confirm during review.**
+This leaves the always-on-type-to-filter conversions to the pickers (lazytmux,
+tmux-remux); the two boards (prdash, wtc) keep `/`.
 
 ## Implementation strategy — spec now, library at second use
 
