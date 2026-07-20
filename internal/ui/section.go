@@ -106,10 +106,7 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	case p.State == "CLOSED":
 		status, age = closedMark(), ageString(p.ClosedAt)
 	}
-	// Auto-merge is only shown for open PRs: GitHub's autoMergeRequest field can
-	// linger non-null after merge/close, which would otherwise contradict the
-	// terminal mark on the same row.
-	auto := autoMergeGlyph(p.State == "OPEN" && p.AutoMergeEnabled())
+	auto := autoMergeGlyph(p.AutoMergeEnabled())
 	// Author is dropped from the row: it's redundant in a single-author (flat)
 	// view and hoisted into the group header when grouped.
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,

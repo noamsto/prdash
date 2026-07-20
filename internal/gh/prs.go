@@ -105,8 +105,10 @@ func (p PR) IsMerged() bool { return p.State == "MERGED" }
 
 // AutoMergeEnabled reports whether GitHub auto-merge is armed on this PR —
 // autoMergeRequest is null unless a merge has been queued to land once checks
-// and reviews are satisfied.
-func (p PR) AutoMergeEnabled() bool { return p.AutoMergeRequest != nil }
+// and reviews are satisfied. Gated to OPEN because the field can linger
+// non-null after merge/close, which would otherwise contradict a terminal
+// PR's own merged/closed state everywhere this is displayed.
+func (p PR) AutoMergeEnabled() bool { return p.State == "OPEN" && p.AutoMergeRequest != nil }
 
 func PRListArgs(filter string, limit int) []string {
 	return []string{

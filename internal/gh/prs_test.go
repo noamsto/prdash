@@ -180,8 +180,8 @@ func TestPRListArgsIncludesAutoMergeRequest(t *testing.T) {
 
 func TestFetchPRsParsesAutoMergeRequest(t *testing.T) {
 	f := &fakeRunner{out: []byte(`[
-		{"number":7,"title":"armed","autoMergeRequest":{"mergeMethod":"SQUASH"}},
-		{"number":8,"title":"not armed","autoMergeRequest":null}
+		{"number":7,"title":"armed","state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"}},
+		{"number":8,"title":"not armed","state":"OPEN","autoMergeRequest":null}
 	]`)}
 	prs, err := FetchPRs(f, "/repo", "is:open", 20)
 	if err != nil {

@@ -125,7 +125,7 @@ func TestPreliminaryFoldsRunningIntoFailingCard(t *testing.T) {
 }
 
 func TestComputeSetsAutoMergeFromPR(t *testing.T) {
-	pr := gh.PR{ReviewDecision: "", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}
+	pr := gh.PR{State: "OPEN", ReviewDecision: "", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}
 	c := Compute(pr, gh.PRDetail{MergeStateStatus: "CLEAN"})
 	if !c.AutoMerge {
 		t.Fatalf("Compute card should carry AutoMerge=true: %+v", c)
@@ -141,7 +141,7 @@ func TestComputeAutoMergeFalseWhenNotArmed(t *testing.T) {
 }
 
 func TestPreliminarySetsAutoMergeFromPR(t *testing.T) {
-	pr := gh.PR{AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}
+	pr := gh.PR{State: "OPEN", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}
 	c := Preliminary(pr)
 	if !c.AutoMerge {
 		t.Fatalf("Preliminary card should carry AutoMerge=true: %+v", c)
