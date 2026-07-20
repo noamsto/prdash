@@ -54,3 +54,21 @@ func TestRenderCardReadyNoAction(t *testing.T) {
 		t.Fatalf("headline missing: %q", out)
 	}
 }
+
+func TestRenderCardShowsAutoMergeLine(t *testing.T) {
+	c := triage.Card{Kind: triage.KindReady, Headline: "Ready to merge",
+		ActionKey: "m", ActionLabel: "merge (squash)", AutoMerge: true}
+	out := renderCard(c, 40)
+	if !strings.Contains(out, "auto-merge armed") {
+		t.Fatalf("auto-merge line missing: %q", out)
+	}
+}
+
+func TestRenderCardOmitsAutoMergeLineWhenNotArmed(t *testing.T) {
+	c := triage.Card{Kind: triage.KindReady, Headline: "Ready to merge",
+		ActionKey: "m", ActionLabel: "merge (squash)"}
+	out := renderCard(c, 40)
+	if strings.Contains(out, "auto-merge armed") {
+		t.Fatalf("auto-merge line should not appear: %q", out)
+	}
+}

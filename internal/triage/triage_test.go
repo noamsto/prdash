@@ -123,3 +123,27 @@ func TestPreliminaryFoldsRunningIntoFailingCard(t *testing.T) {
 		t.Fatalf("Failing=%v Running=%v, want one each", c.Failing, c.Running)
 	}
 }
+
+func TestComputeSetsAutoMergeFromPR(t *testing.T) {
+	pr := gh.PR{ReviewDecision: "", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}
+	c := Compute(pr, gh.PRDetail{MergeStateStatus: "CLEAN"})
+	if !c.AutoMerge {
+		t.Fatalf("Compute card should carry AutoMerge=true: %+v", c)
+	}
+}
+
+func TestComputeAutoMergeFalseWhenNotArmed(t *testing.T) {
+	pr := gh.PR{}
+	c := Compute(pr, gh.PRDetail{MergeStateStatus: "CLEAN"})
+	if c.AutoMerge {
+		t.Fatalf("Compute card should carry AutoMerge=false: %+v", c)
+	}
+}
+
+func TestPreliminarySetsAutoMergeFromPR(t *testing.T) {
+	pr := gh.PR{AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}
+	c := Preliminary(pr)
+	if !c.AutoMerge {
+		t.Fatalf("Preliminary card should carry AutoMerge=true: %+v", c)
+	}
+}
