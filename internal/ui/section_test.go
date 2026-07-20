@@ -29,14 +29,35 @@ func TestReviewDot(t *testing.T) {
 func TestRenderItemRowIsSingleLine(t *testing.T) {
 	o := RowOpts{Width: 80, Focused: true, Selected: true, Flag: failStyle.Render("⚠")}
 	row := renderItemRow(o, accentStyle, "#7", "hello world", "alice", "2d",
-		ciGlyph("fail"), reviewDot("APPROVED"), nil)
+		ciGlyph("fail"), reviewDot("APPROVED"), autoMergeGlyph(true), nil)
 	if strings.Contains(row, "\n") {
 		t.Fatalf("dense row must be one line: %q", row)
 	}
-	for _, want := range []string{"#7", "hello world", "alice", "2d", "▎", "●", "⚠"} {
+	for _, want := range []string{"#7", "hello world", "alice", "2d", "▎", "●", "⚠", autoMergeGlyph(true)} {
 		if !strings.Contains(row, want) {
 			t.Fatalf("row missing %q: %q", want, row)
 		}
+	}
+}
+
+func TestAutoMergeGlyphRendersWhenEnabled(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{{Number: 7, Title: "hi", HeadRefName: "feat/x", State: "OPEN",
+		AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}})
+
+	row := s.RenderRow(0, RowOpts{Width: 80})
+	if !strings.Contains(row, autoMergeGlyph(true)) {
+		t.Fatalf("row missing auto-merge glyph: %q", row)
+	}
+}
+
+func TestAutoMergeGlyphAbsentWhenDisabled(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{{Number: 7, Title: "hi", HeadRefName: "feat/x"}})
+
+	row := s.RenderRow(0, RowOpts{Width: 80})
+	if strings.Contains(row, autoMergeGlyph(true)) {
+		t.Fatalf("row should not show auto-merge glyph: %q", row)
 	}
 }
 
@@ -78,7 +99,7 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), nil)
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), nil)
 	}
 	plain := args(RowOpts{Width: 80})
 	draft := args(RowOpts{Width: 80, Draft: true})
@@ -99,7 +120,7 @@ func TestPRSectionMarksDraftRow(t *testing.T) {
 
 func TestDraftRowShowsDraftTag(t *testing.T) {
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), nil)
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), nil)
 	}
 	if got := row(RowOpts{Width: 80, Draft: true}); !strings.Contains(got, "[draft]") {
 		t.Fatalf("draft row should carry a [draft] tag: %q", got)
@@ -320,7 +341,7 @@ func TestFocusedRowGetsBackground(t *testing.T) {
 	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
 	set := probe[:strings.Index(probe, "X")]
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""), nil)
+		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), nil)
 	}
 	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
 		t.Fatalf("focused row should carry the cursor background: %q", got)

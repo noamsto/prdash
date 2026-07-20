@@ -106,10 +106,14 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	case p.State == "CLOSED":
 		status, age = closedMark(), ageString(p.ClosedAt)
 	}
+	// Auto-merge is only shown for open PRs: GitHub's autoMergeRequest field can
+	// linger non-null after merge/close, which would otherwise contradict the
+	// terminal mark on the same row.
+	auto := autoMergeGlyph(p.State == "OPEN" && p.AutoMergeEnabled())
 	// Author is dropped from the row: it's redundant in a single-author (flat)
 	// view and hoisted into the group header when grouped.
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		"", age, status, reviewDot(p.ReviewDecision), p.Labels)
+		"", age, status, reviewDot(p.ReviewDecision), auto, p.Labels)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -292,7 +296,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), "", "", is.Labels)
+		is.Author.Login, ageString(is.UpdatedAt), "", "", "", is.Labels)
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -333,8 +337,8 @@ func joinSpace(s []string) string { return strings.Join(s, " ") }
 
 // renderItemRow renders one dense board line:
 //
-//	‹bar›‹mark› ‹ci› ‹rv› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
-func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review string, labels []gh.Label) string {
+//	‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto string, labels []gh.Label) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -356,11 +360,14 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if review == "" {
 		review = dimStyle.Render("·")
 	}
+	if auto == "" {
+		auto = " "
+	}
 	numCell := num
 	if o.NumWidth > 0 {
 		numCell = padNum(num, o.NumWidth)
 	}
-	left := bar + mark + " " + ci + " " + review + " " + flag + " " + numStyle.Render(numCell) + " "
+	left := bar + mark + " " + ci + " " + review + " " + auto + " " + flag + " " + numStyle.Render(numCell) + " "
 	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
