@@ -127,7 +127,7 @@ func logViewModel(t *testing.T) Model {
 		{State: "FAILURE", Name: "test", DetailsUrl: "https://github.com/x/actions/runs/1/job/99"},
 	}}})
 	m.expanded = true
-	m.expandedTab = 2 // Checks
+	m.expandedTab = tabChecks
 	m.checkCursor = 0
 	m.renderExpanded()
 	return m
@@ -375,7 +375,7 @@ func TestExternalCheckEnterOpensBrowser(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
 		{State: "FAILURE", Context: "ci/ext", DetailsUrl: "https://ci.example.com/build/7"},
 	}}})
-	m.expanded, m.expandedTab, m.checkCursor = true, 2, 0
+	m.expanded, m.expandedTab, m.checkCursor = true, tabChecks, 0
 	m.renderExpanded()
 	u, cmd := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = u.(Model)
@@ -394,7 +394,7 @@ func TestExternalCheckTargetURLOpens(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
 		{State: "FAILURE", Context: "ci/ext", TargetUrl: "https://ci.example.com/build/7"},
 	}}})
-	m.expanded, m.expandedTab, m.checkCursor = true, 2, 0
+	m.expanded, m.expandedTab, m.checkCursor = true, tabChecks, 0
 	m.renderExpanded()
 	u, cmd := m.updateExpanded(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = u.(Model)

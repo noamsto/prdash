@@ -333,3 +333,44 @@ func TestIssueDetailMsgStores(t *testing.T) {
 		t.Error("issue detail not stored / not marked fresh")
 	}
 }
+
+func TestPreviewDescriptionCollapsesForOwnPR(t *testing.T) {
+	body := "- L1\n- L2\n- L3\n- L4\n- L5\n- L6\n- L7\n- L8\n- L9\n- L10"
+	mk := func(login string) gh.PR {
+		p := gh.PR{Body: body}
+		p.Author.Login = login
+		return p
+	}
+	own := previewDescriptionBody(mk("me"), "me", 60)
+	others := previewDescriptionBody(mk("them"), "me", 60)
+	if !strings.Contains(own, "full text in Description tab") {
+		t.Fatalf("truncated own PR should hint at the Description tab:\n%s", own)
+	}
+	ownLines := strings.Count(own, "\n")
+	otherLines := strings.Count(others, "\n")
+	if ownLines >= otherLines {
+		t.Fatalf("own PR (%d lines) should collapse smaller than others (%d):\nown=%q\nothers=%q",
+			ownLines, otherLines, own, others)
+	}
+}
+
+func TestPreviewDescriptionEmptyOmitted(t *testing.T) {
+	if got := previewDescriptionBody(gh.PR{Body: ""}, "me", 60); got != "" {
+		t.Fatalf("empty body should yield no section, got %q", got)
+	}
+}
+
+func TestPreviewPaneShowsDescriptionSection(t *testing.T) {
+	ansiRe := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	m.viewerLogin = "me"
+	p := gh.PR{Number: 1, Title: "x", Body: "does a cool thing"}
+	p.Author.Login = "them"
+	m.setPRs([]gh.PR{p})
+	m.renderList()
+	out := ansiRe.ReplaceAllString(m.previewPane(), "")
+	if !strings.Contains(out, "DESCRIPTION") || !strings.Contains(out, "does a cool thing") {
+		t.Fatalf("preview should show the description section:\n%s", out)
+	}
+}

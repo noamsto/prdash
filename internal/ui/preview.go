@@ -196,6 +196,33 @@ func identityHeader(pr gh.PR) string {
 	return line1 + "\n" + line2
 }
 
+const (
+	descLinesOwn    = 2 // your own PRs collapse tight — you wrote them
+	descLinesOthers = 6 // others' PRs show enough to start reviewing
+)
+
+// previewDescriptionBody renders the PR body for the preview pane, capped by
+// authorship. Empty bodies return "" so the caller omits the section entirely.
+func previewDescriptionBody(pr gh.PR, viewer string, w int) string {
+	if strings.TrimSpace(pr.Body) == "" {
+		return ""
+	}
+	rendered, err := preview.Render(pr.Body, w)
+	if err != nil {
+		rendered = pr.Body
+	}
+	limit := descLinesOthers
+	if viewer != "" && pr.Author.Login == viewer {
+		limit = descLinesOwn
+	}
+	lines := strings.Split(strings.Trim(rendered, "\n"), "\n")
+	if len(lines) <= limit {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[:limit], "\n") + "\n" +
+		dimStyle.Render("· full text in Description tab")
+}
+
 // sectionRule is a section divider: an UPPERCASE sapphire label (distinct from
 // the body text) followed by a short rule — not the full pane width.
 func sectionRule(label string, w int) string {
@@ -234,6 +261,9 @@ func (m Model) previewPane() string {
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
 		blocks = append(blocks, identityHeader(pr))
+		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
+			blocks = append(blocks, section("description", body))
+		}
 		tc := triage.Preliminary(pr)
 		if cached {
 			tc = triage.Compute(pr, d)

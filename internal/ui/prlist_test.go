@@ -612,7 +612,7 @@ func TestThemePollWhileExpandedKeepsExpandedBody(t *testing.T) {
 	if !m.expanded {
 		t.Fatal("precondition: should be expanded")
 	}
-	m.expandedTab = 1 // Reviews tab: deterministic, non-empty body regardless of theme
+	m.expandedTab = tabReviews // deterministic, non-empty body regardless of theme
 	m.renderExpanded()
 
 	// What the (buggy) list repaint would have produced, for contrast.
