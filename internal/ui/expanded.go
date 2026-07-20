@@ -150,47 +150,23 @@ func (m Model) expandedBody(w int) string {
 	}
 }
 
-// expandedChromeRows counts the fixed lines around the boxed body: the header,
-// the footer, and — for a PR — the at-a-glance metadata line.
-func (m Model) expandedChromeRows() int {
-	rows := 2 // header + footer
-	if _, ok := m.section.(*PRSection); ok {
-		rows++ // metadata line under the header
-	}
-	return rows
-}
-
-// expandedBoxHeight is the OUTER height of the tabbed content box: the frame
-// minus the fixed chrome around it.
-func (m Model) expandedBoxHeight() int {
-	h := m.height - m.expandedChromeRows()
-	if h < 3 {
-		h = 3
-	}
-	return h
-}
-
-// expandedBoxWidth is the OUTER width of the tabbed box: every tab caps to the
-// reading column so the tab bar sits over its content instead of stretching the
-// whole terminal. The Diff tab is a diffstat (a file list truncated to width),
-// not a wide unified diff, so it wants the same column as the prose tabs.
+// expandedBoxWidth is the reading-column cap used by the full-screen log viewer.
+// The PR/Issue expanded view derives its width from computeExpandedLayout.
 func (m Model) expandedBoxWidth() int {
-	return min(m.width, discussionMaxWidth+6) // +4 column padding, +2 border
+	return min(m.width, expandedContentCap)
 }
 
 // setExpandedContent (re)fills the viewport with the active tab's content at the
 // current geometry. It leaves the scroll offset alone — callers pick the anchor.
 func (m *Model) setExpandedContent() {
-	w := m.expandedBoxWidth() - 2
-	rows := m.expandedBoxHeight() - 2
+	_, isPR := m.section.(*PRSection)
+	l := computeExpandedLayout(m.width, m.height, isPR)
+	w := l.ContentW - 2
 	if w < 1 {
 		w = 1
 	}
-	if rows < 1 {
-		rows = 1
-	}
 	m.vp.SetWidth(w)
-	m.vp.SetHeight(rows)
+	m.vp.SetHeight(l.VPHeight)
 	m.vp.SetContent(m.expandedBody(w))
 }
 
@@ -409,6 +385,45 @@ func (m Model) expandedMeta(pr gh.PR, w int) string {
 	return "  " + strings.Join(parts, dimStyle.Render(" · "))
 }
 
+// renderExpandedRail builds the PR metadata side rail for the two-col expanded
+// view: #num + title, author, branch→base, label chips (full renderChips at the
+// rail's inner width, not w/3), requested reviewers, and a CI + diffstat
+// one-liner. Width-clamped to RailW and height-clamped to RailH so a long label
+// or reviewer set can never bleed past the column or push the frame past h.
+func (m Model) renderExpandedRail(pr gh.PR, d gh.PRDetail, l ExpandedLayout) string {
+	inner := l.RailW - railInset // leave a 1-cell gutter on each side of the rail
+	if inner < 1 {
+		inner = 1
+	}
+	var lines []string
+	lines = append(lines, titleStyle.Bold(true).Render(truncate(fmt.Sprintf("#%d %s", pr.Number, pr.Title), inner)))
+	if pr.Author.Login != "" {
+		lines = append(lines, authorStyle(pr.Author.Login).Render(truncate("@"+pr.Author.Login, inner)))
+	}
+	if pr.HeadRefName != "" {
+		lines = append(lines, dimStyle.Render(truncate(pr.HeadRefName+"→"+pr.BaseRefName, inner)))
+	}
+	if chips := renderChips(pr.Labels, inner); chips != "" {
+		lines = append(lines, chips)
+	}
+	for _, r := range d.ReviewRequests {
+		lines = append(lines, dimStyle.Render(truncate("• "+r.Login, inner)))
+	}
+	lines = append(lines, ciSummary(pr)) // already styled + bounded; rail MaxWidth clips any future growth
+	if s := d.Diffstat(); s.Files > 0 {
+		lines = append(lines, dimStyle.Render(truncate(fmt.Sprintf("%d files +%d -%d", s.Files, s.Additions, s.Deletions), inner)))
+	}
+	if len(lines) > l.RailH {
+		lines = lines[:l.RailH]
+	}
+	// Correctness rests on each line being truncated to inner (< RailW) and the
+	// lines[:RailH] cap above; Max{Width,Height} is defense-in-depth that makes
+	// "the rail box is exactly RailW×RailH" hold even if a future edit adds an
+	// un-truncated line (e.g. the raw ciSummary growing past inner).
+	return lipgloss.NewStyle().Width(l.RailW).Height(l.RailH).
+		MaxWidth(l.RailW).MaxHeight(l.RailH).Render(strings.Join(lines, "\n"))
+}
+
 // expandedFooter is the bottom hint line: the Checks tab swaps in the rerun keys.
 func (m Model) expandedFooter() string {
 	if m.expandedTab == 2 {
@@ -425,26 +440,44 @@ func (m Model) expandedView() string {
 	if v, ok := m.cursorVars(); ok {
 		n = v.Number
 	}
-	bw := m.expandedBoxWidth() // cap to the reading column so the view centers
+	ps, isPR := m.section.(*PRSection)
+	l := computeExpandedLayout(m.width, m.height, isPR)
+
+	blockW := l.ContentW
+	if l.TwoCol {
+		blockW = l.RailW + expandedColGap + l.ContentW
+	}
+
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
-	if ps, ok := m.section.(*PRSection); ok {
+	if isPR {
 		if title := ps.prAt(m.cursor).Title; title != "" {
-			if avail := bw - lipgloss.Width(head) - 4; avail > 12 {
+			if avail := blockW - lipgloss.Width(head) - 4; avail > 12 { // truncate vs FULL block width, not ContentW
 				head += dimStyle.Render("  " + truncate(title, avail))
 			}
 		}
 	}
 	head += m.statusBadge() // rerun feedback: the header badge isn't visible here otherwise
 	foot := statusBarStyle.Render(m.expandedFooter())
-	lines := []string{head}
-	if ps, ok := m.section.(*PRSection); ok {
-		lines = append(lines, m.expandedMeta(ps.prAt(m.cursor), bw-2))
+
+	contentBox := tabbedBox(m.vp.View(), l.ContentW, l.VPHeight+2, expandedTabs, m.expandedTab)
+
+	var mid string
+	if l.TwoCol {
+		rail := m.renderExpandedRail(ps.prAt(m.cursor), m.detail[n], l)
+		gap := lipgloss.NewStyle().Width(expandedColGap).Render("")
+		mid = lipgloss.JoinHorizontal(lipgloss.Top, rail, gap, contentBox)
+	} else {
+		parts := []string{}
+		if isPR {
+			parts = append(parts, m.expandedMeta(ps.prAt(m.cursor), l.ContentW-2)) // narrow PR keeps its one-line meta
+		}
+		parts = append(parts, contentBox)
+		mid = strings.Join(parts, "\n")
 	}
-	box := tabbedBox(m.vp.View(), bw, m.expandedBoxHeight(), expandedTabs, m.expandedTab)
-	lines = append(lines, box, foot)
-	out := strings.Join(lines, "\n")
-	if bw < m.width { // center the reading column in a wide terminal
-		out = indentLines(out, (m.width-bw)/2)
+
+	out := strings.Join([]string{head, mid, foot}, "\n")
+	if blockW < m.width { // center the block in a wide terminal
+		out = indentLines(out, (m.width-blockW)/2)
 	}
 	return out
 }

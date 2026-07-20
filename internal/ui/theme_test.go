@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -78,9 +79,14 @@ func TestLightText(t *testing.T) {
 
 func TestRenderChipsOverflow(t *testing.T) {
 	labels := []gh.Label{{Name: "bug", Color: "d73a4a"}, {Name: "enhancement", Color: "a2eeef"}}
-	out := renderChips(labels, 6) // only room for one chip
+	// Room for one chip ("bug" = 5 cells) plus its " +1" marker (3 cells).
+	const maxW = 9
+	out := renderChips(labels, maxW)
 	if !strings.Contains(out, "+1") {
 		t.Errorf("expected +1 overflow marker, got %q", out)
+	}
+	if w := lipgloss.Width(out); w > maxW {
+		t.Errorf("chips width %d exceeds maxW %d (the +N suffix must be budgeted)", w, maxW)
 	}
 }
 
