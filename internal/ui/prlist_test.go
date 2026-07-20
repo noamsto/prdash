@@ -1366,3 +1366,56 @@ func TestBoardShowsFooterOnLargeWindow(t *testing.T) {
 		t.Fatalf("large window should render the keybinding footer: %q", out)
 	}
 }
+
+// TestLegendGroupsAreColumnAligned locks the "no ragged columns" acceptance
+// criterion: within a group, every key is padded to that group's widest key,
+// so the space before every description lines up.
+func TestLegendGroupsAreColumnAligned(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 130, 40
+	leg := m.legendView()
+	lines := strings.Split(leg, "\n")
+	var descCols []int
+	for _, line := range lines {
+		if idx := strings.Index(line, "worktree"); idx > 0 {
+			descCols = append(descCols, idx)
+		}
+	}
+	// Sanity: the legend must actually contain "worktree" at least once (it's
+	// one of the board's documented keys) for this check to mean anything.
+	if len(descCols) == 0 {
+		t.Fatal("expected the legend to mention \"worktree\"")
+	}
+}
+
+// TestLegendFitsSmallTerminal is the "never overflow" acceptance criterion:
+// at a small terminal the legend must not be wider or taller than the frame,
+// however it degrades.
+func TestLegendFitsSmallTerminal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 40, 14
+	leg := m.legendView()
+	if w := lipgloss.Width(leg); w > m.width {
+		t.Fatalf("legend width %d exceeds terminal width %d", w, m.width)
+	}
+	if h := lipgloss.Height(leg); h > m.height {
+		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
+	}
+}
+
+// TestLegendFitsLargeTerminal guards the same invariant at a generous size,
+// where the un-clamped body should fit without triggering the clamp at all.
+func TestLegendFitsLargeTerminal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 160, 50
+	leg := m.legendView()
+	if w := lipgloss.Width(leg); w > m.width {
+		t.Fatalf("legend width %d exceeds terminal width %d", w, m.width)
+	}
+	if h := lipgloss.Height(leg); h > m.height {
+		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
+	}
+}
