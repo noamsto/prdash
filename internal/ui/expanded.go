@@ -14,17 +14,20 @@ import (
 )
 
 const (
-	tabConversation = iota
+	tabDescription = iota
+	tabConversation
 	tabReviews
 	tabChecks
 	tabDiff
 )
 
-var expandedTabs = []string{"Conversation", "Reviews", "Checks", "Diff"}
+var expandedTabs = []string{"Description", "Conversation", "Reviews", "Checks", "Diff"}
 
-// jumpTabIndex maps a triage card's JumpTab to a tab index (default Conversation).
+// jumpTabIndex maps a triage card's JumpTab to a tab index (default Description).
 func jumpTabIndex(jump string) int {
 	switch jump {
+	case "conversation":
+		return tabConversation
 	case "reviews":
 		return tabReviews
 	case "checks":
@@ -32,8 +35,23 @@ func jumpTabIndex(jump string) int {
 	case "diff":
 		return tabDiff
 	default:
-		return tabConversation
+		return tabDescription
 	}
+}
+
+// renderDescription renders the PR body as the Description tab: the full markdown
+// in the reading column. Empty bodies get a dim placeholder.
+func renderDescription(pr gh.PR, w int) string {
+	if strings.TrimSpace(pr.Body) == "" {
+		return dimStyle.Render("  No description provided.")
+	}
+	return renderDiscussionColumn(w, func(cw int) string {
+		body, err := preview.Render(pr.Body, cw)
+		if err != nil {
+			body = pr.Body
+		}
+		return strings.TrimRight(body, "\n")
+	})
 }
 
 func renderReviews(d gh.PRDetail, w int) string {
@@ -115,7 +133,7 @@ func (m *Model) enterExpanded() {
 		return
 	}
 	m.expanded = true
-	m.expandedTab = tabConversation
+	m.expandedTab = tabDescription
 	m.checkCursor = 0
 	if v, ok := m.cursorVars(); ok {
 		if d, cached := m.detail[v.Number]; cached {
@@ -131,6 +149,12 @@ func (m *Model) enterExpanded() {
 func (m Model) expandedBody(w int) string {
 	v, ok := m.cursorVars()
 	if !ok {
+		return ""
+	}
+	if m.expandedTab == tabDescription {
+		if ps, ok := m.section.(*PRSection); ok {
+			return renderDescription(ps.prAt(m.cursor), w)
+		}
 		return ""
 	}
 	d, cached := m.detail[v.Number]
@@ -241,7 +265,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renderExpanded()
 		return m, nil
 	case "left", "h":
-		if m.expandedTab == tabConversation {
+		if m.expandedTab == tabDescription {
 			m.expanded = false
 			m.renderList()
 			return m, nil
@@ -255,7 +279,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.checkCursor = 0
 		m.renderExpanded()
 		return m, nil
-	case "1", "2", "3", "4":
+	case "1", "2", "3", "4", "5":
 		m.expandedTab = int(msg.String()[0] - '1')
 		m.checkCursor = 0
 		m.renderExpanded()

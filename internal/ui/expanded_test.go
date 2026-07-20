@@ -12,8 +12,43 @@ import (
 	"github.com/noamsto/prdash/internal/triage"
 )
 
+func TestRenderDescriptionShowsBody(t *testing.T) {
+	pr := gh.PR{Number: 7, Body: "## Summary\n\nRefactors the fetch path."}
+	out := ansi.Strip(renderDescription(pr, 80))
+	if !strings.Contains(out, "Summary") || !strings.Contains(out, "Refactors the fetch path") {
+		t.Fatalf("Description tab should render the body:\n%s", out)
+	}
+}
+
+func TestRenderDescriptionEmptyBody(t *testing.T) {
+	out := ansi.Strip(renderDescription(gh.PR{Number: 7}, 80))
+	if !strings.Contains(out, "No description provided") {
+		t.Fatalf("empty body should show a placeholder:\n%s", out)
+	}
+}
+
+func TestDescriptionIsDefaultLandingTab(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi", Body: "hello world"}})
+	// No m.detail[7]: detail uncached, so no triage jump overrides the default.
+	m.enterExpanded()
+	if m.expandedTab != tabDescription {
+		t.Fatalf("focus should land on the Description tab, got %d", m.expandedTab)
+	}
+	if !strings.Contains(ansi.Strip(m.expandedView()), "hello world") {
+		t.Fatalf("Description tab should render the body from list data before detail loads")
+	}
+}
+
 func TestJumpTabIndex(t *testing.T) {
-	cases := map[string]int{"reviews": 1, "checks": 2, "diff": 3, "conversation": 0, "": 0}
+	cases := map[string]int{
+		"conversation": tabConversation,
+		"reviews":      tabReviews,
+		"checks":       tabChecks,
+		"diff":         tabDiff,
+		"":             tabDescription,
+	}
 	for jump, want := range cases {
 		if got := jumpTabIndex(jump); got != want {
 			t.Errorf("jumpTabIndex(%q) = %d, want %d", jump, got, want)
@@ -81,7 +116,7 @@ func TestDiscussionColumnCapsAndCenters(t *testing.T) {
 func TestExpandedFooterNeverOffersPan(t *testing.T) {
 	// The Diff tab is a width-fitted diffstat, so no tab horizontally pans.
 	m := Model{}
-	for _, tab := range []int{0, 1, 2, 3} {
+	for _, tab := range []int{0, 1, 2, 3, 4} {
 		m.expandedTab = tab
 		if got := m.expandedFooter(); strings.Contains(got, "pan") {
 			t.Fatalf("tab %d should not offer pan: %q", tab, got)
@@ -90,7 +125,7 @@ func TestExpandedFooterNeverOffersPan(t *testing.T) {
 }
 
 func TestTabSegmentMarksActive(t *testing.T) {
-	out := tabSegment(expandedTabs, 2)
+	out := tabSegment(expandedTabs, tabChecks)
 	if !strings.Contains(ansi.Strip(out), "Checks") {
 		t.Fatalf("active tab missing from segment: %q", out)
 	}
@@ -117,8 +152,8 @@ func TestEnterExpandedDeepLinks(t *testing.T) {
 	if !m.expanded {
 		t.Fatal("enterExpanded should set expanded")
 	}
-	if m.expandedTab != 2 {
-		t.Fatalf("deep-link to Checks tab expected (2), got %d", m.expandedTab)
+	if m.expandedTab != tabChecks {
+		t.Fatalf("deep-link to Checks tab expected (%d), got %d", tabChecks, m.expandedTab)
 	}
 	// sanity: the triage card for this PR really is checks-failing
 	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}).JumpTab != "checks" {
@@ -133,8 +168,8 @@ func TestChecksTabCursorNavigates(t *testing.T) {
 		{State: "FAILURE", Name: "lint"}, {State: "SUCCESS", Name: "build"},
 	}}})
 	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
-	m.enterExpanded() // deep-links to the Checks tab (index 2)
-	if m.expandedTab != 2 {
+	m.enterExpanded() // deep-links to the Checks tab
+	if m.expandedTab != tabChecks {
 		t.Fatalf("precondition: expected Checks tab, got %d", m.expandedTab)
 	}
 	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'j', Text: "j"})
@@ -211,7 +246,7 @@ func TestExpandedViewShowsTabStrip(t *testing.T) {
 
 func TestExpandedBoxWidthCapsEveryTab(t *testing.T) {
 	m := Model{width: 200}
-	for _, tab := range []int{0, 1, 2, 3} { // Conversation, Reviews, Checks, Diff
+	for _, tab := range []int{0, 1, 2, 3, 4} { // Description, Conversation, Reviews, Checks, Diff
 		m.expandedTab = tab
 		if got := m.expandedBoxWidth(); got != discussionMaxWidth+6 {
 			t.Fatalf("tab %d width = %d, want capped %d", tab, got, discussionMaxWidth+6)
@@ -236,10 +271,12 @@ func TestConversationOpensAtMostRecent(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 12 // short enough that the timeline overflows
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	m.detail[7] = gh.PRDetail{Comments: manyComments(40)}
+	// MergeStateStatus BLOCKED (with no review required) is triage's fallback
+	// case that deep-links to Conversation.
+	m.detail[7] = gh.PRDetail{Comments: manyComments(40), MergeStateStatus: "BLOCKED"}
 
 	m.enterExpanded()
-	if m.expandedTab != 0 {
+	if m.expandedTab != tabConversation {
 		t.Fatalf("precondition: Conversation tab expected, got %d", m.expandedTab)
 	}
 	if m.vp.YOffset() == 0 {
