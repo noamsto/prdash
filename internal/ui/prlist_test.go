@@ -448,6 +448,14 @@ func TestLegendDocumentsTerminalGlyphs(t *testing.T) {
 	}
 }
 
+func TestF1OpensLegendLikeQuestionMark(t *testing.T) {
+	m := newTestModelWithRows(t)
+	u, _ := m.Update(keyMsg("f1"))
+	if !u.(Model).showLegend {
+		t.Fatal("f1 should open the legend overlay")
+	}
+}
+
 func TestStatusBarHasTopRule(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("r")

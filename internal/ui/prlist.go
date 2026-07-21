@@ -1424,7 +1424,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.fetchMembersCmd())
 			}
 			return m, tea.Batch(cmds...)
-		case "?":
+		case "?", "f1":
 			m.showLegend = true
 			return m, nil
 		case "q", "ctrl+c":
