@@ -1789,7 +1789,7 @@ func (m Model) legendGroups() []legendGroup {
 	if m.mode == "pr" {
 		view = append(view, keyHint{"p", "all comments"}) // only the PR preview renders the timeline p unfolds
 	}
-	view = append(view, keyHint{"z", "maximize"}, keyHint{"ctrl+j/k", "scroll"})
+	view = append(view, keyHint{"z", "maximize"}, keyHint{"alt+j/k", "scroll"})
 	groups = append(groups, legendGroup{"view", view})
 
 	actions := []keyHint{
@@ -1801,7 +1801,7 @@ func (m Model) legendGroups() []legendGroup {
 	groups = append(groups, legendGroup{"actions", actions})
 
 	groups = append(groups, legendGroup{"", []keyHint{
-		{"a", "actions"}, {"ctrl+r", "refresh"}, {"?", "legend"}, {"q", "quit"},
+		{"a", "actions"}, {"ctrl+r", "refresh"}, {"? / F1", "legend"}, {"q", "quit"},
 	}})
 	return groups
 }
@@ -1871,7 +1871,7 @@ func navHintsFor(mode string) []keyHint {
 	}
 	if mode == "pr" {
 		pr := []keyHint{
-			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+			{"→", "expand"}, {"z", "max"}, {"alt+j/k", "scroll"},
 			{"R", "reviewers"}, {"D", "drafts"},
 		}
 		return append(base, pr...)

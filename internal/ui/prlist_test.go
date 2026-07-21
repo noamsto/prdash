@@ -476,6 +476,17 @@ func TestLegendFiltersByTyping(t *testing.T) {
 	}
 }
 
+func TestHintsMentionSpineKeys(t *testing.T) {
+	m := newTestModelWithRows(t)
+	u, _ := m.Update(keyMsg("?"))
+	out := u.(Model).legendView()
+	for _, want := range []string{"alt+j", "F1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("legend should document %q: %q", want, out)
+		}
+	}
+}
+
 func TestStatusBarHasTopRule(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("r")
