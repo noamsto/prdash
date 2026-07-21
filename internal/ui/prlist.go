@@ -1217,16 +1217,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Issue board: plain local fuzzy filter, untouched by the omni
 				// server-qualifier machinery.
 				switch msg.String() {
-				case "esc":
+				case "esc", "enter":
 					m.filtering = false
-					m.filterInput.SetValue("")
-					m.filterInput.Blur()
-					m.sel.clear() // shown set changes; stale indexes would point elsewhere
-					m.applyFilter()
-					return m, nil
-				case "enter":
-					m.filtering = false
-					m.filterInput.Blur()
+					m.filterInput.Blur() // keep the query applied so actions work on the filtered set
 					return m, nil
 				}
 				var cmd tea.Cmd
@@ -1238,13 +1231,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "esc":
 				m.filtering = false
-				m.filterInput.SetValue("")
-				m.filterInput.Blur()
-				m.omniServer = ""
-				m.omniSuggestCursor = 0
-				m.filter = searchFor("pr", m.state, "")
-				m.sel.clear()
-				return m, m.switchToFilter() // restore the sections default
+				m.filterInput.Blur() // keep the query applied so actions work on the filtered set
+				if m.omniServer != "" {
+					return m, m.switchToFilter() // reconcile in case the debounce never fired
+				}
+				return m, nil
 			case "tab":
 				if sug := m.omniSuggestions(); len(sug) > 0 {
 					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
@@ -1426,6 +1417,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		case "?", "f1":
 			m.showLegend = true
+			return m, nil
+		case "esc":
+			if m.filterInput.Value() == "" {
+				return m, tea.Quit
+			}
+			m.filterInput.SetValue("")
+			m.sel.clear()
+			if m.mode == "pr" && m.omniServer != "" {
+				m.omniServer = ""
+				m.omniSuggestCursor = 0
+				m.filter = searchFor("pr", m.state, "")
+				return m, m.switchToFilter() // restore the sections default
+			}
+			m.applyFilter()
 			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit

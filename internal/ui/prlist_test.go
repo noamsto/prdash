@@ -1488,3 +1488,37 @@ func TestFilterBarAlwaysVisible(t *testing.T) {
 		t.Fatalf("focused filter should capture typing: %q", m.filterInput.Value())
 	}
 }
+
+// TestEscTwoStageOnBoard guards the three-stage esc behavior on the board:
+// blur-but-keep-query, then clear-query, then quit.
+func TestEscTwoStageOnBoard(t *testing.T) {
+	m := newTestModelWithRows(t)
+	// focus + type
+	u, _ := m.Update(keyMsg("/"))
+	m = u.(Model)
+	u, _ = m.Update(keyMsg("f"))
+	m = u.(Model)
+	// esc #1: blur but KEEP the query
+	u, _ = m.Update(keyMsg("esc"))
+	m = u.(Model)
+	if m.filtering {
+		t.Fatal("esc should blur the focused filter")
+	}
+	if m.filterInput.Value() != "f" {
+		t.Fatalf("esc-blur must keep the query, got %q", m.filterInput.Value())
+	}
+	// esc #2: clear the query (still no quit)
+	u, cmd := m.Update(keyMsg("esc"))
+	m = u.(Model)
+	if m.filterInput.Value() != "" {
+		t.Fatalf("second esc should clear the query, got %q", m.filterInput.Value())
+	}
+	if cmd != nil {
+		t.Fatal("clearing the query must not quit")
+	}
+	// esc #3: empty query → quit
+	_, cmd = m.Update(keyMsg("esc"))
+	if cmd == nil {
+		t.Fatal("esc on an empty board should quit")
+	}
+}
