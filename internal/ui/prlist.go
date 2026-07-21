@@ -1570,7 +1570,9 @@ func (m Model) board() string {
 		return m.header() + "\n" + m.filterBar() + "\n" + m.renderDocked(l)
 	}
 	if !l.ShowFooter {
-		return m.header() + "\n" + m.renderMain() // small window: ? is the way to see the keys
+		// Small window: the footer's key hints are dropped (press ? for them), but
+		// the filter bar stays — it's the primary surface, not chrome.
+		return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain()
 	}
 	foot := m.statusBar()
 	if l.ShowPanel {

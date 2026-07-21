@@ -460,6 +460,7 @@ func TestF1OpensLegendLikeQuestionMark(t *testing.T) {
 
 func TestLegendFiltersByTyping(t *testing.T) {
 	m := newTestModelWithRows(t)
+	m.width, m.height = 130, 40 // the legend float clamps to the terminal size
 	u, _ := m.Update(keyMsg("?"))
 	m = u.(Model)
 	u, _ = m.Update(keyMsg("m")) // type into the legend filter
@@ -478,6 +479,7 @@ func TestLegendFiltersByTyping(t *testing.T) {
 
 func TestHintsMentionSpineKeys(t *testing.T) {
 	m := newTestModelWithRows(t)
+	m.width, m.height = 130, 40 // the legend float clamps to the terminal size
 	u, _ := m.Update(keyMsg("?"))
 	out := u.(Model).legendView()
 	for _, want := range []string{"alt+j", "F1"} {
