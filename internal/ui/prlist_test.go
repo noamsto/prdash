@@ -471,6 +471,9 @@ func TestLegendFiltersByTyping(t *testing.T) {
 	if !strings.Contains(strings.ToLower(out), "merge") {
 		t.Fatalf("legend filtered by 'm' should still show merge: %q", out)
 	}
+	if strings.Contains(strings.ToLower(out), "worktree") {
+		t.Fatalf("legend filtered by 'm' should drop non-matching rows: %q", out)
+	}
 }
 
 func TestStatusBarHasTopRule(t *testing.T) {
