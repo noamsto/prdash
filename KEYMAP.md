@@ -37,7 +37,8 @@ Apps: lazytmux, tmux-remux.
 - The filter box is **always visible and focused**. Typing filters immediately
   — fuzzy, live, no `/`.
 - Move selection: `ctrl+j`/`ctrl+k` + arrows (plain `j`/`k` are filter text
-  while the box holds focus).
+  while the box holds focus; tmux-remux has no filter yet, so it currently
+  keeps bare `j`/`k` nav until it gains one).
 - `enter` — select and act.
 - `esc` — two-stage: clear the query if one is present, otherwise quit.
 - Help: a non-printable key (`?` is filter text here, not help).

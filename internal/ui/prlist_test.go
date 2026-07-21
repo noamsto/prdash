@@ -433,7 +433,7 @@ func TestLegendToggle(t *testing.T) {
 	u, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = u.(Model)
 	if m.showLegend {
-		t.Fatal("a key should close the legend")
+		t.Fatal("esc should close the legend")
 	}
 }
 
@@ -1549,5 +1549,28 @@ func TestEscTwoStageOnBoard(t *testing.T) {
 	_, cmd = m.Update(keyMsg("esc"))
 	if cmd == nil {
 		t.Fatal("esc on an empty board should quit")
+	}
+}
+
+// TestEscTwoStageOnIssueBoard mirrors TestEscTwoStageOnBoard's stage-1
+// assertion on the issue board, guarding that blur-but-keep-query isn't a
+// PR-only path.
+func TestEscTwoStageOnIssueBoard(t *testing.T) {
+	m := newTestModelWithRows(t)
+	u, _ := m.Update(keyMsg("tab")) // switch to the issue board
+	m = u.(Model)
+	// focus + type
+	u, _ = m.Update(keyMsg("/"))
+	m = u.(Model)
+	u, _ = m.Update(keyMsg("f"))
+	m = u.(Model)
+	// esc #1: blur but KEEP the query
+	u, _ = m.Update(keyMsg("esc"))
+	m = u.(Model)
+	if m.filtering {
+		t.Fatal("esc should blur the focused filter")
+	}
+	if m.filterInput.Value() != "f" {
+		t.Fatalf("esc-blur must keep the query, got %q", m.filterInput.Value())
 	}
 }

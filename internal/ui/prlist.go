@@ -44,7 +44,7 @@ type Model struct {
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
-	previewOffset     int // ctrl+j/k scroll position within the side preview
+	previewOffset     int // alt+j/k scroll position within the side preview
 	width             int
 	height            int
 	section           Section
