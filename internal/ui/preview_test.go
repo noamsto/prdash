@@ -271,7 +271,9 @@ func TestPreviewScrollClampsAndResets(t *testing.T) {
 	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 
-	over := lipgloss.Height(m.previewPane()) - (computeLayout(150, 6).ContentHeight - 2)
+	// contentHeight(l), not the raw l.ContentHeight, since the always-visible
+	// filter bar now reserves a row out of the layout's content budget.
+	over := lipgloss.Height(m.previewPane()) - (m.contentHeight(computeLayout(150, 6)) - 2)
 	if over <= 0 {
 		t.Fatalf("fixture must overflow the pane for this test; over=%d", over)
 	}

@@ -395,8 +395,10 @@ func TestListViewportSizedForBorder(t *testing.T) {
 	if got := m.vp.Width(); got != l.ListWidth-2 {
 		t.Fatalf("viewport width = %d, want ListWidth-2 = %d", got, l.ListWidth-2)
 	}
-	if got := m.vp.Height(); got != l.ContentHeight-2 {
-		t.Fatalf("viewport height = %d, want ContentHeight-2 = %d", got, l.ContentHeight-2)
+	// contentHeight(l), not the raw l.ContentHeight, since the always-visible
+	// filter bar now reserves a row out of the layout's content budget.
+	if want := m.contentHeight(l) - 2; m.vp.Height() != want {
+		t.Fatalf("viewport height = %d, want contentHeight(l)-2 = %d", m.vp.Height(), want)
 	}
 }
 
@@ -1294,8 +1296,9 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 		t.Fatalf("omniHintRows on the issue board = %d, want 0", got)
 	}
 
-	// contentHeight shrinks by exactly the reserved rows, minus the +1 the
-	// filter input reclaims from the statusBar footer it replaces.
+	// The filter bar is always reserved (1 row baseline, blurred or focused);
+	// the footer stays put either way. So focusing only costs the extra rows
+	// beyond that baseline — exactly omniHintRows().
 	m.mode = "pr"
 	m.filterInput.SetValue("@aa")
 	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
@@ -1303,15 +1306,15 @@ func TestOmniHintRowsReservesDropdown(t *testing.T) {
 	m.filtering = false
 	base := m.contentHeight(l)
 	m.filtering = true
-	if base-filtered != m.omniHintRows()-1 {
-		t.Fatalf("contentHeight delta = %d, want %d", base-filtered, m.omniHintRows()-1)
+	if base-filtered != m.omniHintRows() {
+		t.Fatalf("contentHeight delta = %d, want %d", base-filtered, m.omniHintRows())
 	}
 }
 
-// TestContentHeightFilteringNoPanel guards FIX A: with no docked panel, the
-// 2-line statusBar footer is replaced by the 1-line filter input, so filtering
-// with only the static hint line (omniHintRows()==1) reclaims exactly enough
-// to match the non-filtering baseline.
+// TestContentHeightFilteringNoPanel guards that focusing the always-visible
+// filter bar costs exactly one extra row when the dropdown/hint is a single
+// line (omniHintRows()==1) — the footer is unaffected, so this is not a wash
+// against a reclaimed footer the way it was when filtering used to hide it.
 func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m := newTestModelWithRows(t)
 	m.width = 80
@@ -1328,8 +1331,8 @@ func TestContentHeightFilteringNoPanel(t *testing.T) {
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
-	if filtered != base {
-		t.Fatalf("contentHeight while filtering = %d, want %d (baseline)", filtered, base)
+	if want := base - 1; filtered != want {
+		t.Fatalf("contentHeight while filtering = %d, want %d (baseline - 1 hint row)", filtered, want)
 	}
 }
 
@@ -1457,5 +1460,31 @@ func TestCtrlJKMovesSelectionAltJKScrollsPreview(t *testing.T) {
 	m = u.(Model)
 	if m.cursor != before {
 		t.Fatalf("alt+j must not move the cursor: cursor=%d want=%d", m.cursor, before)
+	}
+}
+
+// TestFilterBarAlwaysVisible guards the always-visible search row: it renders
+// (dim, as a hint) even on the blurred board, and still captures typing once
+// focused via '/'.
+func TestFilterBarAlwaysVisible(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width, m.height = 80, 24
+	// Blurred board: the filter prompt is visible even without pressing '/'.
+	if !strings.Contains(m.render(), "/") {
+		t.Fatalf("filter bar should be visible on the blurred board: %q", m.render())
+	}
+	// The status bar already has a "/:find" hint, so the check above alone is
+	// vacuous — assert on the actual filter-bar placeholder text as the real
+	// regression guard for "blurred but always rendered".
+	if !strings.Contains(ansi.Strip(m.render()), "filter (@user") {
+		t.Fatalf("blurred board should show the filter-bar placeholder hint: %q", m.render())
+	}
+	// Focusing keeps it visible and accepts input.
+	u, _ := m.Update(keyMsg("/"))
+	m = u.(Model)
+	u, _ = m.Update(keyMsg("x"))
+	m = u.(Model)
+	if m.filterInput.Value() != "x" {
+		t.Fatalf("focused filter should capture typing: %q", m.filterInput.Value())
 	}
 }

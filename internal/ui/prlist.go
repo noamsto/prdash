@@ -439,8 +439,8 @@ func (m Model) omniSuggestDropdown() string {
 	return strings.Join(lines, "\n")
 }
 
-// omniHintRows is the height of the dropdown-or-hint block render() draws under the
-// filter input while filtering, so contentHeight can reserve it.
+// omniHintRows is the height of the dropdown-or-hint block filterBar() draws
+// under the filter input while filtering, so contentHeight can reserve it.
 func (m Model) omniHintRows() int {
 	if !m.filtering {
 		return 0
@@ -1497,16 +1497,6 @@ func (m Model) render() string {
 		}
 		return base
 	}
-	if m.filtering {
-		out := m.header() + "\n" + m.filterInput.View()
-		switch dd := m.omniSuggestDropdown(); {
-		case dd != "":
-			out += "\n" + dd
-		case m.mode == "pr":
-			out += "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
-		}
-		return out + "\n" + m.renderMain()
-	}
 	// Overlays float over the live board so the layout stays put behind them.
 	board := m.board()
 	switch {
@@ -1522,6 +1512,30 @@ func (m Model) render() string {
 	return board
 }
 
+// filterBar is the always-visible search row. When blurred it shows the prompt
+// as a hint; when focused it shows the live query plus any @-suggestion dropdown.
+func (m Model) filterBar() string {
+	if m.filtering {
+		bar := m.filterInput.View()
+		if dd := m.omniSuggestDropdown(); dd != "" {
+			return bar + "\n" + dd
+		}
+		if m.mode == "pr" {
+			return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+		}
+		return bar
+	}
+	// Blurred: show the prompt + placeholder as a dim hint so the bar is always present.
+	return dimStyle.Render(truncate("/ filter (@user, is:, text)", max(1, m.width)))
+}
+
+// filterBarRows is the row-height of filterBar() in its current state — 1 row
+// blurred, or 1 (the input line) plus the suggestion dropdown/hint block while
+// focused — so contentHeight can reserve exactly what's rendered.
+func (m Model) filterBarRows() int {
+	return 1 + m.omniHintRows()
+}
+
 // board renders the full PR board — the base layer under any overlay. The
 // empty/loading state paints inside the boxed chrome (via the list viewport)
 // so the layout stays solid while a fetch is in flight instead of collapsing
@@ -1532,10 +1546,10 @@ func (m Model) board() string {
 	}
 	l := computeLayout(m.width, m.height)
 	if m.previewMax {
-		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
+		return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
 	}
 	if l.ShowSide && l.ShowPanel {
-		return m.header() + "\n" + m.renderDocked(l)
+		return m.header() + "\n" + m.filterBar() + "\n" + m.renderDocked(l)
 	}
 	if !l.ShowFooter {
 		return m.header() + "\n" + m.renderMain() // small window: ? is the way to see the keys
@@ -1544,7 +1558,7 @@ func (m Model) board() string {
 	if l.ShowPanel {
 		foot = m.keysActionsPanel(m.width)
 	}
-	return m.header() + "\n" + m.renderMain() + "\n" + foot
+	return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() + "\n" + foot
 }
 
 // confirmPanel is the y/n dialog for a pending action.
