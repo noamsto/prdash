@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -38,6 +39,18 @@ func main() {
 	m := ui.NewModel(dir, "is:open", c)
 	m.SetRunner(runner)
 	m.SetRepo(repo)
+	// Prototype A/B: PRDASH_GH_GRAPHQL=1 fetches PR lists via githubv4 (one
+	// in-process HTTP call) instead of shelling out to `gh pr list`.
+	if os.Getenv("PRDASH_GH_GRAPHQL") != "" {
+		if tok, err := runner.Run(dir, "auth", "token"); err == nil {
+			m.SetPRSource(gh.GraphSource{
+				Client: gh.NewGraphClient(strings.TrimSpace(string(tok))),
+				Repo:   repo,
+			})
+		} else {
+			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but gh auth token failed:", err)
+		}
+	}
 	m.InitTheme()
 	m.Hydrate()
 

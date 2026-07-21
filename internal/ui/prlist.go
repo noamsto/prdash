@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -41,6 +42,7 @@ type Model struct {
 	issueFresh        map[int]bool // issue numbers whose body was refetched this session
 	cache             *cache.Cache
 	runner            gh.Runner
+	prSource          gh.PRSource // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
@@ -122,8 +124,21 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	}
 }
 
-func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
-func (m *Model) SetRepo(repo string)   { m.repo = repo }
+// SetRunner installs the gh CLI runner and, unless an alternate PR source was
+// already set, defaults the PR-list backend to the CLI path — so existing
+// callers keep the current behavior with no extra wiring.
+func (m *Model) SetRunner(r gh.Runner) {
+	m.runner = r
+	if m.prSource == nil {
+		m.prSource = gh.CLISource{R: r, Dir: m.dir}
+	}
+}
+
+// SetPRSource overrides the PR-list backend (e.g. the githubv4 path). Call it
+// after SetRunner to A/B against the CLI default.
+func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
+
+func (m *Model) SetRepo(repo string) { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
@@ -643,16 +658,13 @@ func (m *Model) Hydrate() {
 	m.hydrateMembers()
 }
 
-// fetchCmd runs `gh pr list` for filter, tagging the result so a background
-// prewarm of a non-current preset lands in the cache without repainting the view.
+// fetchCmd fetches the PR list for filter through the active PR source (gh CLI
+// or githubv4), tagging the result so a background prewarm of a non-current
+// preset lands in the cache without repainting the view.
 func (m Model) fetchCmd(filter string) tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.prSource
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: filter}
-		}
-		prs, err := gh.ParsePRs(raw)
+		prs, raw, err := src.FetchPRs(filter, defaultLimit)
 		if err != nil {
 			return fetchFailedMsg{err: err, filter: filter}
 		}
@@ -678,29 +690,37 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 
 // sectionsFetchCmd fetches both halves of the empty-default open view — the
 // review-requested search and the wider is:open list — caching each under its
-// own filter+limit key. Sequential (not parallel): two quick gh calls.
+// own filter+limit key. The two fetches run concurrently: they're independent,
+// so wall-clock is the slower of the two rather than their sum.
 func (m Model) sectionsFetchCmd() tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.prSource
 	state := m.state
 	reviewF := searchFor("pr", state, reviewBody)
 	return func() tea.Msg {
-		revRaw, err := r.Run(dir, gh.PRListArgs(reviewF, defaultLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: reviewF}
+		type half struct {
+			prs []gh.PR
+			raw []byte
+			err error
 		}
-		rev, err := gh.ParsePRs(revRaw)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: reviewF}
+		var review, open half
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			review.prs, review.raw, review.err = src.FetchPRs(reviewF, defaultLimit)
+		}()
+		go func() {
+			defer wg.Done()
+			open.prs, open.raw, open.err = src.FetchPRs("is:open", openListLimit)
+		}()
+		wg.Wait()
+		if review.err != nil {
+			return fetchFailedMsg{err: review.err, filter: reviewF}
 		}
-		openRaw, err := r.Run(dir, gh.PRListArgs("is:open", openListLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: "is:open"}
+		if open.err != nil {
+			return fetchFailedMsg{err: open.err, filter: "is:open"}
 		}
-		open, err := gh.ParsePRs(openRaw)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: "is:open"}
-		}
-		return sectionsFetchedMsg{state: state, review: rev, reviewRaw: revRaw, open: open, openRaw: openRaw}
+		return sectionsFetchedMsg{state: state, review: review.prs, reviewRaw: review.raw, open: open.prs, openRaw: open.raw}
 	}
 }
 
