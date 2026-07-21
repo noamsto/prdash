@@ -57,6 +57,7 @@ type Model struct {
 	pending           *action.Action
 	showActions       bool
 	showLegend        bool
+	legendQuery       string // live substring filter typed while the legend overlay is open
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
@@ -1351,7 +1352,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.showLegend {
-			m.showLegend = false // any key dismisses the legend
+			switch msg.String() {
+			case "esc", "?", "f1":
+				m.showLegend = false
+				m.legendQuery = ""
+			case "backspace":
+				if r := []rune(m.legendQuery); len(r) > 0 {
+					m.legendQuery = string(r[:len(r)-1])
+				}
+			default:
+				if s := msg.String(); len(s) == 1 {
+					m.legendQuery += s
+				}
+			}
 			return m, nil
 		}
 		switch msg.String() {
@@ -1821,7 +1834,26 @@ func renderLegendGroups(title string, groups []legendGroup, termW, termH int) st
 // lists every board-view key; expanded-view keys live in that view's own
 // legend (see expandedLegendView/logLegendView).
 func (m Model) legendView() string {
-	return renderLegendGroups("Legend", m.legendGroups(), m.width, m.height)
+	groups := m.legendGroups()
+	title := "Legend"
+	if m.legendQuery != "" {
+		q := strings.ToLower(m.legendQuery)
+		var filtered []legendGroup
+		for _, g := range groups {
+			var hints []keyHint
+			for _, h := range g.hints {
+				if strings.Contains(strings.ToLower(h.key+" "+h.label), q) {
+					hints = append(hints, h)
+				}
+			}
+			if len(hints) > 0 {
+				filtered = append(filtered, legendGroup{g.title, hints})
+			}
+		}
+		groups = filtered
+		title = "Legend: " + m.legendQuery
+	}
+	return renderLegendGroups(title, groups, m.width, m.height)
 }
 
 // actionOrder is the display order for the docked panel's actions section, so

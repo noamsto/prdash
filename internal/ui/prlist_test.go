@@ -458,6 +458,21 @@ func TestF1OpensLegendLikeQuestionMark(t *testing.T) {
 	}
 }
 
+func TestLegendFiltersByTyping(t *testing.T) {
+	m := newTestModelWithRows(t)
+	u, _ := m.Update(keyMsg("?"))
+	m = u.(Model)
+	u, _ = m.Update(keyMsg("m")) // type into the legend filter
+	m = u.(Model)
+	if m.legendQuery != "m" {
+		t.Fatalf("typing in the legend should build legendQuery, got %q", m.legendQuery)
+	}
+	out := m.legendView()
+	if !strings.Contains(strings.ToLower(out), "merge") {
+		t.Fatalf("legend filtered by 'm' should still show merge: %q", out)
+	}
+}
+
 func TestStatusBarHasTopRule(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("r")
