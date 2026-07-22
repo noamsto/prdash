@@ -83,6 +83,8 @@ type Model struct {
 	logSteps          []logStep
 	logLines          []logLine
 	logCursor         int                  // line cursor within logLines
+	logStyled         []string             // renderLogBody cache: styled line (no gutter) per logLines index
+	logStyledW        int                  // width logStyled was built at; a change rebuilds it
 	logCache          map[string][]logStep // keyed by logCacheKey(job, all)
 	loaded            bool                 // first live fetch has returned; distinguishes empty from loading
 	emptyNotice       string               // overrides the empty-board hint (e.g. issues disabled on this repo)

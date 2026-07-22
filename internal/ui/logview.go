@@ -189,6 +189,7 @@ func (m Model) fetchJobLogCmd(job string, all bool) tea.Cmd {
 func (m *Model) setLogSteps(steps []logStep) {
 	m.logSteps = steps
 	m.logLines = flattenLog(steps)
+	m.logStyled = nil // content changed; drop the styled-line cache
 	if m.logCursor >= len(m.logLines) {
 		m.logCursor = max(0, len(m.logLines)-1)
 	}
@@ -241,7 +242,10 @@ func (m *Model) keepLogCursorVisible() {
 
 // renderLogBody paints the flattened log: dim step headers (red for failed
 // steps), content lines colored by classifyLogLine, cursor line gutter-marked.
-func (m Model) renderLogBody(w int) string {
+// The styled line bodies (truncate + classify + lipgloss, the dominant cost) are
+// cached per width in m.logStyled, so a cursor move — which only shifts the
+// gutter mark — re-joins cached strings instead of re-styling every line.
+func (m *Model) renderLogBody(w int) string {
 	switch {
 	case m.logLoading:
 		frame := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
@@ -251,34 +255,42 @@ func (m Model) renderLogBody(w int) string {
 	case len(m.logLines) == 0:
 		return dimStyle.Render("  No logs.")
 	}
+	if len(m.logStyled) != len(m.logLines) || m.logStyledW != w {
+		m.logStyled = make([]string, len(m.logLines))
+		for i, ln := range m.logLines {
+			m.logStyled[i] = styleLogLine(ln, m.logSteps, w)
+		}
+		m.logStyledW = w
+	}
 	var b strings.Builder
-	for i, ln := range m.logLines {
+	for i, styled := range m.logStyled {
 		gutter := "  "
 		if i == m.logCursor {
 			gutter = focusBarStyle.Render("▎") + " "
 		}
-		text := truncate(ln.text, w-2)
-		var styled string
-		switch {
-		case ln.header:
-			if m.logSteps[ln.step].failed {
-				styled = failStyle.Bold(true).Render(text)
-			} else {
-				styled = dimStyle.Render(text)
-			}
-		default:
-			switch classifyLogLine(ln.text) {
-			case kindError:
-				styled = failStyle.Render(text)
-			case kindPass:
-				styled = passStyle.Render(text)
-			default:
-				styled = titleStyle.Render(text)
-			}
-		}
 		b.WriteString(gutter + styled + "\n")
 	}
 	return b.String()
+}
+
+// styleLogLine renders one log line's body (no gutter): step headers dim, failed
+// headers bold-red, content lines colored by classifyLogLine.
+func styleLogLine(ln logLine, steps []logStep, w int) string {
+	text := truncate(ln.text, w-2)
+	if ln.header {
+		if steps[ln.step].failed {
+			return failStyle.Bold(true).Render(text)
+		}
+		return dimStyle.Render(text)
+	}
+	switch classifyLogLine(ln.text) {
+	case kindError:
+		return failStyle.Render(text)
+	case kindPass:
+		return passStyle.Render(text)
+	default:
+		return titleStyle.Render(text)
+	}
 }
 
 // updateLogView handles keys while the check-log sub-view is open.
