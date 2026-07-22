@@ -13,6 +13,10 @@ import (
 
 const githubGraphQLURL = "https://api.github.com/graphql"
 
+// graphTimeout bounds every githubv4 request so a stalled network call surfaces
+// as a fetch error instead of hanging the UI on "Loading…".
+const graphTimeout = 20 * time.Second
+
 // GraphSource fetches PR data straight from GitHub's GraphQL API, skipping the
 // per-call `gh` subprocess. It implements both PRSource (list) and DetailSource
 // (batched per-PR detail). repo is owner/name.
@@ -27,6 +31,7 @@ type GraphSource struct {
 func NewGraphSource(token, repo string) GraphSource {
 	hc := oauth2.NewClient(context.Background(),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
+	hc.Timeout = graphTimeout
 	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc)}
 }
 
