@@ -331,35 +331,26 @@ func (m Model) previewTitle() string {
 	return base
 }
 
-// contentHeight is the list/preview body height. Modes that don't dock the panel
-// (zoom, filtering, a confirm prompt) reclaim its reserved rows so the box fills
+// contentHeight is the list/preview body height. The always-visible filter bar
+// (1 row blurred, more while focused) is reserved out of every mode; zoom and a
+// confirm prompt additionally reclaim the docked panel's rows so the box fills
 // the frame instead of stranding the bottom border mid-screen.
 func (m Model) contentHeight(l Layout) int {
-	if !l.ShowFooter {
-		if m.filtering {
-			// No footer row to give up when filtering starts: the 1-line filter
-			// input is a net new row, not a swap.
-			return max(1, l.ContentHeight-1-m.omniHintRows())
-		}
-		return l.ContentHeight
-	}
+	bar := m.filterBarRows()
+	// The filter bar is always rendered, so it reserves its row(s) uniformly —
+	// the old footer-swap distinction no longer applies. !ShowPanel covers both
+	// the footer-hidden small window and the status-bar footer (ShowPanel is only
+	// ever set when ShowFooter is).
 	if !l.ShowPanel {
-		if m.filtering {
-			// The 2-line statusBar footer is replaced by the 1-line filter input
-			// (net +1), then the hint/dropdown block below it is reserved.
-			return max(1, l.ContentHeight+1-m.omniHintRows())
-		}
-		return l.ContentHeight
+		return max(1, l.ContentHeight-bar)
 	}
 	switch {
 	case m.previewMax:
-		return l.ContentHeight + l.PanelRows
-	case m.filtering:
-		return max(1, l.ContentHeight+l.PanelRows-1-m.omniHintRows()) // minus the filter input line and its hint/dropdown
+		return max(1, l.ContentHeight+l.PanelRows-bar)
 	case m.pending != nil:
-		return l.ContentHeight + l.PanelRows - 1 // minus the prompt line
+		return max(1, l.ContentHeight+l.PanelRows-1-bar) // minus the prompt line
 	default:
-		return l.ContentHeight
+		return max(1, l.ContentHeight-bar)
 	}
 }
 
@@ -458,14 +449,17 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 
 // renderMain lays the bordered list and (when wide) the bordered side preview.
 // renderDocked stacks the keys/actions panel beneath the list in the left
-// column and lets the preview span the full height on the right.
+// column and lets the preview span the full height on the right. Unlike
+// renderMain it doesn't go through contentHeight — the panel is always docked
+// here — so it reserves the filter bar's rows itself.
 func (m Model) renderDocked(l Layout) string {
 	tint := accentFor(m.mode)
-	list := titledBoxTinted(m.vp.View(), l.ListWidth, l.ContentHeight, m.listTitle(), tint)
+	ch := max(1, l.ContentHeight-m.filterBarRows())
+	list := titledBoxTinted(m.vp.View(), l.ListWidth, ch, m.listTitle(), tint)
 	panel := m.keysActionsPanel(l.ListWidth)
 	left := lipgloss.JoinVertical(lipgloss.Left, list, panel)
 
-	fullH := l.ContentHeight + l.PanelRows // list + panel, so the preview reaches the bottom
+	fullH := ch + l.PanelRows // list + panel, so the preview reaches the bottom
 	side := titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, fullH, m.previewTitle(), tint)
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)

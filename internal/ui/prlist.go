@@ -44,7 +44,7 @@ type Model struct {
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
-	previewOffset     int // ctrl+j/k scroll position within the side preview
+	previewOffset     int // alt+j/k scroll position within the side preview
 	width             int
 	height            int
 	section           Section
@@ -57,6 +57,7 @@ type Model struct {
 	pending           *action.Action
 	showActions       bool
 	showLegend        bool
+	legendQuery       string // live substring filter typed while the legend overlay is open
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
@@ -439,8 +440,8 @@ func (m Model) omniSuggestDropdown() string {
 	return strings.Join(lines, "\n")
 }
 
-// omniHintRows is the height of the dropdown-or-hint block render() draws under the
-// filter input while filtering, so contentHeight can reserve it.
+// omniHintRows is the height of the dropdown-or-hint block filterBar() draws
+// under the filter input while filtering, so contentHeight can reserve it.
 func (m Model) omniHintRows() int {
 	if !m.filtering {
 		return 0
@@ -1217,16 +1218,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Issue board: plain local fuzzy filter, untouched by the omni
 				// server-qualifier machinery.
 				switch msg.String() {
-				case "esc":
+				case "esc", "enter":
 					m.filtering = false
-					m.filterInput.SetValue("")
-					m.filterInput.Blur()
-					m.sel.clear() // shown set changes; stale indexes would point elsewhere
-					m.applyFilter()
-					return m, nil
-				case "enter":
-					m.filtering = false
-					m.filterInput.Blur()
+					m.filterInput.Blur() // keep the query applied so actions work on the filtered set
 					return m, nil
 				}
 				var cmd tea.Cmd
@@ -1238,13 +1232,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "esc":
 				m.filtering = false
-				m.filterInput.SetValue("")
-				m.filterInput.Blur()
-				m.omniServer = ""
-				m.omniSuggestCursor = 0
-				m.filter = searchFor("pr", m.state, "")
-				m.sel.clear()
-				return m, m.switchToFilter() // restore the sections default
+				m.filterInput.Blur() // keep the query applied so actions work on the filtered set
+				if m.omniServer != "" {
+					return m, m.switchToFilter() // reconcile in case the debounce never fired
+				}
+				return m, nil
 			case "tab":
 				if sug := m.omniSuggestions(); len(sug) > 0 {
 					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
@@ -1360,7 +1352,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.showLegend {
-			m.showLegend = false // any key dismisses the legend
+			switch msg.String() {
+			case "esc", "?", "f1":
+				m.showLegend = false
+				m.legendQuery = ""
+			case "backspace":
+				if r := []rune(m.legendQuery); len(r) > 0 {
+					m.legendQuery = string(r[:len(r)-1])
+				}
+			default:
+				if s := msg.String(); len(s) == 1 {
+					m.legendQuery += s
+				}
+			}
 			return m, nil
 		}
 		switch msg.String() {
@@ -1392,10 +1396,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
-		case "ctrl+j":
+		case "alt+j":
 			m.previewScrollBy(1)
 			return m, nil
-		case "ctrl+k":
+		case "alt+k":
 			m.previewScrollBy(-1)
 			return m, nil
 		case "D":
@@ -1424,8 +1428,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.fetchMembersCmd())
 			}
 			return m, tea.Batch(cmds...)
-		case "?":
+		case "?", "f1":
 			m.showLegend = true
+			return m, nil
+		case "esc":
+			if m.filterInput.Value() == "" {
+				return m, tea.Quit
+			}
+			m.filterInput.SetValue("")
+			m.sel.clear()
+			if m.mode == "pr" && m.omniServer != "" {
+				m.omniServer = ""
+				m.omniSuggestCursor = 0
+				m.filter = searchFor("pr", m.state, "")
+				return m, m.switchToFilter() // restore the sections default
+			}
+			m.applyFilter()
 			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -1445,11 +1463,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewExpanded = !m.previewExpanded
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
-		case "down", "j":
+		case "down", "j", "ctrl+j":
 			m.moveCursor(1)
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
-		case "up", "k":
+		case "up", "k", "ctrl+k":
 			m.moveCursor(-1)
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
@@ -1497,16 +1515,6 @@ func (m Model) render() string {
 		}
 		return base
 	}
-	if m.filtering {
-		out := m.header() + "\n" + m.filterInput.View()
-		switch dd := m.omniSuggestDropdown(); {
-		case dd != "":
-			out += "\n" + dd
-		case m.mode == "pr":
-			out += "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
-		}
-		return out + "\n" + m.renderMain()
-	}
 	// Overlays float over the live board so the layout stays put behind them.
 	board := m.board()
 	switch {
@@ -1522,6 +1530,30 @@ func (m Model) render() string {
 	return board
 }
 
+// filterBar is the always-visible search row. When blurred it shows the prompt
+// as a hint; when focused it shows the live query plus any @-suggestion dropdown.
+func (m Model) filterBar() string {
+	if m.filtering {
+		bar := m.filterInput.View()
+		if dd := m.omniSuggestDropdown(); dd != "" {
+			return bar + "\n" + dd
+		}
+		if m.mode == "pr" {
+			return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+		}
+		return bar
+	}
+	// Blurred: show the prompt + placeholder as a dim hint so the bar is always present.
+	return dimStyle.Render(truncate("/ filter (@user, is:, text)", max(1, m.width)))
+}
+
+// filterBarRows is the row-height of filterBar() in its current state — 1 row
+// blurred, or 1 (the input line) plus the suggestion dropdown/hint block while
+// focused — so contentHeight can reserve exactly what's rendered.
+func (m Model) filterBarRows() int {
+	return 1 + m.omniHintRows()
+}
+
 // board renders the full PR board — the base layer under any overlay. The
 // empty/loading state paints inside the boxed chrome (via the list viewport)
 // so the layout stays solid while a fetch is in flight instead of collapsing
@@ -1532,19 +1564,21 @@ func (m Model) board() string {
 	}
 	l := computeLayout(m.width, m.height)
 	if m.previewMax {
-		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
+		return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
 	}
 	if l.ShowSide && l.ShowPanel {
-		return m.header() + "\n" + m.renderDocked(l)
+		return m.header() + "\n" + m.filterBar() + "\n" + m.renderDocked(l)
 	}
 	if !l.ShowFooter {
-		return m.header() + "\n" + m.renderMain() // small window: ? is the way to see the keys
+		// Small window: the footer's key hints are dropped (press ? for them), but
+		// the filter bar stays — it's the primary surface, not chrome.
+		return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain()
 	}
 	foot := m.statusBar()
 	if l.ShowPanel {
 		foot = m.keysActionsPanel(m.width)
 	}
-	return m.header() + "\n" + m.renderMain() + "\n" + foot
+	return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() + "\n" + foot
 }
 
 // confirmPanel is the y/n dialog for a pending action.
@@ -1757,7 +1791,7 @@ func (m Model) legendGroups() []legendGroup {
 	if m.mode == "pr" {
 		view = append(view, keyHint{"p", "all comments"}) // only the PR preview renders the timeline p unfolds
 	}
-	view = append(view, keyHint{"z", "maximize"}, keyHint{"ctrl+j/k", "scroll"})
+	view = append(view, keyHint{"z", "maximize"}, keyHint{"alt+j/k", "scroll"})
 	groups = append(groups, legendGroup{"view", view})
 
 	actions := []keyHint{
@@ -1769,7 +1803,7 @@ func (m Model) legendGroups() []legendGroup {
 	groups = append(groups, legendGroup{"actions", actions})
 
 	groups = append(groups, legendGroup{"", []keyHint{
-		{"a", "actions"}, {"ctrl+r", "refresh"}, {"?", "legend"}, {"q", "quit"},
+		{"a", "actions"}, {"ctrl+r", "refresh"}, {"? / F1", "legend"}, {"q", "quit"},
 	}})
 	return groups
 }
@@ -1802,7 +1836,26 @@ func renderLegendGroups(title string, groups []legendGroup, termW, termH int) st
 // lists every board-view key; expanded-view keys live in that view's own
 // legend (see expandedLegendView/logLegendView).
 func (m Model) legendView() string {
-	return renderLegendGroups("Legend", m.legendGroups(), m.width, m.height)
+	groups := m.legendGroups()
+	title := "Legend"
+	if m.legendQuery != "" {
+		q := strings.ToLower(m.legendQuery)
+		var filtered []legendGroup
+		for _, g := range groups {
+			var hints []keyHint
+			for _, h := range g.hints {
+				if strings.Contains(strings.ToLower(h.key+" "+h.label), q) {
+					hints = append(hints, h)
+				}
+			}
+			if len(hints) > 0 {
+				filtered = append(filtered, legendGroup{g.title, hints})
+			}
+		}
+		groups = filtered
+		title = "Legend: " + m.legendQuery
+	}
+	return renderLegendGroups(title, groups, m.width, m.height)
 }
 
 // actionOrder is the display order for the docked panel's actions section, so
@@ -1820,7 +1873,7 @@ func navHintsFor(mode string) []keyHint {
 	}
 	if mode == "pr" {
 		pr := []keyHint{
-			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+			{"→", "expand"}, {"z", "max"}, {"alt+j/k", "scroll"},
 			{"R", "reviewers"}, {"D", "drafts"},
 		}
 		return append(base, pr...)
