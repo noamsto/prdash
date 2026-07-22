@@ -259,6 +259,20 @@ func TestExpandedBoxWidthCapsEveryTab(t *testing.T) {
 	}
 }
 
+func TestRenderOverviewShowsBlockerAndLatest(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.renderList()
+	out := ansi.Strip(m.renderOverview(60))
+	if !strings.Contains(out, "LATEST") {
+		t.Fatalf("overview missing LATEST section:\n%s", out)
+	}
+}
+
 func manyComments(n int) []gh.Comment {
 	cs := make([]gh.Comment, n)
 	for i := range cs {

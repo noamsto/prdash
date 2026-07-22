@@ -163,6 +163,8 @@ func (m Model) expandedBody(w int) string {
 		return dimStyle.Render("  Loading…")
 	}
 	switch m.expandedTab {
+	case tabOverview:
+		return m.renderOverview(w)
 	case tabReviews:
 		return renderDiscussionColumn(w, func(contentWidth int) string {
 			return renderReviews(d, contentWidth)

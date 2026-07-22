@@ -289,6 +289,46 @@ func (m Model) previewPane() string {
 	return strings.Join(blocks, "\n\n")
 }
 
+// renderOverview is the Overview tab body: the triage summary shown by default.
+// Identity is owned by the container; this is everything below it.
+func (m Model) renderOverview(w int) string {
+	v, ok := m.cursorVars()
+	if !ok {
+		return ""
+	}
+	bw := w - 2
+	section := func(label, body string) string {
+		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
+	}
+	d, cached := m.detail[v.Number]
+	var blocks []string
+	if ps, ok := m.section.(*PRSection); ok {
+		pr := ps.prAt(m.cursor)
+		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
+			blocks = append(blocks, section("description", body))
+		}
+		tc := triage.Preliminary(pr)
+		if cached {
+			tc = triage.Compute(pr, d)
+		}
+		if card := renderCard(tc, bw); card != "" {
+			blocks = append(blocks, section("blocker", card))
+		}
+		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
+			if ci := ciLine(pr); ci != "" {
+				blocks = append(blocks, section("checks", ci))
+			}
+		}
+	}
+	if !cached {
+		blocks = append(blocks, dimStyle.Render("  loading details…"))
+		return strings.Join(blocks, "\n\n")
+	}
+	blocks = append(blocks, section("review", reviewLine(d)))
+	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
+	return strings.Join(blocks, "\n\n")
+}
+
 // issuePreviewPane renders the issue identity header + its markdown body. The
 // body is the whole v1 story; the comments timeline lands in a later milestone.
 func (m Model) issuePreviewPane(is *IssueSection, w, bw int) string {
