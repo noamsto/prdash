@@ -494,3 +494,22 @@ func TestRenderThreadsSummaryShowsFileAndAuthor(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderThreadsSummaryLocAuthorLineNeverOverflows is the M-A regression:
+// unlike the body line below it, the loc+author line was never width-truncated,
+// so a long author name could push the line past w. 24 is the realistic floor
+// (renderItemRow's own documented sub-floor threshold): below it, a fixed-format
+// "preview.go:288" location alone can outgrow the width, same as any other
+// fixed-format text in this codebase at a degenerate width.
+func TestRenderThreadsSummaryLocAuthorLineNeverOverflows(t *testing.T) {
+	ts := []gh.ReviewThread{{Path: "internal/ui/preview.go", Line: 288, IsResolved: false,
+		Comments: []gh.ThreadComment{{Author: strings.Repeat("verboseauthorname", 5), Body: "x"}}}}
+	for w := 24; w <= 60; w++ {
+		out := renderThreadsSummary(ts, 2, w)
+		for i, ln := range strings.Split(out, "\n") {
+			if got := lipgloss.Width(ln); got > w {
+				t.Fatalf("w=%d line %d width %d exceeds w: %q", w, i, got, ln)
+			}
+		}
+	}
+}

@@ -230,6 +230,15 @@ func TestFooterToggleNeverOverflowsAcrossResizeSweep(t *testing.T) {
 				if lines := strings.Count(expanded, "\n") + 1; lines > h {
 					t.Errorf("expanded: %d lines exceeds height %d", lines, h)
 				}
+				// I-1: the RAW expandedView top line (the tabbed box's tab strip)
+				// must never exceed the terminal width. The canvas-clamped legend
+				// width check below doesn't catch this — the canvas silently crops
+				// overflow, which is exactly why this regressed unnoticed.
+				for i, ln := range strings.Split(expanded, "\n") {
+					if lw := lipgloss.Width(ln); lw > w {
+						t.Errorf("expanded: line %d width %d exceeds terminal width %d: %q", i, lw, w, ln)
+					}
+				}
 
 				u, _ := m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 				m2 := u.(Model)

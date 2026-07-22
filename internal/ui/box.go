@@ -95,24 +95,98 @@ func tabbedBox(content string, w, h int, tabs []string, active int) string {
 	if h < 2 {
 		h = 2
 	}
-	seg := tabSegment(tabs, active)
+	seg := tabSegment(tabs, active, w-3) // boxTop reserves 3 cells (corner+rule ×2) around the segment
 	return boxTop(seg, lipgloss.Width(seg), w) + "\n" + boxBody(content, w, h)
 }
 
 // tabSegment renders the tab labels as pill-padded names notched into the border
 // rule: one rule tick flanks each side and joins adjacent tabs, so the labels
-// sit on the top edge rather than floating above it.
-func tabSegment(tabs []string, active int) string {
+// sit on the top edge rather than floating above it. The rendered width is
+// capped at maxW: when every tab doesn't fit, the visible range is windowed
+// around active (never dropping the active tab) with an ellipsis marking each
+// side that was trimmed — unlike renderTabBar's side-pane strip, which can
+// afford to just drop trailing tabs because it never has to keep a specific
+// tab on screen.
+func tabSegment(tabs []string, active, maxW int) string {
 	tick := sepStyle.Render(lipgloss.RoundedBorder().Top)
-	parts := make([]string, len(tabs))
+	tickW := lipgloss.Width(tick)
+	n := len(tabs)
+	cells := make([]string, n)
+	widths := make([]int, n)
 	for i, t := range tabs {
 		st := tabInactiveStyle
 		if i == active {
 			st = tabActiveStyle
 		}
-		parts[i] = st.Render(t)
+		cells[i] = st.Render(t)
+		widths[i] = lipgloss.Width(cells[i])
 	}
-	return tick + strings.Join(parts, tick) + tick
+	full := tickW
+	for _, cw := range widths {
+		full += cw + tickW
+	}
+	if full <= maxW {
+		return tick + strings.Join(cells, tick) + tick
+	}
+	if maxW <= 0 {
+		return ""
+	}
+	if active < 0 || active >= n {
+		active = 0
+	}
+
+	ellipsis := dimStyle.Render("…")
+	ellW := lipgloss.Width(ellipsis)
+	fits := func(lo, hi int) bool {
+		w := (hi - lo + 2) * tickW
+		for i := lo; i <= hi; i++ {
+			w += widths[i]
+		}
+		if lo > 0 {
+			w += ellW + tickW
+		}
+		if hi < n-1 {
+			w += ellW + tickW
+		}
+		return w <= maxW
+	}
+	lo, hi := active, active
+	for fits(lo, hi) {
+		grew := false
+		if hi+1 < n && fits(lo, hi+1) {
+			hi++
+			grew = true
+		}
+		if lo-1 >= 0 && fits(lo-1, hi) {
+			lo--
+			grew = true
+		}
+		if !grew {
+			break
+		}
+	}
+
+	parts := make([]string, 0, hi-lo+3)
+	if lo > 0 {
+		parts = append(parts, ellipsis)
+	}
+	parts = append(parts, cells[lo:hi+1]...)
+	if hi < n-1 {
+		parts = append(parts, ellipsis)
+	}
+	seg := tick + strings.Join(parts, tick) + tick
+	if lipgloss.Width(seg) <= maxW {
+		return seg
+	}
+	// Degenerate maxW, below any realistic terminal width: shed the ticks, then
+	// shrink the active tab's own label, before ever giving up on showing it.
+	if seg = cells[active]; lipgloss.Width(seg) <= maxW {
+		return seg
+	}
+	if padW := lipgloss.Width(tabActiveStyle.Render("")); maxW > padW {
+		return tabActiveStyle.Render(truncate(tabs[active], maxW-padW))
+	}
+	return ""
 }
 
 // overlayTop composites panel horizontally centered over base, anchored to a

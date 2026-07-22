@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
 )
@@ -32,7 +34,12 @@ func renderThreadsSummary(ts []gh.ReviewThread, n, w int) string {
 			author = t.Comments[0].Author
 			body = firstLine(t.Comments[0].Body)
 		}
-		b.WriteString(focusBarStyle.Render(loc) + "  " + authorStyle(author).Render(author) + "\n")
+		sep := "  "
+		// Budget the line to w by truncating the variable-length author (loc is
+		// short and fixed-format) before styling, rather than slicing the
+		// already-styled line, which would risk cutting an ANSI escape.
+		author = truncate(author, max(0, w-lipgloss.Width(loc)-lipgloss.Width(sep)))
+		b.WriteString(focusBarStyle.Render(loc) + sep + authorStyle(author).Render(author) + "\n")
 		b.WriteString("  " + dimStyle.Render(truncate(body, w-2)) + "\n")
 	}
 	tail := []string{}
@@ -66,8 +73,14 @@ func renderFileThreads(g preview.FileThreads, w int, showResolved bool) string {
 			dot = passStyle.Render("✓ resolved")
 		}
 		head := t.Comments[0]
-		b.WriteString("    " + focusBarStyle.Render(fmt.Sprintf("L%d", t.Line)) + "  " +
-			authorStyle(head.Author).Render(head.Author) + "   " + dot + "\n")
+		indent, label, sep1, sep2 := "    ", focusBarStyle.Render(fmt.Sprintf("L%d", t.Line)), "  ", "   "
+		// Budget the header to w by truncating the variable-length author
+		// (indent/label/dot are short and fixed-format) before styling, rather
+		// than slicing the already-styled line, which would risk cutting an ANSI
+		// escape.
+		fixed := lipgloss.Width(indent) + lipgloss.Width(label) + lipgloss.Width(sep1) + lipgloss.Width(sep2) + lipgloss.Width(dot)
+		author := truncate(head.Author, max(0, w-fixed))
+		b.WriteString(indent + label + sep1 + authorStyle(author).Render(author) + sep2 + dot + "\n")
 		b.WriteString("      " + dimStyle.Render(truncate(firstLine(head.Body), w-6)) + "\n")
 		for _, reply := range t.Comments[1:] {
 			b.WriteString("      " + sepStyle.Render("└ ") + authorStyle(reply.Author).Render(reply.Author) + "\n")

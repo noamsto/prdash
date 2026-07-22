@@ -1883,7 +1883,7 @@ func navHintsFor(mode string) []keyHint {
 	}
 	if mode == "pr" {
 		pr := []keyHint{
-			{"→", "expand"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
+			{"→", "tabs"}, {"z", "max"}, {"ctrl+j/k", "scroll"},
 			{"R", "reviewers"}, {"D", "drafts"},
 		}
 		return append(base, pr...)

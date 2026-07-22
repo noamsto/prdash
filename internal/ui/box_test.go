@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTitledBoxDimensionsAndTitle(t *testing.T) {
@@ -63,6 +64,61 @@ func TestDropLines(t *testing.T) {
 	}
 	if got := dropLines("a\nb", 5); got != "" {
 		t.Fatalf("dropping more than present should empty: %q", got)
+	}
+}
+
+// TestTabSegmentWidthBoundedKeepsActiveVisible is the I-1 regression: unlike
+// renderTabBar's side-pane strip (which can just drop trailing tabs),
+// tabSegment must never exceed maxW while still windowing the visible tabs so
+// the active one — even a trailing tab like Diff — always shows in full. 16 is
+// the narrowest width that fits the widest tab ("Conversation", 12+2 padding)
+// plus its flanking ticks with no truncation; realistic terminals (ContentW is
+// never below footerMinWidth-ish) sit far above this floor.
+func TestTabSegmentWidthBoundedKeepsActiveVisible(t *testing.T) {
+	tabs := []string{"Overview", "Description", "Conversation", "Reviews", "Checks", "Diff"}
+	for maxW := 16; maxW <= 40; maxW++ {
+		for active := range tabs {
+			seg := tabSegment(tabs, active, maxW)
+			if got := lipgloss.Width(seg); got > maxW {
+				t.Fatalf("maxW=%d active=%d: segment width %d exceeds maxW: %q", maxW, active, got, seg)
+			}
+			plain := ansi.Strip(seg)
+			if !strings.Contains(plain, tabs[active]) {
+				t.Fatalf("maxW=%d active=%d: active tab %q not visible in windowed segment: %q", maxW, active, tabs[active], plain)
+			}
+		}
+	}
+}
+
+// TestTabSegmentDegenerateWidthNeverExceedsBudget covers below-floor widths
+// (narrower than any single tab needs): the active tab may get truncated down
+// to nothing recognizable, but the hard width bound must still hold and the
+// function must never panic.
+func TestTabSegmentDegenerateWidthNeverExceedsBudget(t *testing.T) {
+	tabs := []string{"Overview", "Description", "Conversation", "Reviews", "Checks", "Diff"}
+	for maxW := 0; maxW <= 15; maxW++ {
+		for active := range tabs {
+			seg := tabSegment(tabs, active, maxW)
+			if got := lipgloss.Width(seg); got > maxW {
+				t.Fatalf("maxW=%d active=%d: segment width %d exceeds maxW: %q", maxW, active, got, seg)
+			}
+		}
+	}
+}
+
+// TestTabbedBoxTopLineNeverExceedsWidth locks tabbedBox's contribution to the
+// I-1 invariant: at every width, the composed top edge (tabSegment plus the
+// boxTop corner/rule chrome) must stay exactly at the box's outer width.
+func TestTabbedBoxTopLineNeverExceedsWidth(t *testing.T) {
+	tabs := []string{"Overview", "Description", "Conversation", "Reviews", "Checks", "Diff"}
+	for w := 4; w <= 80; w++ {
+		for active := range tabs {
+			box := tabbedBox("body", w, 5, tabs, active)
+			top := strings.SplitN(box, "\n", 2)[0]
+			if got := lipgloss.Width(top); got != w {
+				t.Fatalf("w=%d active=%d: top line width %d, want %d: %q", w, active, got, w, top)
+			}
+		}
 	}
 }
 
