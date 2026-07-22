@@ -1735,7 +1735,7 @@ func (m Model) legendGroups() []legendGroup {
 		{"glyphs", []keyHint{
 			{"✓", "CI pass"}, {"✗", "CI fail"}, {"●", "CI running"}, {"·", "no CI"},
 			{mergedGlyph, "merged"}, {closedGlyph, "closed"},
-			{"⚠", "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
+			{warnGlyph, "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
 			{"▎", "focus"}, {"●", "selected"}, {"[draft]", "dimmed"},
 		}},
 	}
