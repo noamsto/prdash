@@ -10,6 +10,14 @@ type PRSource interface {
 	FetchPRs(filter string, limit int) (prs []PR, raw []byte, err error)
 }
 
+// DetailSource fetches per-PR detail for a set of PR numbers in one shot,
+// returning the mapped details plus the JSON bytes to cache per number (which
+// must round-trip through the detail hydrate path). A batched backend collapses
+// the prefetch window's N `gh pr view` subprocesses into a single request.
+type DetailSource interface {
+	FetchDetails(numbers []int) (details map[int]PRDetail, raw map[int][]byte, err error)
+}
+
 // CLISource is the original path: shell out to `gh pr list --json`.
 type CLISource struct {
 	R   Runner

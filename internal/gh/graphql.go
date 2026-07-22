@@ -4,25 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
 )
 
-// NewGraphClient builds a githubv4 client authenticated with token, as returned
-// by `gh auth token`.
-func NewGraphClient(token string) *githubv4.Client {
-	hc := oauth2.NewClient(context.Background(),
-		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
-	return githubv4.NewClient(hc)
+const githubGraphQLURL = "https://api.github.com/graphql"
+
+// GraphSource fetches PR data straight from GitHub's GraphQL API, skipping the
+// per-call `gh` subprocess. It implements both PRSource (list) and DetailSource
+// (batched per-PR detail). repo is owner/name.
+type GraphSource struct {
+	repo   string
+	http   *http.Client     // for raw aliased detail queries
+	client *githubv4.Client // for the typed list query
 }
 
-// GraphSource fetches PR lists straight from GitHub's GraphQL API, skipping the
-// per-call `gh` subprocess. Repo is owner/name.
-type GraphSource struct {
-	Client *githubv4.Client
-	Repo   string
+// NewGraphSource builds a GraphSource authenticated with token, as returned by
+// `gh auth token`.
+func NewGraphSource(token, repo string) GraphSource {
+	hc := oauth2.NewClient(context.Background(),
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
+	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc)}
 }
 
 func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
@@ -113,10 +118,10 @@ func (s GraphSource) query(ctx context.Context, filter string, limit int) ([]PR,
 	// gh pr list --search implicitly scopes to the repo and to PRs; the raw
 	// search API needs both qualifiers spelled out.
 	vars := map[string]any{
-		"q":     githubv4.String(fmt.Sprintf("repo:%s is:pr %s", s.Repo, filter)),
+		"q":     githubv4.String(fmt.Sprintf("repo:%s is:pr %s", s.repo, filter)),
 		"limit": githubv4.Int(limit),
 	}
-	if err := s.Client.Query(ctx, &q, vars); err != nil {
+	if err := s.client.Query(ctx, &q, vars); err != nil {
 		return nil, err
 	}
 	prs := make([]PR, 0, len(q.Search.Nodes))
