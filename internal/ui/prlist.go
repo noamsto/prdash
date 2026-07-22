@@ -49,6 +49,7 @@ type Model struct {
 	viewerSource      gh.ViewerSource      // viewer-login backend; nil ⇒ gh CLI
 	membersSource     gh.MembersSource     // assignable-users backend; nil ⇒ gh CLI
 	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.); nil ⇒ argv-through-Runner
+	actionsSource     gh.ActionsSource     // Actions rerun/job-log backend; nil ⇒ gh-CLI path (internal/action)
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
@@ -173,6 +174,11 @@ func (m *Model) SetMembersSource(s gh.MembersSource) { m.membersSource = s }
 // --web open-in-browser action. nil (the default) keeps the argv-through-Runner
 // gh CLI path untouched.
 func (m *Model) SetMutationSource(s gh.MutationSource) { m.mutationSource = s }
+
+// SetActionsSource installs the native REST backend for Actions rerun/job-log
+// operations (internal/action.RerunFailed/JobLog). nil (the default) keeps the
+// gh-CLI path in internal/action untouched.
+func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 

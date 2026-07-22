@@ -377,11 +377,11 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	r, dir, branch := m.runner, m.dir, v.HeadRefName
+	r, dir, branch, native := m.runner, m.dir, v.HeadRefName, m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
 		refresh: true, nums: []int{v.Number}}
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
+		return actionDoneMsg{err: action.RerunFailed(r, dir, branch, native)}
 	}, m.startSpinner())
 }
 

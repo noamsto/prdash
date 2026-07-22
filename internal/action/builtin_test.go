@@ -3,6 +3,8 @@ package action
 import (
 	"reflect"
 	"testing"
+
+	"github.com/noamsto/prdash/internal/gh"
 )
 
 type seqRunner struct {
@@ -53,7 +55,7 @@ func TestRerunFailedRerunsFailedSibling(t *testing.T) {
 		]`),
 		[]byte(``), // gh run rerun
 	}}
-	if err := RerunFailed(r, "/repo", "feat/x"); err != nil {
+	if err := RerunFailed(r, "/repo", "feat/x", nil); err != nil {
 		t.Fatal(err)
 	}
 	if r.calls[0][0] != "run" || r.calls[0][1] != "list" {
@@ -77,7 +79,7 @@ func TestRerunFailedScopesToHeadSHA(t *testing.T) {
 		]`),
 		[]byte(``),
 	}}
-	if err := RerunFailed(r, "/repo", "feat/x"); err != nil {
+	if err := RerunFailed(r, "/repo", "feat/x", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.calls) != 2 {
@@ -92,7 +94,7 @@ func TestRerunFailedNoFailures(t *testing.T) {
 	r := &seqRunner{outs: [][]byte{
 		[]byte(`[{"databaseId":100,"conclusion":"success","headSha":"abc123"}]`),
 	}}
-	if err := RerunFailed(r, "/repo", "feat/x"); err == nil {
+	if err := RerunFailed(r, "/repo", "feat/x", nil); err == nil {
 		t.Fatal("expected error when no runs failed")
 	}
 	if len(r.calls) != 1 {
@@ -102,7 +104,7 @@ func TestRerunFailedNoFailures(t *testing.T) {
 
 func TestJobLogArgs(t *testing.T) {
 	r := &argRunner{}
-	out, err := JobLog(r, "/repo", "123", true)
+	out, err := JobLog(r, "/repo", "123", true, nil)
 	if err != nil {
 		t.Fatalf("JobLog: %v", err)
 	}
@@ -115,9 +117,85 @@ func TestJobLogArgs(t *testing.T) {
 	}
 
 	r2 := &argRunner{}
-	_, _ = JobLog(r2, "/repo", "123", false)
+	_, _ = JobLog(r2, "/repo", "123", false, nil)
 	wantAll := []string{"run", "view", "--job", "123", "--log"}
 	if !reflect.DeepEqual(r2.args, wantAll) {
 		t.Fatalf("full args = %v, want %v", r2.args, wantAll)
+	}
+}
+
+// fakeActionsSource is the native REST backend fake for the action-package
+// seam tests below: it records calls instead of hitting GitHub, mirroring
+// internal/ui's fakeMutationSource convention.
+type fakeActionsSource struct {
+	runs             []gh.WorkflowRun
+	listErr          error
+	rerunFailedCalls []int64
+	rerunFailedErr   error
+	jobLogCalls      []jobLogCall
+	jobLogOut        []byte
+	jobLogErr        error
+}
+
+type jobLogCall struct {
+	jobID      int64
+	failedOnly bool
+}
+
+func (f *fakeActionsSource) ListRunsForBranch(string) ([]gh.WorkflowRun, error) {
+	return f.runs, f.listErr
+}
+
+func (f *fakeActionsSource) RerunFailedJobs(runID int64) error {
+	f.rerunFailedCalls = append(f.rerunFailedCalls, runID)
+	return f.rerunFailedErr
+}
+
+func (f *fakeActionsSource) RerunJob(int64) error { return nil }
+
+func (f *fakeActionsSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
+	f.jobLogCalls = append(f.jobLogCalls, jobLogCall{jobID, failedOnly})
+	return f.jobLogOut, f.jobLogErr
+}
+
+func TestRerunFailedNativeSkipsRunner(t *testing.T) {
+	r := &seqRunner{} // no outs queued: a call into it panics/fails the test
+	native := &fakeActionsSource{runs: []gh.WorkflowRun{
+		{ID: 100, Conclusion: "success", HeadSHA: "abc123"},
+		{ID: 200, Conclusion: "failure", HeadSHA: "abc123"},
+	}}
+	if err := RerunFailed(r, "/repo", "feat/x", native); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls) != 0 {
+		t.Fatalf("native path must not touch the Runner, got calls: %v", r.calls)
+	}
+	if !reflect.DeepEqual(native.rerunFailedCalls, []int64{200}) {
+		t.Fatalf("rerunFailedCalls = %v, want [200]", native.rerunFailedCalls)
+	}
+}
+
+func TestRerunFailedNativeNoFailures(t *testing.T) {
+	native := &fakeActionsSource{runs: []gh.WorkflowRun{{ID: 100, Conclusion: "success", HeadSHA: "abc123"}}}
+	if err := RerunFailed(nil, "/repo", "feat/x", native); err == nil {
+		t.Fatal("expected error when no runs failed")
+	}
+}
+
+func TestJobLogNativeSkipsRunner(t *testing.T) {
+	r := &argRunner{}
+	native := &fakeActionsSource{jobLogOut: []byte("native-log-bytes")}
+	out, err := JobLog(r, "/repo", "123", true, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "native-log-bytes" {
+		t.Fatalf("out = %q, want native-log-bytes", out)
+	}
+	if r.args != nil {
+		t.Fatalf("native path must not touch the Runner, got args: %v", r.args)
+	}
+	if want := []jobLogCall{{123, true}}; !reflect.DeepEqual(native.jobLogCalls, want) {
+		t.Fatalf("jobLogCalls = %+v, want %+v", native.jobLogCalls, want)
 	}
 }

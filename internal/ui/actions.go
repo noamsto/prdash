@@ -140,12 +140,12 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // OSC 52 is fire-and-forget
 		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
 	case "rerun-failed":
-		r, dir, branch := m.runner, m.dir, v.HeadRefName
+		r, dir, branch, native := m.runner, m.dir, v.HeadRefName, m.actionsSource
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
 		m.actionStatus.nums = []int{v.Number}
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
+			return actionDoneMsg{err: action.RerunFailed(r, dir, branch, native)}
 		}, m.startSpinner())
 	default: // argv (e.g. gh pr merge), or the native mutation/open when the gate is on
 		if m.mutationSource != nil && a.Command.Native != "" {

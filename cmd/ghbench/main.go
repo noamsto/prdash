@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -29,6 +30,8 @@ func main() {
 	issueParity := flag.Bool("issue-parity", false, "diff gh issue list/view vs githubv4 FetchIssues/FetchIssueDetail")
 	viewerParity := flag.Bool("viewer-parity", false, "diff gh api user vs githubv4 FetchViewer")
 	membersParity := flag.Bool("members-parity", false, "diff gh api graphql assignableUsers vs githubv4 FetchAssignableUsers")
+	runsParity := flag.Bool("runs-parity", false, "diff gh run list vs the native REST ListRunsForBranch")
+	branch := flag.String("branch", "", "branch for -runs-parity (default: current git branch)")
 	flag.Parse()
 
 	dir, _ := os.Getwd()
@@ -81,6 +84,19 @@ func main() {
 	}
 	if *membersParity {
 		runMembersParity(runner, dir, graph, *repo)
+		return
+	}
+	if *runsParity {
+		b := *branch
+		if b == "" {
+			out, err := exec.Command("git", "-C", dir, "branch", "--show-current").Output()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "detect branch:", err)
+				os.Exit(1)
+			}
+			b = strings.TrimSpace(string(out))
+		}
+		runRunsParity(graph, *repo, b)
 		return
 	}
 
@@ -494,6 +510,59 @@ func bench(name string, n int, fn func() (int, error)) {
 }
 
 func r(d time.Duration) time.Duration { return d.Round(time.Millisecond) }
+
+// runRunsParity diffs `gh run list --branch <b> -L 20 --json
+// databaseId,conclusion,headSha` against the native REST
+// GraphSource.ListRunsForBranch, field-by-field, read-only (never reruns
+// anything).
+func runRunsParity(graph gh.GraphSource, repo, branch string) {
+	out, err := exec.Command("gh", "run", "list", "--repo", repo, "--branch", branch, "-L", "20",
+		"--json", "databaseId,conclusion,headSha").Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cli run list:", err)
+		os.Exit(1)
+	}
+	var cliRuns []struct {
+		DatabaseID int64  `json:"databaseId"`
+		Conclusion string `json:"conclusion"`
+		HeadSha    string `json:"headSha"`
+	}
+	if err := json.Unmarshal(out, &cliRuns); err != nil {
+		fmt.Fprintln(os.Stderr, "parse cli run list:", err)
+		os.Exit(1)
+	}
+	native, err := graph.ListRunsForBranch(branch)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "native run list:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("branch=%s  cli runs=%d  native runs=%d\n", branch, len(cliRuns), len(native))
+	diffs := 0
+	for i := range cliRuns {
+		if i >= len(native) {
+			fmt.Printf("  [%d]: only in cli: %+v\n", i, cliRuns[i])
+			diffs++
+			continue
+		}
+		c, n := cliRuns[i], native[i]
+		if c.DatabaseID != n.ID || c.Conclusion != n.Conclusion || c.HeadSha != n.HeadSHA {
+			fmt.Printf("  [%d]: mismatch\n    cli:    id=%d conclusion=%q headSha=%q\n    native: id=%d conclusion=%q headSha=%q\n",
+				i, c.DatabaseID, c.Conclusion, c.HeadSha, n.ID, n.Conclusion, n.HeadSHA)
+			diffs++
+		}
+	}
+	if len(native) > len(cliRuns) {
+		for i := len(cliRuns); i < len(native); i++ {
+			fmt.Printf("  [%d]: only in native: %+v\n", i, native[i])
+			diffs++
+		}
+	}
+	if diffs == 0 {
+		fmt.Println("RUNS PARITY OK: every run matches on id/conclusion/headSha, same order")
+	} else {
+		fmt.Printf("\n%d difference(s)\n", diffs)
+	}
+}
 
 func mustRun(name string, args ...string) string {
 	out, err := exec.Command(name, args...).Output()

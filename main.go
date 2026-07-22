@@ -46,6 +46,7 @@ func main() {
 			m.SetViewerSource(gs)
 			m.SetMembersSource(gs)
 			m.SetMutationSource(gs)
+			m.SetActionsSource(gs)
 		} else {
 			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but no token:", err)
 		}
