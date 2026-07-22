@@ -255,15 +255,37 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 // first — opening a windowful of worktrees at once is rarely intended.
 const bulkWarnThreshold = 4
 
-// startBulk runs a per-selected action, first prompting when it needs confirming
-// or when it would open more than bulkWarnThreshold worktrees.
+// startBulk runs a per-selected action, first prompting when it needs confirming,
+// targets a PR the viewer didn't author or fans out across a bulk selection, or
+// when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
-	if a.Confirm || overThreshold {
+	if a.Confirm || overThreshold || m.needsOthersConfirm(a) {
 		m.pending = &a
 		return nil
 	}
 	return m.runBulk(a)
+}
+
+// needsOthersConfirm reports whether a ConfirmOthers action must prompt first:
+// always for a bulk fan-out, and for a single target authored by someone other
+// than the viewer. An unresolved viewer login counts as "not mine".
+func (m *Model) needsOthersConfirm(a action.Action) bool {
+	if !a.ConfirmOthers {
+		return false
+	}
+	targets := m.selectedOrCursor()
+	if len(targets) > 1 {
+		return true
+	}
+	i := targets[0]
+	if i < 0 || i >= m.section.Len() {
+		return true // can't verify ownership → prompt
+	}
+	if m.viewerLogin == "" {
+		return true
+	}
+	return m.section.VarsAt(i).Author != m.viewerLogin
 }
 
 // runBulk applies a per-selected action to each selected row (or the cursor row
