@@ -54,6 +54,7 @@ func main() {
 	m.Hydrate()
 
 	final, err := tea.NewProgram(m).Run()
+	c.Flush() // persist any debounced cache writes before we exit
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

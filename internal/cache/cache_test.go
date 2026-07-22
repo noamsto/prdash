@@ -2,6 +2,7 @@ package cache
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -28,12 +29,30 @@ func TestRoundTrip(t *testing.T) {
 func TestPersistsAcrossLoad(t *testing.T) {
 	c := newTestCache(t)
 	c.Set("k", json.RawMessage(`[]`))
+	c.Flush() // writes are debounced; Flush persists synchronously (as on shutdown)
 	reloaded := &Cache{entries: map[string]Entry{}, filePath: c.filePath}
 	if err := reloaded.load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if _, ok := reloaded.Get("k"); !ok {
 		t.Fatal("expected hit after reload")
+	}
+}
+
+// TestSetCoalescesWrites: a burst of Sets writes at most once until Flush, and
+// Flush persists the final state.
+func TestSetCoalescesWrites(t *testing.T) {
+	c := newTestCache(t)
+	for range 5 {
+		c.Set("k", json.RawMessage(`[]`))
+	}
+	// Before the debounce fires, nothing is on disk yet.
+	if _, err := os.Stat(c.filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected no file before flush, stat err=%v", err)
+	}
+	c.Flush()
+	if _, err := os.Stat(c.filePath); err != nil {
+		t.Fatalf("expected file after flush: %v", err)
 	}
 }
 
