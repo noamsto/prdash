@@ -1775,6 +1775,9 @@ func (m Model) legendGroups() []legendGroup {
 	view := []keyHint{}
 	if m.mode == "pr" {
 		view = append(view, keyHint{"p", "all comments"}) // only the PR preview renders the timeline p unfolds
+		if computeLayout(m.width, m.height).ShowSide {
+			view = append(view, keyHint{"h/l", "switch tab"}, keyHint{"1-6", "jump tab"})
+		}
 	}
 	view = append(view, keyHint{"z", "maximize"}, keyHint{"ctrl+j/k", "scroll"})
 	groups = append(groups, legendGroup{"view", view})
