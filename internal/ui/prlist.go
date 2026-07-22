@@ -44,6 +44,9 @@ type Model struct {
 	runner            gh.Runner
 	prSource          gh.PRSource     // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
 	detailSource      gh.DetailSource // batched per-PR detail backend; nil ⇒ per-PR gh pr view
+	rowText           []string        // renderList per-row cache: rendered string per shown index
+	rowSig            []rowKey        // the inputs each rowText was rendered under; a miss re-renders that row
+	rowGen            int             // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
@@ -220,6 +223,16 @@ func (m *Model) moveCursor(delta int) {
 	m.renderList()
 }
 
+// rowKey is the set of inputs a cached row string was rendered under. When the
+// live inputs still match, renderList reuses the cached string instead of
+// re-styling the row — so a cursor move re-renders only the two rows whose focus
+// flipped, not all of them. gen invalidates the whole cache on a content change.
+type rowKey struct {
+	gen, w, numW      int
+	focused, selected bool
+	flag              string
+}
+
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
@@ -234,9 +247,14 @@ func (m *Model) renderList() {
 	numW := columnWidths(m.section)
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
+	n := m.section.Len()
+	if len(m.rowText) != n { // shown set resized (or first paint): reset the cache
+		m.rowText = make([]string, n)
+		m.rowSig = make([]rowKey, n)
+	}
 	var b strings.Builder
 	line, prevGroup := 0, ""
-	for i := 0; i < m.section.Len(); i++ {
+	for i := 0; i < n; i++ {
 		if grouped {
 			if g := ps.groupLabel(i); g != prevGroup {
 				if prevGroup != "" { // blank line between groups, not above the first
@@ -256,9 +274,14 @@ func (m *Model) renderList() {
 			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}
-		b.WriteString(m.section.RenderRow(i, RowOpts{
-			Width: innerW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
-		}))
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag}
+		if m.rowSig[i] != key || m.rowText[i] == "" {
+			m.rowText[i] = m.section.RenderRow(i, RowOpts{
+				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag,
+			})
+			m.rowSig[i] = key
+		}
+		b.WriteString(m.rowText[i])
 		b.WriteString("\n")
 		line++
 	}
@@ -350,6 +373,7 @@ func (m *Model) applyFilter() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+	m.rowGen++ // the shown set/order/content changed; invalidate the per-row cache
 	m.renderList()
 }
 
