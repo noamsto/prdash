@@ -1563,7 +1563,11 @@ func (m Model) confirmQuestion() string {
 	if len(targets) != 1 {
 		return fmt.Sprintf("%s for %d PRs?", a.Label, len(targets))
 	}
-	v := m.section.VarsAt(targets[0])
+	i := targets[0]
+	if i < 0 || i >= m.section.Len() {
+		return fmt.Sprintf("%s?", a.Label)
+	}
+	v := m.section.VarsAt(i)
 	if a.ConfirmOthers && v.Author != "" && v.Author != m.viewerLogin {
 		return fmt.Sprintf("%s #%d by %s?", a.Label, v.Number, v.Author)
 	}

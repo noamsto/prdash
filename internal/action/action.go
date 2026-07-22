@@ -24,13 +24,15 @@ type Command struct {
 }
 
 type Action struct {
-	Key           string
-	Label         string // imperative, shown in menus/legend
-	Command       Command
-	ExitsTUI      bool
-	Scope         string // "single" | "per-selected"
-	Confirm       bool
-	ConfirmOthers bool // prompt before running when a target PR was authored by someone other than the viewer, or when the action spans a bulk selection
+	Key      string
+	Label    string // imperative, shown in menus/legend
+	Command  Command
+	ExitsTUI bool
+	Scope    string // "single" | "per-selected"
+	Confirm  bool
+	// ConfirmOthers prompts before running when a target PR was authored by
+	// someone other than the viewer, or when the action spans a bulk selection.
+	ConfirmOthers bool
 	Refresh       bool // action mutates the PR; the UI refetches list+detail on success
 
 	// Inline-status wording, per state. Empty fields fall back to Label.

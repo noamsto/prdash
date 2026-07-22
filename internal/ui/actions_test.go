@@ -215,6 +215,20 @@ func TestConfirmQuestionNamesForeignAuthor(t *testing.T) {
 	}
 }
 
+func TestConfirmQuestionEmptySectionNoPanic(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs(nil)
+	m.section = sec
+	a := automergeAction()
+	m.pending = &a
+
+	q := m.confirmQuestion() // must not panic
+	if q == "" {
+		t.Fatal("confirmQuestion should return a non-empty label on an empty section")
+	}
+}
+
 func TestConfirmQuestionBulkShowsCount(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.viewerLogin = "me"

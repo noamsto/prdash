@@ -282,6 +282,9 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 	if i < 0 || i >= m.section.Len() {
 		return true // can't verify ownership → prompt
 	}
+	if m.viewerLogin == "" {
+		return true
+	}
 	return m.section.VarsAt(i).Author != m.viewerLogin
 }
 
