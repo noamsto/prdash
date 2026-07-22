@@ -35,10 +35,3 @@ func TestParseReviewThreads(t *testing.T) {
 		t.Fatalf("want both resolved and unresolved threads; resolved=%v unresolved=%v", sawResolved, sawUnresolved)
 	}
 }
-
-func TestReviewThreadsArgsShape(t *testing.T) {
-	args := ReviewThreadsArgs("noamsto", "prdash", 49)
-	if args[0] != "api" || args[1] != "graphql" {
-		t.Fatalf("args should start with 'api graphql', got %v", args[:2])
-	}
-}

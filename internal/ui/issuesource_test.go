@@ -44,7 +44,6 @@ func issueSourceModel(t *testing.T) Model {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	m.SetRunner(stubRunner{})
 	return m
 }
 

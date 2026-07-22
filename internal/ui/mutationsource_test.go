@@ -78,23 +78,21 @@ func driveBulk(t *testing.T, cmd tea.Cmd) tea.Msg {
 	return nil
 }
 
-// mutationModel builds a Model with prs on the PR board, a counting gh-CLI
-// runner (so tests can assert the native path skips it), and fs installed as
-// the mutation source.
-func mutationModel(t *testing.T, prs []gh.PR) (m Model, cr *countingRunner, fs *fakeMutationSource) {
+// mutationModel builds a Model with prs on the PR board and fs installed as the
+// mutation source.
+func mutationModel(t *testing.T, prs []gh.PR) (m Model, fs *fakeMutationSource) {
 	t.Helper()
 	m = NewModel("/repo", "is:open", nil)
 	m.SetRepo("owner/repo")
-	cr = &countingRunner{}
-	m.SetRunner(cr)
+	m.SetPRSource(stubSource{}) // the post-mutation refetch fires through it
 	m.setPRs(prs)
 	fs = &fakeMutationSource{}
 	m.SetMutationSource(fs)
-	return m, cr, fs
+	return m, fs
 }
 
 func TestMergeRoutesToNativeSource(t *testing.T) {
-	m, cr, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
@@ -102,13 +100,10 @@ func TestMergeRoutesToNativeSource(t *testing.T) {
 	if len(fs.mergeCalls) != 1 || fs.mergeCalls[0] != "pr7node" {
 		t.Errorf("mergeCalls = %v, want [pr7node]", fs.mergeCalls)
 	}
-	if cr.calls != 0 {
-		t.Errorf("gh CLI runner called %d times, want 0 (native path should skip it)", cr.calls)
-	}
 }
 
 func TestMergeSkipsWhenNotOpen(t *testing.T) {
-	m, _, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "MERGED"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "MERGED"}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
 		t.Fatalf("msg = %+v, want a failed actionDoneMsg (PR not open)", msg)
@@ -119,7 +114,7 @@ func TestMergeSkipsWhenNotOpen(t *testing.T) {
 }
 
 func TestMergeSkipsWhenConflicting(t *testing.T) {
-	m, _, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}})
 	m.detail[7] = gh.PRDetail{Mergeable: "CONFLICTING"}
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
@@ -131,7 +126,7 @@ func TestMergeSkipsWhenConflicting(t *testing.T) {
 }
 
 func TestAutoMergeRoutesToNativeSource(t *testing.T) {
-	m, cr, fs := mutationModel(t, []gh.PR{{Number: 9, ID: "pr9node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 9, ID: "pr9node", State: "OPEN"}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["A"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
@@ -139,13 +134,10 @@ func TestAutoMergeRoutesToNativeSource(t *testing.T) {
 	if len(fs.autoMergeCalls) != 1 || fs.autoMergeCalls[0] != "pr9node" {
 		t.Errorf("autoMergeCalls = %v, want [pr9node]", fs.autoMergeCalls)
 	}
-	if cr.calls != 0 {
-		t.Errorf("gh CLI runner called %d times, want 0", cr.calls)
-	}
 }
 
 func TestMarkReadyRoutesWhenDraft(t *testing.T) {
-	m, cr, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "OPEN", IsDraft: true}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "OPEN", IsDraft: true}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["M"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
@@ -153,13 +145,10 @@ func TestMarkReadyRoutesWhenDraft(t *testing.T) {
 	if len(fs.markReadyCalls) != 1 || fs.markReadyCalls[0] != "pr11node" {
 		t.Errorf("markReadyCalls = %v, want [pr11node]", fs.markReadyCalls)
 	}
-	if cr.calls != 0 {
-		t.Errorf("gh CLI runner called %d times, want 0", cr.calls)
-	}
 }
 
 func TestMarkReadyNoopWhenAlreadyReady(t *testing.T) {
-	m, cr, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "OPEN", IsDraft: false}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "OPEN", IsDraft: false}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["M"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("msg = %+v, want a benign success — already-ready is a no-op, not a failure", msg)
@@ -167,13 +156,10 @@ func TestMarkReadyNoopWhenAlreadyReady(t *testing.T) {
 	if len(fs.markReadyCalls) != 0 {
 		t.Errorf("markReadyCalls = %v, want none — already-ready must short-circuit before firing", fs.markReadyCalls)
 	}
-	if cr.calls != 0 {
-		t.Errorf("gh CLI runner called %d times, want 0", cr.calls)
-	}
 }
 
 func TestMarkReadyFailsWhenClosed(t *testing.T) {
-	m, _, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "CLOSED", IsDraft: true}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "CLOSED", IsDraft: true}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["M"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
 		t.Fatalf("msg = %+v, want a failed actionDoneMsg (closed PR)", msg)
@@ -184,16 +170,13 @@ func TestMarkReadyFailsWhenClosed(t *testing.T) {
 }
 
 func TestUpdateBranchRoutesToNativeSource(t *testing.T) {
-	m, cr, fs := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["u"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
 	}
 	if len(fs.updateBranchCalls) != 1 || fs.updateBranchCalls[0] != "pr13node" {
 		t.Errorf("updateBranchCalls = %v, want [pr13node]", fs.updateBranchCalls)
-	}
-	if cr.calls != 0 {
-		t.Errorf("gh CLI runner called %d times, want 0", cr.calls)
 	}
 }
 
@@ -203,14 +186,11 @@ func TestUpdateBranchRoutesToNativeSource(t *testing.T) {
 // today), but a Scope:"single" custom action with the same Command.Native
 // marker must route identically.
 func TestSingleNativeCmdRoutesToNativeSource(t *testing.T) {
-	m, cr, fs := mutationModel(t, []gh.PR{{Number: 21, ID: "pr21node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 21, ID: "pr21node", State: "OPEN"}})
 	a := action.Action{
-		Key: "m-single",
-		Command: action.Command{
-			Argv:   []string{"gh", "pr", "merge", "{{.Number}}", "--squash"},
-			Native: "merge-squash",
-		},
-		Scope: "single",
+		Key:     "m-single",
+		Command: action.Command{Native: "merge-squash"},
+		Scope:   "single",
 	}
 	msg := driveBulk(t, m.runAction(a))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
@@ -219,64 +199,10 @@ func TestSingleNativeCmdRoutesToNativeSource(t *testing.T) {
 	if len(fs.mergeCalls) != 1 || fs.mergeCalls[0] != "pr21node" {
 		t.Errorf("mergeCalls = %v, want [pr21node]", fs.mergeCalls)
 	}
-	if cr.calls != 0 {
-		t.Errorf("gh CLI runner called %d times, want 0", cr.calls)
-	}
-}
-
-// TestMergeGateOffUsesArgv proves the gate-off default is unchanged: with no
-// mutation source installed, merge still builds and runs the same gh CLI argv
-// it always has.
-func TestMergeGateOffUsesArgv(t *testing.T) {
-	m := NewModel("/repo", "is:open", nil)
-	m.SetRepo("owner/repo")
-	rr := &recordRunner{}
-	m.SetRunner(rr)
-	m.setPRs([]gh.PR{{Number: 7, State: "OPEN"}}) // no ID: mirrors the gh-CLI path, which never populates it
-
-	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
-	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
-		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
-	}
-	if len(rr.calls) != 1 {
-		t.Fatalf("want exactly one gh CLI call, got %d: %v", len(rr.calls), rr.calls)
-	}
-	want := []string{"pr", "merge", "7", "--squash"}
-	if !reflect.DeepEqual(rr.calls[0], want) {
-		t.Errorf("argv = %v, want %v", rr.calls[0], want)
-	}
-}
-
-// TestReviewerGateOffUsesArgv proves the gate-off default is unchanged: with
-// no mutation source installed, assigning reviewers still builds and runs
-// the same gh CLI argv it always has (rather than routing to
-// RequestReviews).
-func TestReviewerGateOffUsesArgv(t *testing.T) {
-	m := NewModel("/repo", "is:open", nil)
-	m.SetRepo("owner/repo")
-	rr := &recordRunner{}
-	m.SetRunner(rr)
-	current := []string{"alice", "carol"}
-	picked := map[string]bool{"alice": true, "bob": true, "carol": false}
-	add, remove := reviewerDiff(current, picked)
-
-	cmd := m.assignReviewersCmd(7, "", add, remove, picked)
-	if cmd == nil {
-		t.Fatal("expected a command when reviewers changed")
-	}
-	cmd() // fires the mutation, then a refetch (also via rr) not asserted here
-
-	if len(rr.calls) == 0 {
-		t.Fatal("want at least one gh CLI call, got none")
-	}
-	want := []string{"pr", "edit", "7", "--add-reviewer", "bob", "--remove-reviewer", "carol"}
-	if !reflect.DeepEqual(rr.calls[0], want) {
-		t.Errorf("argv = %v, want %v", rr.calls[0], want)
-	}
 }
 
 func TestRequestReviewsSendsFullSetWithUnionFalse(t *testing.T) {
-	m, _, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
 	picked := map[string]bool{"alice": true, "bob": true}
 	add, remove := reviewerDiff(nil, picked)
 
@@ -297,7 +223,7 @@ func TestRequestReviewsSendsFullSetWithUnionFalse(t *testing.T) {
 }
 
 func TestRequestReviewsRemoveAllFiresEmptySet(t *testing.T) {
-	m, _, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
 	current := []string{"alice"}
 	picked := map[string]bool{"alice": false}
 	add, remove := reviewerDiff(current, picked)
@@ -317,7 +243,7 @@ func TestRequestReviewsRemoveAllFiresEmptySet(t *testing.T) {
 }
 
 func TestRequestReviewsSkipsWhenNothingChanged(t *testing.T) {
-	m, _, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
 	current := []string{"alice"}
 	picked := map[string]bool{"alice": true}
 	add, remove := reviewerDiff(current, picked)

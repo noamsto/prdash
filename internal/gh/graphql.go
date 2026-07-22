@@ -45,8 +45,8 @@ func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// Cache bytes mirror `gh pr list --json` output so the hydrate path
-	// (ParsePRs) round-trips whichever source wrote the entry.
+	// The cache stores the marshalled []PR; the hydrate path (json.Unmarshal
+	// into []PR) round-trips it back unchanged.
 	raw, err := json.Marshal(prs)
 	if err != nil {
 		return nil, nil, err
@@ -55,7 +55,8 @@ func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
 }
 
 // qlPR is the githubv4 shape of one search result, covering exactly the fields
-// in prFields. The statusCheckRollup union is flattened into []Check by mapPR.
+// mapPR copies into gh.PR. The statusCheckRollup union is flattened into
+// []Check by mapPR.
 type qlPR struct {
 	ID             string `graphql:"id"`
 	Number         int

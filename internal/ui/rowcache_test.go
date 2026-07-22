@@ -16,7 +16,6 @@ func rowCacheModel(t *testing.T) Model {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	m.SetRunner(stubRunner{})
 	u, _ := m.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
 	return u.(Model)
 }

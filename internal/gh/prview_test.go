@@ -1,13 +1,18 @@
 package gh
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
-func TestParsePRDetail(t *testing.T) {
-	d, err := ParsePRDetail([]byte(`{
+// PR detail is cached as marshalled PRDetail and rehydrated with json.Unmarshal,
+// so these round-trip tests guard that struct's JSON-tag contract.
+func TestPRDetailJSONRoundTrips(t *testing.T) {
+	var d PRDetail
+	if err := json.Unmarshal([]byte(`{
 		"comments":[{"author":{"login":"a"},"body":"hi","createdAt":"2026-06-01T10:00:00Z"}],
 		"reviews":[{"author":{"login":"b"},"body":"LGTM","state":"APPROVED","submittedAt":"2026-06-02T10:00:00Z"}]
-	}`))
-	if err != nil {
+	}`), &d); err != nil {
 		t.Fatal(err)
 	}
 	if len(d.Comments) != 1 || d.Comments[0].Author.Login != "a" {
@@ -18,13 +23,13 @@ func TestParsePRDetail(t *testing.T) {
 	}
 }
 
-func TestParsePRDetailMergeState(t *testing.T) {
-	d, err := ParsePRDetail([]byte(`{
+func TestPRDetailMergeState(t *testing.T) {
+	var d PRDetail
+	if err := json.Unmarshal([]byte(`{
 		"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","isDraft":false,
 		"reviewRequests":[{"login":"octocat"}],
 		"files":[{"path":"a.go","additions":10,"deletions":2},{"path":"b.go","additions":1,"deletions":1}]
-	}`))
-	if err != nil {
+	}`), &d); err != nil {
 		t.Fatal(err)
 	}
 	if d.MergeStateStatus != "BLOCKED" || d.Mergeable != "MERGEABLE" {

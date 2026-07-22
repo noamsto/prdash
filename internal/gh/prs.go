@@ -1,17 +1,9 @@
 package gh
 
 import (
-	"encoding/json"
-	"strconv"
 	"strings"
 	"time"
 )
-
-var prFields = []string{
-	"number", "title", "author", "statusCheckRollup", "reviewDecision",
-	"labels", "assignees", "headRefName", "baseRefName", "url", "updatedAt",
-	"mergedAt", "closedAt", "isDraft", "state", "body", "autoMergeRequest",
-}
 
 type Check struct {
 	State        string `json:"state"`
@@ -113,29 +105,6 @@ func (p PR) IsMerged() bool { return p.State == "MERGED" }
 // non-null after merge/close, which would otherwise contradict a terminal
 // PR's own merged/closed state everywhere this is displayed.
 func (p PR) AutoMergeEnabled() bool { return p.State == "OPEN" && p.AutoMergeRequest != nil }
-
-func PRListArgs(filter string, limit int) []string {
-	return []string{
-		"pr", "list", "--search", filter,
-		"-L", strconv.Itoa(limit), "--json", strings.Join(prFields, ","),
-	}
-}
-
-func FetchPRs(r Runner, dir, filter string, limit int) ([]PR, error) {
-	out, err := r.Run(dir, PRListArgs(filter, limit)...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePRs(out)
-}
-
-func ParsePRs(b []byte) ([]PR, error) {
-	var prs []PR
-	if err := json.Unmarshal(b, &prs); err != nil {
-		return nil, err
-	}
-	return prs, nil
-}
 
 // Checks dedupes the rollup to one entry per named check, keeping the most
 // recently started run — GitHub lists every re-run, which otherwise shows the
