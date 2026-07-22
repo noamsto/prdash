@@ -43,7 +43,13 @@ type fetchFailedMsg struct {
 	filter string // set for list fetches; a background prewarm failure is dropped
 }
 
-type membersFetchedMsg struct{ users []gh.User }
+// membersFetchedMsg carries the assignable-users list; raw is nil on the gh
+// CLI path (which has no cache-shaped bytes of its own) and the marshaled
+// []User from the githubv4 path (see hydrateMembers/membersKey).
+type membersFetchedMsg struct {
+	users []gh.User
+	raw   []byte
+}
 
 // viewerFetchedMsg carries the authenticated user's login, fetched once per
 // launch and cached indefinitely (see viewerKey).

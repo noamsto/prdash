@@ -19,8 +19,9 @@ const graphTimeout = 20 * time.Second
 
 // GraphSource fetches PR and issue data straight from GitHub's GraphQL API,
 // skipping the per-call `gh` subprocess. It implements PRSource (list),
-// DetailSource (batched per-PR detail), IssueSource (list), and
-// IssueDetailSource (per-issue detail). repo is owner/name.
+// DetailSource (batched per-PR detail), IssueSource (list),
+// IssueDetailSource (per-issue detail), ViewerSource (authenticated login),
+// and MembersSource (assignable users). repo is owner/name.
 type GraphSource struct {
 	repo   string
 	http   *http.Client     // for raw aliased detail queries
