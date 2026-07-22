@@ -392,3 +392,69 @@ func TestContentHeightReclaimsHiddenFooterRows(t *testing.T) {
 		t.Fatalf("contentHeight() while filtering with no footer = %d, want %d (filter input costs a row that wasn't budgeted for a footer)", got, want)
 	}
 }
+
+func TestPreviewPaneShowsTabBar(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+	out := m.previewPane()
+	for _, label := range []string{"Overview", "Diff", "Reviews"} {
+		if !strings.Contains(out, label) {
+			t.Fatalf("preview pane missing tab %q:\n%s", label, out)
+		}
+	}
+}
+
+func TestRenderTabBarMarksActive(t *testing.T) {
+	bar := renderTabBar([]string{"Overview", "Diff"}, 1, 60)
+	if !strings.Contains(bar, "Diff") || !strings.Contains(bar, "Overview") {
+		t.Fatalf("tab bar missing labels: %s", bar)
+	}
+}
+
+func TestRenderTabBarOverflowSafe(t *testing.T) {
+	// A pane too narrow for every tab must drop trailing tabs rather than
+	// truncate mid-cell, which would slice a styled tab's ANSI escape in half.
+	bar := renderTabBar(expandedTabs, tabOverview, 10)
+	if got := lipgloss.Width(bar); got > 10 {
+		t.Fatalf("tab bar width = %d, want <= 10: %q", got, bar)
+	}
+	if !strings.Contains(bar, "Overview") {
+		t.Fatalf("active tab should still render when it fits: %q", bar)
+	}
+}
+
+// TestPreviewPaneOverviewPrefillsWhenNotCached is the CRITICAL regression: the
+// side pane's default tab (Overview) must keep pre-filling the preliminary
+// triage card from list-only data while detail is still loading, exactly like
+// the pre-tab-bar previewPane did. Routing the Overview tab through
+// expandedBody instead of renderOverview would regress to a bare "Loading…"
+// because expandedBody's pre-switch !cached gate has no pre-fill of its own.
+func TestPreviewPaneOverviewPrefillsWhenNotCached(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	p := gh.PR{Number: 1, Title: "hello world", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.renderList() // no m.detail[1]: detail not yet fetched
+	if m.expandedTab != tabOverview {
+		t.Fatalf("test setup: default expandedTab = %d, want tabOverview", m.expandedTab)
+	}
+	out := ansi.Strip(m.previewPane())
+	if strings.Contains(out, "Loading…") {
+		t.Fatalf("Overview tab should pre-fill, not show a bare Loading…:\n%s", out)
+	}
+	if !strings.Contains(out, "hello world") {
+		t.Fatalf("Overview tab should show the identity header while uncached:\n%s", out)
+	}
+	if !strings.Contains(out, "1 check failing") {
+		t.Fatalf("Overview tab should show the preliminary blocker card while uncached:\n%s", out)
+	}
+	if !strings.Contains(out, "loading details…") {
+		t.Fatalf("Overview tab should still flag that detail is loading:\n%s", out)
+	}
+}

@@ -237,56 +237,32 @@ func sectionRule(label string, w int) string {
 	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
-// previewPane renders the triage card followed by the timeline. Before the
-// per-PR detail loads it pre-fills the identity header and a card from list-only
-// data (triage.Preliminary) so the cursor never lands on a bare "Loading…";
-// detail enriches the card and adds the review/timeline sections in place.
+// previewPane renders the side pane as identity header + tab bar + the active
+// tab's body. The Overview tab renders via renderOverview directly (not
+// expandedBody) because it — not expandedBody's pre-switch !cached gate — owns
+// the pre-fill from list-only data (triage.Preliminary), so the cursor never
+// lands on a bare "Loading…" before detail arrives.
 func (m Model) previewPane() string {
-	v, ok := m.cursorVars()
-	if !ok {
+	if _, ok := m.cursorVars(); !ok {
 		return ""
 	}
 	w := m.previewWidth()
-	bw := w - 2 // body width: leave room for the 2-col section indent below
-	// A section is its label (flush) + body indented one level under it; the blank
-	// line between blocks (the join below) separates sections so they breathe.
-	section := func(label, body string) string {
-		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
-	}
 	if is, ok := m.section.(*IssueSection); ok {
-		return m.issuePreviewPane(is, w, bw)
+		return m.issuePreviewPane(is, w, w-2)
 	}
-	d, cached := m.detail[v.Number]
-	var blocks []string
-	if ps, ok := m.section.(*PRSection); ok {
-		pr := ps.prAt(m.cursor)
-		blocks = append(blocks, identityHeader(pr))
-		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
-			blocks = append(blocks, section("description", body))
-		}
-		tc := triage.Preliminary(pr)
-		if cached {
-			tc = triage.Compute(pr, d)
-		}
-		if card := renderCard(tc, bw); card != "" {
-			blocks = append(blocks, section("blocker", card))
-		}
-		// The checks section is redundant when the blocker card is already about
-		// CI; show it only when the blocker is something else (review/conflict)
-		// that would otherwise mask failing checks.
-		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
-			if ci := ciLine(pr); ci != "" {
-				blocks = append(blocks, section("checks", ci))
-			}
-		}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return ""
 	}
-	if !cached {
-		blocks = append(blocks, dimStyle.Render("  loading details…"))
-		return strings.Join(blocks, "\n\n")
+	header := identityHeader(ps.prAt(m.cursor))
+	bar := renderTabBar(expandedTabs, m.expandedTab, w)
+	var body string
+	if m.expandedTab == tabOverview {
+		body = m.renderOverview(w)
+	} else {
+		body = m.expandedBody(w)
 	}
-	blocks = append(blocks, section("review", reviewLine(d)))
-	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
-	return strings.Join(blocks, "\n\n")
+	return strings.Join([]string{header, bar, body}, "\n\n")
 }
 
 // renderOverview is the Overview tab body: the triage summary shown by default.
