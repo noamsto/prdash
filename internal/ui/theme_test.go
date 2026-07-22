@@ -129,6 +129,15 @@ func TestThemeFor(t *testing.T) {
 	}
 }
 
+func TestWarnGlyphIsSingleCell(t *testing.T) {
+	if got := lipgloss.Width(warnGlyph); got != 1 {
+		t.Fatalf("warnGlyph must be one cell, got %d (%q)", got, warnGlyph)
+	}
+	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "DIRTY"}, true), warnGlyph) {
+		t.Fatalf("flagGlyph(DIRTY) should render warnGlyph")
+	}
+}
+
 func TestApplyThemeReassignsGlobals(t *testing.T) {
 	t.Cleanup(func() { applyTheme(Mocha()) })
 	applyTheme(Latte())

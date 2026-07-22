@@ -425,7 +425,7 @@ func reviewersLine(reqs []gh.ReviewRequest) string {
 		}
 	}
 	if len(logins) == 0 {
-		return pendStyle.Render("⚠ no reviewers")
+		return pendStyle.Render(warnGlyph + " no reviewers")
 	}
 	return dimStyle.Render("reviewers: " + strings.Join(logins, ", "))
 }
@@ -439,9 +439,9 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 	}
 	switch {
 	case d.MergeStateStatus == "DIRTY" || d.Mergeable == "CONFLICTING":
-		return failStyle.Render("⚠")
+		return failStyle.Render(warnGlyph)
 	case d.MergeStateStatus == "BEHIND":
-		return pendStyle.Render("⚠")
+		return pendStyle.Render(warnGlyph)
 	default:
 		return ""
 	}

@@ -13,16 +13,6 @@ import (
 	"github.com/noamsto/prdash/internal/issue"
 )
 
-const (
-	// chipRowMinWidth is the row width below which list rows show no chips —
-	// the title keeps the whole flexible middle on tight rows.
-	chipRowMinWidth = 72
-	// chipRowMaxW caps the chip budget so labels never starve the title.
-	chipRowMaxW = 24
-	// chipRowMinTitle is the title floor the chip budget must never squeeze below.
-	chipRowMinTitle = 16
-)
-
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
 	Width    int
@@ -31,12 +21,13 @@ type RowOpts struct {
 	Selected bool
 	Draft    bool   // dim the title; drafts sort last (see prRank)
 	Flag     string // pre-rendered ! column glyph (conflict/behind), "" when unknown
+	TwoLine  bool   // render labels + branch on an indented second line
 }
 
 type Section interface {
 	Kind() string
 	Filter() string
-	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single line
+	RenderRow(i int, o RowOpts) string // render shown-row i as a dense row (single or two lines when two-line mode is enabled)
 	Len() int
 	VarsAt(i int) action.Vars
 	Haystacks() []string
@@ -110,7 +101,7 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	// Author is dropped from the row: it's redundant in a single-author (flat)
 	// view and hoisted into the group header when grouped.
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		"", age, status, reviewDot(p.ReviewDecision), auto, p.Labels)
+		"", age, status, reviewDot(p.ReviewDecision), auto, p.HeadRefName, p.Labels)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -293,7 +284,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), "", "", "", is.Labels)
+		is.Author.Login, ageString(is.UpdatedAt), "", "", "", "", is.Labels)
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -332,10 +323,14 @@ func labelSlice(ls []gh.Label) []string {
 }
 func joinSpace(s []string) string { return strings.Join(s, " ") }
 
-// renderItemRow renders one dense board line:
+// renderItemRow renders a single-line or two-line row.
 //
-//	‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
-func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto string, labels []gh.Label) string {
+// Single-line (default): ‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+//
+// Two-line (when o.TwoLine is set and the row has labels or a sub value):
+// Line 1: same single-line layout above.
+// Line 2: label chips and dim secondary (branch) indented under the title.
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto, sub string, labels []gh.Label) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -368,25 +363,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
-	// Reserve a bounded chip budget from the flexible middle. Chips are the
-	// lowest-priority content, so they elide before the title on tight rows and
-	// vanish entirely below chipRowMinWidth. Placed immediately left of the
-	// right (age) block.
-	chips := ""
-	if w >= chipRowMinWidth {
-		slack := w - leftW - rightW - chipRowMinTitle - 2 // -2: title/right separators
-		budget := min(chipRowMaxW, slack)
-		if budget >= 3 { // renderChips floor
-			chips = renderChips(labels, budget)
-		}
-	}
-	chipSeg := ""
-	if chips != "" {
-		chipSeg = chips + " " // one space between chips and the right block
-	}
-	chipW := lipgloss.Width(chipSeg)
-
-	titleRoom := w - leftW - rightW - chipW - 2
+	// The title owns the whole flexible middle; chips live on line 2, not here.
+	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
 	if titleRoom < 1 {
 		titleRoom = 1
 	}
@@ -409,15 +387,51 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom)) + draftTag
 
-	gap := w - leftW - lipgloss.Width(titleTxt) - chipW - rightW
+	gap := w - leftW - lipgloss.Width(titleTxt) - rightW
 	if gap < 1 {
 		gap = 1
 	}
-	line := left + titleTxt + strings.Repeat(" ", gap) + chipSeg + right
-	if o.Focused {
-		line = rowBgWrap(line, theme.RowBg)
+	line1 := left + titleTxt + strings.Repeat(" ", gap) + right
+
+	// Single-line mode, or a row with nothing to show below, stays one dense line.
+	if !o.TwoLine || (len(labels) == 0 && sub == "") {
+		if o.Focused {
+			line1 = rowBgWrap(line1, theme.RowBg)
+		}
+		return line1
 	}
-	return line
+
+	// Two-line mode: label pills at full width + a dim secondary (head branch),
+	// indented under the title.
+	indent := leftW
+	avail := w - indent
+	subTxt := ""
+	if sub != "" {
+		subTxt = dimStyle.Render(truncate(sub, max(0, avail/2)))
+	}
+	subW := lipgloss.Width(subTxt)
+	sepW := 0
+	if subW > 0 {
+		sepW = 2
+	}
+	chips := ""
+	if budget := avail - subW - sepW; budget >= 3 {
+		chips = renderChips(labels, budget)
+	}
+	chipW := lipgloss.Width(chips)
+	if chipW == 0 {
+		sepW = 0 // no chips → drop the chip/sub separator
+	}
+	pad := w - indent - chipW - sepW - subW
+	if pad < 0 {
+		pad = 0
+	}
+	line2 := strings.Repeat(" ", indent) + chips + strings.Repeat(" ", sepW) + subTxt + strings.Repeat(" ", pad)
+	if o.Focused {
+		line1 = rowBgWrap(line1, theme.RowBg)
+		line2 = rowBgWrap(line2, theme.RowBg)
+	}
+	return line1 + "\n" + line2
 }
 
 // rowBgWrap fills a composed row with a background. lipgloss ends each styled

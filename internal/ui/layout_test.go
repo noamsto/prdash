@@ -159,3 +159,12 @@ func TestComputeExpandedLayoutHidesFooterOnSmallWindow(t *testing.T) {
 		t.Fatalf("hidden.VPHeight=%d shown.VPHeight=%d, want equal (one less input row, one fewer footer row, cancel out)", hidden.VPHeight, shown.VPHeight)
 	}
 }
+
+func TestComputeLayoutTwoLineThreshold(t *testing.T) {
+	if l := computeLayout(100, 12); l.TwoLine {
+		t.Errorf("short window (h=12) should not be two-line: ContentHeight=%d", l.ContentHeight)
+	}
+	if l := computeLayout(100, 44); !l.TwoLine {
+		t.Errorf("tall window (h=44) should be two-line: ContentHeight=%d", l.ContentHeight)
+	}
+}

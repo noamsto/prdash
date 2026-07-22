@@ -20,6 +20,11 @@ const (
 	footerMinWidth  = 70
 )
 
+// twoLineMinRows is the list content height at or above which rows render
+// two lines (title, then labels + branch). Below it, rows stay single-line
+// and drop labels — there isn't the vertical room to spend on a second line.
+const twoLineMinRows = 20
+
 // showFooter is the one threshold every view (board, expanded, log) calls to
 // decide whether to render its always-on keybinding footer.
 func showFooter(w, h int) bool {
@@ -36,6 +41,7 @@ type Layout struct {
 	Gap           int // columns between list and side pane
 	PanelRows     int // outer height of the docked panel (0 when not shown)
 	ContentHeight int // rows available for the list/side bodies
+	TwoLine       bool
 }
 
 // computeLayout derives pane geometry from the terminal size. The panel is
@@ -70,10 +76,11 @@ func computeLayout(w, h int) Layout {
 	if ch < 1 {
 		ch = 1
 	}
+	twoLine := ch >= twoLineMinRows
 	if !showSide {
-		return Layout{ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch}
+		return Layout{ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch, TwoLine: twoLine}
 	}
-	return Layout{ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
+	return Layout{ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch, TwoLine: twoLine}
 }
 
 const (
