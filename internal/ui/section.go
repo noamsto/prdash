@@ -27,7 +27,7 @@ type RowOpts struct {
 type Section interface {
 	Kind() string
 	Filter() string
-	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single line
+	RenderRow(i int, o RowOpts) string // render shown-row i as a dense row (single or two lines when two-line mode is enabled)
 	Len() int
 	VarsAt(i int) action.Vars
 	Haystacks() []string
@@ -323,9 +323,13 @@ func labelSlice(ls []gh.Label) []string {
 }
 func joinSpace(s []string) string { return strings.Join(s, " ") }
 
-// renderItemRow renders one dense board line:
+// renderItemRow renders a single-line or two-line row.
 //
-//	‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+// Single-line (default): ‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+//
+// Two-line (when o.TwoLine is set and the row has labels or a sub value):
+// Line 1: same single-line layout above.
+// Line 2: label chips and dim secondary (branch) indented under the title.
 func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto, sub string, labels []gh.Label) string {
 	w := o.Width
 	if w < 24 {
