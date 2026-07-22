@@ -802,6 +802,7 @@ func TestDetailCmdSkipsFreshDiskCache(t *testing.T) {
 		t.Fatal("cold detail cache should trigger a fetch")
 	}
 	c.Set(detailKey(m.repo, 7), json.RawMessage("{}"))
+	m.threadsFresh[7] = true // isolate: only detail freshness under test here
 	if m.detailCmdForCursor() != nil {
 		t.Fatal("fresh disk detail should suppress the fetch")
 	}

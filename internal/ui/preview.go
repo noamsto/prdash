@@ -37,6 +37,42 @@ func issueDetailKey(repo string, number int) string {
 	return cache.Key("issuedetail", repo+"#"+strconv.Itoa(number), 0, issueDetailSchemaVer)
 }
 
+// threadsSchemaVer is bumped whenever the review-threads GraphQL query's field
+// set changes, so a stale-shaped cached response is a clean miss.
+const threadsSchemaVer = "v1"
+
+// threadsKey scopes cached review threads by repo so #7 in one repo can't
+// paint #7 in another.
+func threadsKey(repo string, number int) string {
+	return cache.Key("threads", repo+"#"+strconv.Itoa(number), 0, threadsSchemaVer)
+}
+
+type threadsMsg struct {
+	number  int
+	threads []gh.ReviewThread
+	raw     []byte // cached to disk so the preview paints instantly next launch
+}
+
+// fetchThreadsCmd lazily loads the selected PR's inline review threads.
+func (m Model) fetchThreadsCmd(number int) tea.Cmd {
+	r, dir, repo := m.runner, m.dir, m.repo
+	return func() tea.Msg {
+		owner, name, ok := strings.Cut(repo, "/")
+		if !ok {
+			return fetchFailedMsg{err: fmt.Errorf("bad repo %q", repo)}
+		}
+		raw, err := r.Run(dir, gh.ReviewThreadsArgs(owner, name, number)...)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		ts, err := gh.ParseReviewThreads(raw)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return threadsMsg{number: number, threads: ts, raw: raw}
+	}
+}
+
 // fetchDetailCmd lazily loads the selected PR's comments/reviews.
 func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	r, dir := m.runner, m.dir
@@ -87,10 +123,14 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		}
 		return m.fetchIssueDetailCmd(v.Number)
 	case "pr":
-		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
-			return nil
+		var cmds []tea.Cmd
+		if !m.fresh[v.Number] && !m.cacheFresh(detailKey(m.repo, v.Number)) {
+			cmds = append(cmds, m.fetchDetailCmd(v.Number))
 		}
-		return m.fetchDetailCmd(v.Number)
+		if !m.threadsFresh[v.Number] && !m.cacheFresh(threadsKey(m.repo, v.Number)) {
+			cmds = append(cmds, m.fetchThreadsCmd(v.Number))
+		}
+		return tea.Batch(cmds...)
 	}
 	return nil
 }

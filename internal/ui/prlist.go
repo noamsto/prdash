@@ -60,9 +60,11 @@ type Model struct {
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
-	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
-	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
-	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
+	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
+	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
+	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
+	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
+	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
 	previewN          int
 	expanded          bool
@@ -115,6 +117,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
 		logCache:  map[string][]logStep{},
@@ -520,6 +523,7 @@ func (m *Model) hydrate() bool {
 		}
 		m.setSections(rev, open, m.viewerLogin)
 		m.hydrateDetail()
+		m.hydrateThreads()
 		return true
 	}
 	prs, ok := m.cachedPRs(m.filter, defaultLimit)
@@ -528,6 +532,7 @@ func (m *Model) hydrate() bool {
 	}
 	m.setPRs(prs)
 	m.hydrateDetail()
+	m.hydrateThreads()
 	return true
 }
 
@@ -557,6 +562,34 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		m.detail[num] = d
+	}
+}
+
+// hydrateThreads paints each shown PR's review threads from the disk cache
+// (leaving threadsFresh false, so the live fetch still revalidates).
+func (m *Model) hydrateThreads() {
+	if m.cache == nil {
+		return
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return
+	}
+	for i := 0; i < ps.Len(); i++ {
+		num := ps.prAt(i).Number
+		if _, ok := m.threads[num]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(threadsKey(m.repo, num))
+		if !hit {
+			continue
+		}
+		ts, err := gh.ParseReviewThreads(e.Rows)
+		if err != nil {
+			slog.Debug("threads cache unmarshal failed", "err", err)
+			continue
+		}
+		m.threads[num] = ts
 	}
 }
 
@@ -1089,6 +1122,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
 		}
 		m.repaintActive() // fold the fresh detail into the active view without losing place
+		return m, nil
+	case threadsMsg:
+		m.threads[msg.number] = msg.threads
+		m.threadsFresh[msg.number] = true
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(threadsKey(m.repo, msg.number), msg.raw)
+		}
+		m.repaintActive()
 		return m, nil
 	case logFetchedMsg:
 		if !m.logView || msg.job != m.logJobID || msg.all != m.logShowAll {

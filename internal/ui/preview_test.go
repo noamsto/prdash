@@ -458,3 +458,21 @@ func TestPreviewPaneOverviewPrefillsWhenNotCached(t *testing.T) {
 		t.Fatalf("Overview tab should still flag that detail is loading:\n%s", out)
 	}
 }
+
+func TestThreadsKeyIsRepoScoped(t *testing.T) {
+	a := threadsKey("noamsto/prdash", 7)
+	b := threadsKey("noamsto/other", 7)
+	if a == b {
+		t.Fatal("threadsKey must differ across repos")
+	}
+}
+
+func TestThreadsMsgStores(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	ts := []gh.ReviewThread{{Path: "main.go", Line: 10}}
+	out, _ := m.Update(threadsMsg{number: 7, threads: ts})
+	got := out.(Model)
+	if len(got.threads[7]) != 1 || !got.threadsFresh[7] {
+		t.Error("review threads not stored / not marked fresh")
+	}
+}
