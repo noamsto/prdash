@@ -41,6 +41,8 @@ func main() {
 			gs := gh.NewGraphSource(tok, repo)
 			m.SetPRSource(gs)
 			m.SetDetailSource(gs)
+			m.SetIssueSource(gs)
+			m.SetIssueDetailSource(gs)
 		} else {
 			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but no token:", err)
 		}
