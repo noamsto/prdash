@@ -10,8 +10,8 @@ func DefaultPRActions() map[string]Action {
 			Confirm: true, Scope: "per-selected", Refresh: true,
 			Progress: "Merging", Past: "Merged", Fail: "Merge failed"},
 		"A": {Key: "A", Label: "Auto-merge (squash)",
-			Command:  Command{Argv: []string{"gh", "pr", "merge", "{{.Number}}", "--auto", "--squash"}},
-			Scope:    "per-selected",
+			Command:       Command{Argv: []string{"gh", "pr", "merge", "{{.Number}}", "--auto", "--squash"}},
+			Scope:         "per-selected", ConfirmOthers: true,
 			Progress: "Enabling auto-merge", Past: "Auto-merge on", Fail: "Auto-merge failed"},
 		"r": {Key: "r", Label: "Rerun checks",
 			Command: Command{Builtin: "rerun-failed"}, Scope: "single", Refresh: true,
@@ -32,7 +32,8 @@ func DefaultPRActions() map[string]Action {
 			Progress: "Updating branch", Past: "Branch updated", Fail: "Update failed"},
 		"M": {Key: "M", Label: "Mark ready",
 			Command: Command{Argv: []string{"gh", "pr", "ready", "{{.Number}}"}}, Scope: "per-selected", Refresh: true,
-			Progress: "Marking ready", Past: "Marked ready", Fail: "Mark-ready failed"},
+			ConfirmOthers: true,
+			Progress:      "Marking ready", Past: "Marked ready", Fail: "Mark-ready failed"},
 	}
 }
 

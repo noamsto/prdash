@@ -1581,18 +1581,36 @@ func (m Model) board() string {
 	return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() + "\n" + foot
 }
 
-// confirmPanel is the y/n dialog for a pending action.
-func (m Model) confirmPanel() string {
-	q := ""
-	if m.pending.Scope == "per-selected" {
-		q = fmt.Sprintf("%s for %d PRs?", m.pending.Label, len(m.selectedOrCursor()))
-	} else {
+// confirmQuestion is the y/n prompt text for the pending action. A single target
+// the viewer didn't author names its author (so an accidental keystroke on
+// someone else's PR is obvious); a bulk fan-out shows the count.
+func (m Model) confirmQuestion() string {
+	a := m.pending
+	if a.Scope != "per-selected" {
 		n := 0
 		if v, ok := m.cursorVars(); ok {
 			n = v.Number
 		}
-		q = fmt.Sprintf("%s #%d?", m.pending.Label, n)
+		return fmt.Sprintf("%s #%d?", a.Label, n)
 	}
+	targets := m.selectedOrCursor()
+	if len(targets) != 1 {
+		return fmt.Sprintf("%s for %d PRs?", a.Label, len(targets))
+	}
+	i := targets[0]
+	if i < 0 || i >= m.section.Len() {
+		return fmt.Sprintf("%s?", a.Label)
+	}
+	v := m.section.VarsAt(i)
+	if a.ConfirmOthers && v.Author != "" && v.Author != m.viewerLogin {
+		return fmt.Sprintf("%s #%d by %s?", a.Label, v.Number, v.Author)
+	}
+	return fmt.Sprintf("%s #%d?", a.Label, v.Number)
+}
+
+// confirmPanel is the y/n dialog for a pending action.
+func (m Model) confirmPanel() string {
+	q := m.confirmQuestion()
 	hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
 		accentStyle.Render("n") + statusBarStyle.Render(" cancel")
 	body := titleStyle.Render(q) + "\n\n" + hint
