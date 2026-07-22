@@ -54,6 +54,7 @@ func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
 // qlPR is the githubv4 shape of one search result, covering exactly the fields
 // in prFields. The statusCheckRollup union is flattened into []Check by mapPR.
 type qlPR struct {
+	ID             string `graphql:"id"`
 	Number         int
 	Title          string
 	Body           string
@@ -140,6 +141,7 @@ func (s GraphSource) query(ctx context.Context, filter string, limit int) ([]PR,
 
 func mapPR(g qlPR) PR {
 	p := PR{
+		ID:             g.ID,
 		Number:         g.Number,
 		Title:          g.Title,
 		Body:           g.Body,

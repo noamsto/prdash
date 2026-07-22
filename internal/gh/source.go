@@ -46,6 +46,21 @@ type MembersSource interface {
 	FetchAssignableUsers() (users []User, raw []byte, err error)
 }
 
+// MutationSource performs the PR-mutating actions (merge, auto-merge,
+// mark-ready, update-branch, request-reviewers) via githubv4, replacing the
+// argv-templated `gh` CLI commands in internal/action/defaults.go. Every
+// method takes the PR's GraphQL node ID (gh.PR.ID), not its number — mutation
+// inputs require it. RequestReviews takes the full desired reviewer login set
+// and always replaces (union:false); an empty set is the valid "remove all
+// reviewers" encoding and callers must still fire it, not skip it.
+type MutationSource interface {
+	MergePR(prID string) error
+	EnableAutoMerge(prID string) error
+	MarkReady(prID string) error
+	UpdateBranch(prID string) error
+	RequestReviews(prID string, logins []string) error
+}
+
 // CLISource is the original path: shell out to `gh pr list --json`.
 type CLISource struct {
 	R   Runner

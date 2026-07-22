@@ -116,7 +116,8 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 func (s *PRSection) VarsAt(i int) action.Vars {
 	p := s.prs[s.shown[i]]
 	return action.Vars{Number: p.Number, Title: p.Title, HeadRefName: p.HeadRefName,
-		BaseRefName: p.BaseRefName, URL: p.URL, Author: p.Author.Login, Branch: p.HeadRefName}
+		BaseRefName: p.BaseRefName, URL: p.URL, Author: p.Author.Login, Branch: p.HeadRefName,
+		ID: p.ID}
 }
 func (s *PRSection) Haystacks() []string {
 	h := make([]string, len(s.prs))

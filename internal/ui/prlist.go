@@ -48,6 +48,7 @@ type Model struct {
 	issueDetailSource gh.IssueDetailSource // per-issue detail backend; nil ⇒ gh CLI
 	viewerSource      gh.ViewerSource      // viewer-login backend; nil ⇒ gh CLI
 	membersSource     gh.MembersSource     // assignable-users backend; nil ⇒ gh CLI
+	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.); nil ⇒ argv-through-Runner
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
@@ -166,6 +167,12 @@ func (m *Model) SetViewerSource(s gh.ViewerSource) { m.viewerSource = s }
 // SetMembersSource overrides the assignable-users backend (e.g. the githubv4
 // path).
 func (m *Model) SetMembersSource(s gh.MembersSource) { m.membersSource = s }
+
+// SetMutationSource installs the native githubv4 backend for PR mutations
+// (merge, auto-merge, mark-ready, update-branch, request-reviewers) and the
+// --web open-in-browser action. nil (the default) keeps the argv-through-Runner
+// gh CLI path untouched.
+func (m *Model) SetMutationSource(s gh.MutationSource) { m.mutationSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
@@ -1050,7 +1057,7 @@ func (m *Model) confirmPicker() tea.Cmd {
 			}
 		}
 		add, remove := reviewerDiff(current, checked)
-		return m.assignReviewersCmd(v.Number, add, remove)
+		return m.assignReviewersCmd(v.Number, v.ID, add, remove, checked)
 	}
 	return nil
 }
