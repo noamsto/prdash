@@ -197,3 +197,40 @@ func TestConfirmOthersUnknownViewerPrompts(t *testing.T) {
 		t.Fatal("unresolved viewer login must set pending")
 	}
 }
+
+func TestConfirmQuestionNamesForeignAuthor(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	sec := NewPRSection("is:open")
+	p := gh.PR{Number: 42}
+	p.Author.Login = "alice"
+	sec.SetPRs([]gh.PR{p})
+	m.section = sec
+	a := automergeAction()
+	m.pending = &a
+
+	q := m.confirmQuestion()
+	if !strings.Contains(q, "#42") || !strings.Contains(q, "alice") {
+		t.Fatalf("foreign single-target wording should name the PR and author: %q", q)
+	}
+}
+
+func TestConfirmQuestionBulkShowsCount(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	sec := NewPRSection("is:open")
+	p1, p2 := gh.PR{Number: 7}, gh.PR{Number: 9}
+	p1.Author.Login = "me"
+	p2.Author.Login = "me"
+	sec.SetPRs([]gh.PR{p1, p2})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+	a := automergeAction()
+	m.pending = &a
+
+	q := m.confirmQuestion()
+	if !strings.Contains(q, "for 2 PRs") {
+		t.Fatalf("bulk wording should show the count: %q", q)
+	}
+}
