@@ -1455,11 +1455,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.debounceDetailCmd()
 		case "right", "l":
 			if m.mode != "pr" {
-				return m, nil // expanded view is PR-only in v1
+				return m, nil // tabs/expanded view are PR-only in v1
 			}
-			m.enterExpanded()
+			if computeLayout(m.width, m.height).ShowSide {
+				m.expandedTab = (m.expandedTab + 1) % len(expandedTabs)
+				m.checkCursor = 0
+				return m, nil
+			}
+			m.enterExpanded() // narrow: no pane, open full-screen tabs
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
+		case "left", "h":
+			if m.mode != "pr" || !computeLayout(m.width, m.height).ShowSide {
+				return m, nil
+			}
+			m.expandedTab = (m.expandedTab + len(expandedTabs) - 1) % len(expandedTabs)
+			m.checkCursor = 0
+			return m, nil
+		case "1", "2", "3", "4", "5", "6":
+			if m.mode != "pr" || !computeLayout(m.width, m.height).ShowSide {
+				return m, nil
+			}
+			m.expandedTab = int(msg.String()[0] - '1')
+			m.checkCursor = 0
+			return m, nil
+		case "enter":
+			if m.mode == "pr" && computeLayout(m.width, m.height).ShowSide {
+				m.previewMax = !m.previewMax
+				return m, nil
+			}
+			fallthrough // narrow / issues: "enter" is also bound to an action (e.g. "Open worktree")
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {

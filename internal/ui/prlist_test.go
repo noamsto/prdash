@@ -1010,6 +1010,18 @@ func keyMsg(s string) tea.KeyMsg {
 	}
 }
 
+// newTestModelWideWithPR returns a PR-board model wide enough that
+// computeLayout(m.width, m.height).ShowSide is true, with one PR painted so
+// the cursor lands on a real row.
+func newTestModelWideWithPR(t *testing.T) Model {
+	t.Helper()
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 160, 40
+	p := gh.PR{Number: 1, Title: "one", Author: author("me")}
+	m.setPRs([]gh.PR{p})
+	return m
+}
+
 // newTestModelWithRows returns a PR-board model with a few open PRs painted.
 func newTestModelWithRows(t *testing.T) Model {
 	t.Helper()
@@ -1417,5 +1429,120 @@ func TestLegendFitsLargeTerminal(t *testing.T) {
 	}
 	if h := lipgloss.Height(leg); h > m.height {
 		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
+	}
+}
+
+// TestMainViewCyclesTabsWithL guards the wide-layout takeover: with a side
+// pane present, l/h drive m.expandedTab instead of diving into the
+// full-screen expanded view.
+func TestMainViewCyclesTabsWithL(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	if m.expandedTab != tabOverview {
+		t.Fatalf("start tab = %d, want Overview", m.expandedTab)
+	}
+	nm, _ := m.Update(keyMsg("l"))
+	got := nm.(Model)
+	if got.expandedTab != tabDescription {
+		t.Fatalf("after l, tab = %d, want Description", got.expandedTab)
+	}
+	if got.expanded {
+		t.Fatal("l in the wide layout must not enter the full-screen expanded view")
+	}
+}
+
+// TestMainViewCyclesTabsWithH mirrors the l case for the reverse direction,
+// including the wrap from the first tab back to the last.
+func TestMainViewCyclesTabsWithH(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	nm, _ := m.Update(keyMsg("h"))
+	got := nm.(Model)
+	if got.expandedTab != tabDiff {
+		t.Fatalf("after h from Overview, tab = %d, want wrap to Diff(%d)", got.expandedTab, tabDiff)
+	}
+}
+
+// TestMainViewJumpsTabWithDigit guards the 1-6 direct-jump shortcuts.
+func TestMainViewJumpsTabWithDigit(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	// Digits are 1-indexed against the tab list (matches the existing
+	// full-screen expanded-view convention): "3" is the third tab, Conversation.
+	nm, _ := m.Update(keyMsg("3"))
+	got := nm.(Model)
+	if got.expandedTab != tabConversation {
+		t.Fatalf("after 3, tab = %d, want Conversation(%d)", got.expandedTab, tabConversation)
+	}
+}
+
+// TestMainViewEnterMaximizesInWideLayout guards Enter's repurposed meaning:
+// with a side pane present it toggles previewMax rather than running the
+// "enter" action (Open worktree).
+func TestMainViewEnterMaximizesInWideLayout(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	nm, cmd := m.Update(keyMsg("enter"))
+	got := nm.(Model)
+	if !got.previewMax {
+		t.Fatal("enter in the wide layout should toggle previewMax on")
+	}
+	if cmd != nil {
+		t.Fatal("maximizing must not dispatch a command")
+	}
+	nm2, _ := got.Update(keyMsg("enter"))
+	if nm2.(Model).previewMax {
+		t.Fatal("a second enter should toggle previewMax back off")
+	}
+}
+
+// TestMainViewNarrowKeysUnchanged pins the narrow-layout paths that must
+// keep their pre-existing behavior: l opens the full-screen expanded view,
+// and h/1-6 are no-ops (there is no pane to address).
+func TestMainViewNarrowKeysUnchanged(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	m.width, m.height = 80, 40 // narrow: computeLayout(...).ShowSide is false
+	if computeLayout(m.width, m.height).ShowSide {
+		t.Fatal("test setup: expected a narrow layout")
+	}
+	nm, _ := m.Update(keyMsg("l"))
+	got := nm.(Model)
+	if !got.expanded {
+		t.Fatal("l in the narrow layout should still open the full-screen expanded view")
+	}
+
+	m2 := newTestModelWideWithPR(t)
+	m2.width, m2.height = 80, 40
+	nm2, _ := m2.Update(keyMsg("h"))
+	if nm2.(Model).expandedTab != tabOverview {
+		t.Fatal("h in the narrow layout is a no-op; there is no pane to cycle")
+	}
+	nm3, _ := m2.Update(keyMsg("2"))
+	if nm3.(Model).expandedTab != tabOverview {
+		t.Fatal("digits in the narrow layout are a no-op; there is no pane to jump")
+	}
+}
+
+// TestMainViewEnterActionSurvivesNarrowLayout guards the pre-existing
+// "enter" action binding (Open worktree) outside the wide-PR pane case: the
+// new maximize case must fall through to the default action dispatch, not
+// swallow the key.
+func TestMainViewEnterActionSurvivesNarrowLayout(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	m.width, m.height = 80, 40 // narrow: no pane, enter is an action key
+	_, cmd := m.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter in the narrow layout should still dispatch the bound action (Open worktree)")
+	}
+}
+
+// TestMainViewTabsAreProOnly guards the PR-only guard: in issue mode the new
+// tab keys must not touch expandedTab.
+func TestMainViewTabsAreProOnly(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	m.mode = "issue"
+	nm, _ := m.Update(keyMsg("l"))
+	if nm.(Model).expandedTab != tabOverview {
+		t.Fatal("l in issue mode must not touch expandedTab")
+	}
+	nm2, _ := m.Update(keyMsg("2"))
+	if nm2.(Model).expandedTab != tabOverview {
+		t.Fatal("digits in issue mode must not touch expandedTab")
 	}
 }

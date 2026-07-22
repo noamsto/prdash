@@ -440,7 +440,7 @@ func TestExitActionWithoutHandoffQueuesExec(t *testing.T) {
 
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("noamsto/prdash")
-	m.width, m.height = 120, 30
+	m.width, m.height = 90, 30 // narrow: no side pane, so enter is still the "Open worktree" action
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi", HeadRefName: "feat/x"}})
 	m.renderList()
 
@@ -465,7 +465,7 @@ func TestExitActionWithHandoffDoesNotQueueExec(t *testing.T) {
 
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("noamsto/prdash")
-	m.width, m.height = 120, 30
+	m.width, m.height = 90, 30 // narrow: no side pane, so enter is still the "Open worktree" action
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi", HeadRefName: "feat/x"}})
 	m.renderList()
 
