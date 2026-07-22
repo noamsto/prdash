@@ -476,3 +476,15 @@ func TestExpandedLegendTogglesAndDismisses(t *testing.T) {
 		t.Fatal("a key should close the expanded-view legend")
 	}
 }
+
+func TestExpandedTabsIncludeOverviewFirst(t *testing.T) {
+	if expandedTabs[0] != "Overview" {
+		t.Fatalf("first tab = %q, want Overview", expandedTabs[0])
+	}
+	if tabOverview != 0 {
+		t.Fatalf("tabOverview = %d, want 0", tabOverview)
+	}
+	if len(expandedTabs) != 6 {
+		t.Fatalf("len(expandedTabs) = %d, want 6", len(expandedTabs))
+	}
+}

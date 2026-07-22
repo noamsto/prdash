@@ -14,14 +14,15 @@ import (
 )
 
 const (
-	tabDescription = iota
+	tabOverview = iota
+	tabDescription
 	tabConversation
 	tabReviews
 	tabChecks
 	tabDiff
 )
 
-var expandedTabs = []string{"Description", "Conversation", "Reviews", "Checks", "Diff"}
+var expandedTabs = []string{"Overview", "Description", "Conversation", "Reviews", "Checks", "Diff"}
 
 // jumpTabIndex maps a triage card's JumpTab to a tab index (default Description).
 func jumpTabIndex(jump string) int {
@@ -248,7 +249,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renderExpanded()
 		return m, nil
 	case "left", "h":
-		if m.expandedTab == tabDescription {
+		if m.expandedTab == tabOverview {
 			m.expanded = false
 			m.renderList()
 			return m, nil
@@ -262,7 +263,7 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.checkCursor = 0
 		m.renderExpanded()
 		return m, nil
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4", "5", "6":
 		m.expandedTab = int(msg.String()[0] - '1')
 		m.checkCursor = 0
 		m.renderExpanded()
