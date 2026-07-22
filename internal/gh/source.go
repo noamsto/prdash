@@ -61,6 +61,35 @@ type MutationSource interface {
 	RequestReviews(prID string, logins []string) error
 }
 
+// WorkflowRun is one run entry from ActionsSource.ListRunsForBranch, mirroring
+// the fields `gh run list --json databaseId,conclusion,headSha` returns.
+type WorkflowRun struct {
+	ID         int64
+	Conclusion string
+	HeadSHA    string
+}
+
+// ActionsSource performs the Actions rerun/job-log operations via REST,
+// replacing the `gh run` subprocess calls in internal/action/builtin.go.
+// RunID/JobID are the REST API's numeric IDs (gh's CLI --json databaseId).
+// nil at the action boundary ⇒ the existing gh.Runner path.
+type ActionsSource interface {
+	// ListRunsForBranch lists the most recent runs for branch, newest first,
+	// mirroring `gh run list --branch <b> -L 20 --json databaseId,conclusion,headSha`.
+	ListRunsForBranch(branch string) ([]WorkflowRun, error)
+	// RerunFailedJobs reruns the failed jobs of runID, mirroring
+	// `gh run rerun <id> --failed`.
+	RerunFailedJobs(runID int64) error
+	// RerunJob reruns a single job (and its dependents), mirroring
+	// `gh run rerun --job <id>`.
+	RerunJob(jobID int64) error
+	// JobLog fetches jobID's log, filtered to failed steps when failedOnly,
+	// tab-delimited in the same "job\tstep\ttimestamp content" shape
+	// `gh run view --log[-failed]` emits so it round-trips through the
+	// existing parseJobLog consumer unchanged.
+	JobLog(jobID int64, failedOnly bool) ([]byte, error)
+}
+
 // CLISource is the original path: shell out to `gh pr list --json`.
 type CLISource struct {
 	R   Runner
