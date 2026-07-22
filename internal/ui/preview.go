@@ -341,6 +341,12 @@ func (m Model) renderOverview(w int) string {
 		return strings.Join(blocks, "\n\n")
 	}
 	blocks = append(blocks, section("review", reviewLine(d)))
+	if ts := m.threads[v.Number]; len(ts) > 0 {
+		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
+		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
+			blocks = append(blocks, section(label, body))
+		}
+	}
 	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
 	return strings.Join(blocks, "\n\n")
 }

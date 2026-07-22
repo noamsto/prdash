@@ -476,3 +476,21 @@ func TestThreadsMsgStores(t *testing.T) {
 		t.Error("review threads not stored / not marked fresh")
 	}
 }
+
+func TestRenderThreadsSummaryEmptyWhenAllResolved(t *testing.T) {
+	ts := []gh.ReviewThread{{Path: "a.go", IsResolved: true, Comments: []gh.ThreadComment{{Author: "x", Body: "y"}}}}
+	if got := renderThreadsSummary(ts, 2, 60); got != "" {
+		t.Fatalf("want empty for all-resolved, got %q", got)
+	}
+}
+
+func TestRenderThreadsSummaryShowsFileAndAuthor(t *testing.T) {
+	ts := []gh.ReviewThread{{Path: "internal/ui/preview.go", Line: 288, IsResolved: false,
+		Comments: []gh.ThreadComment{{Author: "alice", Body: "allocates every frame"}}}}
+	out := renderThreadsSummary(ts, 2, 80)
+	for _, want := range []string{"preview.go:288", "alice", "allocates"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+}
