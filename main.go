@@ -1,12 +1,10 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -19,13 +17,9 @@ func main() {
 	dir, _ := os.Getwd()
 	runner := gh.ExecRunner{}
 
-	repo, err := gh.CurrentRepo(runner, dir)
+	repo, err := gh.RepoFromGit(dir)
 	if err != nil {
-		if errors.Is(err, gh.ErrNoRepo) {
-			ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a GitHub remote, then run prdash again.")
-		} else {
-			ui.RunNotice("prdash", "Couldn't reach GitHub:\n\n"+err.Error())
-		}
+		ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a github.com origin remote, then run prdash again.")
 		os.Exit(1)
 	}
 
@@ -39,15 +33,16 @@ func main() {
 	m := ui.NewModel(dir, "is:open", c)
 	m.SetRunner(runner)
 	m.SetRepo(repo)
-	// Prototype A/B: PRDASH_GH_GRAPHQL=1 fetches PR lists via githubv4 (one
-	// in-process HTTP call) instead of shelling out to `gh pr list`.
+	// Prototype A/B: PRDASH_GH_GRAPHQL=1 fetches reads via githubv4 (in-process
+	// HTTP) instead of shelling out to `gh`. Token comes from GH_TOKEN/GITHUB_TOKEN
+	// or, failing that, `gh auth token`.
 	if os.Getenv("PRDASH_GH_GRAPHQL") != "" {
-		if tok, err := runner.Run(dir, "auth", "token"); err == nil {
-			gs := gh.NewGraphSource(strings.TrimSpace(string(tok)), repo)
+		if tok, err := gh.Token(); err == nil {
+			gs := gh.NewGraphSource(tok, repo)
 			m.SetPRSource(gs)
 			m.SetDetailSource(gs)
 		} else {
-			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but gh auth token failed:", err)
+			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but no token:", err)
 		}
 	}
 	m.InitTheme()
