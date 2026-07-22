@@ -27,6 +27,8 @@ func main() {
 	detailParity := flag.Bool("detail-parity", false, "diff gh pr view vs batched githubv4 detail")
 	detailBench := flag.Bool("detail-bench", false, "time batched githubv4 detail vs N gh pr view subprocesses")
 	issueParity := flag.Bool("issue-parity", false, "diff gh issue list/view vs githubv4 FetchIssues/FetchIssueDetail")
+	viewerParity := flag.Bool("viewer-parity", false, "diff gh api user vs githubv4 FetchViewer")
+	membersParity := flag.Bool("members-parity", false, "diff gh api graphql assignableUsers vs githubv4 FetchAssignableUsers")
 	flag.Parse()
 
 	dir, _ := os.Getwd()
@@ -71,6 +73,14 @@ func main() {
 	}
 	if *issueParity {
 		runIssueParity(graph, *repo, *search, *limit)
+		return
+	}
+	if *viewerParity {
+		runViewerParity(runner, dir, graph)
+		return
+	}
+	if *membersParity {
+		runMembersParity(runner, dir, graph, *repo)
 		return
 	}
 
@@ -388,6 +398,74 @@ func issueAssigneeSet(i gh.Issue) []string {
 func issueScalars(i gh.Issue) string {
 	return fmt.Sprintf("title=%q author=%s labels=%v assignees=%v",
 		i.Title, i.Author.Login, issueLabelSet(i), issueAssigneeSet(i))
+}
+
+// runViewerParity diffs the githubv4 viewer login against `gh api user`.
+func runViewerParity(runner gh.Runner, dir string, graph gh.GraphSource) {
+	want, err := gh.FetchViewerLogin(runner, dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cli viewer:", err)
+		os.Exit(1)
+	}
+	got, err := graph.FetchViewer()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "graph viewer:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("cli login=%q  githubv4 login=%q\n", want, got)
+	if got == want {
+		fmt.Println("VIEWER PARITY OK")
+	} else {
+		fmt.Println("VIEWER MISMATCH")
+	}
+}
+
+// runMembersParity diffs the githubv4 assignable-users list against
+// `gh api graphql` with assignableUsersQuery.
+func runMembersParity(runner gh.Runner, dir string, graph gh.GraphSource, repo string) {
+	want, err := gh.FetchAssignableUsers(runner, dir, repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cli members:", err)
+		os.Exit(1)
+	}
+	got, _, err := graph.FetchAssignableUsers()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "graph members:", err)
+		os.Exit(1)
+	}
+	byLogin := func(us []gh.User) map[string]gh.User {
+		m := map[string]gh.User{}
+		for _, u := range us {
+			m[u.Login] = u
+		}
+		return m
+	}
+	ma, mb := byLogin(want), byLogin(got)
+	fmt.Printf("cli members=%d  githubv4 members=%d\n", len(ma), len(mb))
+	diffs := 0
+	for login, ua := range ma {
+		ub, ok := mb[login]
+		if !ok {
+			fmt.Printf("  %s: only in cli\n", login)
+			diffs++
+			continue
+		}
+		if ua.Name != ub.Name {
+			fmt.Printf("  %s: name mismatch cli=%q v4=%q\n", login, ua.Name, ub.Name)
+			diffs++
+		}
+	}
+	for login := range mb {
+		if _, ok := ma[login]; !ok {
+			fmt.Printf("  %s: only in githubv4\n", login)
+			diffs++
+		}
+	}
+	if diffs == 0 {
+		fmt.Println("MEMBERS PARITY OK: every assignable user matches")
+	} else {
+		fmt.Printf("\n%d difference(s)\n", diffs)
+	}
 }
 
 func bench(name string, n int, fn func() (int, error)) {

@@ -46,6 +46,8 @@ type Model struct {
 	detailSource      gh.DetailSource      // batched per-PR detail backend; nil ⇒ per-PR gh pr view
 	issueSource       gh.IssueSource       // issue-list backend; nil ⇒ gh CLI
 	issueDetailSource gh.IssueDetailSource // per-issue detail backend; nil ⇒ gh CLI
+	viewerSource      gh.ViewerSource      // viewer-login backend; nil ⇒ gh CLI
+	membersSource     gh.MembersSource     // assignable-users backend; nil ⇒ gh CLI
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
@@ -157,6 +159,13 @@ func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
 // SetIssueDetailSource overrides the per-issue detail backend (e.g. the
 // githubv4 path).
 func (m *Model) SetIssueDetailSource(s gh.IssueDetailSource) { m.issueDetailSource = s }
+
+// SetViewerSource overrides the viewer-login backend (e.g. the githubv4 path).
+func (m *Model) SetViewerSource(s gh.ViewerSource) { m.viewerSource = s }
+
+// SetMembersSource overrides the assignable-users backend (e.g. the githubv4
+// path).
+func (m *Model) SetMembersSource(s gh.MembersSource) { m.membersSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
@@ -962,7 +971,19 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 	return nil
 }
 
+// fetchMembersCmd fetches the assignable-users list through the active
+// members source (gh CLI or githubv4).
 func (m Model) fetchMembersCmd() tea.Cmd {
+	if m.membersSource != nil {
+		src := m.membersSource
+		return func() tea.Msg {
+			users, raw, err := src.FetchAssignableUsers()
+			if err != nil {
+				return fetchFailedMsg{err: err}
+			}
+			return membersFetchedMsg{users: users, raw: raw}
+		}
+	}
 	r, dir, repo := m.runner, m.dir, m.repo
 	return func() tea.Msg {
 		users, err := gh.FetchAssignableUsers(r, dir, repo)
@@ -973,7 +994,19 @@ func (m Model) fetchMembersCmd() tea.Cmd {
 	}
 }
 
+// fetchViewerCmd fetches the authenticated user's login through the active
+// viewer source (gh CLI or githubv4).
 func (m Model) fetchViewerCmd() tea.Cmd {
+	if m.viewerSource != nil {
+		src := m.viewerSource
+		return func() tea.Msg {
+			login, err := src.FetchViewer()
+			if err != nil {
+				return fetchFailedMsg{err: err}
+			}
+			return viewerFetchedMsg{login: login}
+		}
+	}
 	r, dir := m.runner, m.dir
 	return func() tea.Msg {
 		login, err := gh.FetchViewerLogin(r, dir)
@@ -1131,7 +1164,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case membersFetchedMsg:
 		m.members = msg.users
 		if m.cache != nil {
-			if raw, err := json.Marshal(msg.users); err == nil {
+			raw := msg.raw
+			if raw == nil {
+				raw, _ = json.Marshal(msg.users)
+			}
+			if raw != nil {
 				m.cache.Set(membersKey(m.repo), raw)
 			}
 		}

@@ -32,6 +32,20 @@ type IssueDetailSource interface {
 	FetchIssueDetail(number int) (detail IssueDetail, raw []byte, err error)
 }
 
+// ViewerSource fetches the authenticated user's login, mirroring
+// `gh api user --jq .login`.
+type ViewerSource interface {
+	FetchViewer() (login string, err error)
+}
+
+// MembersSource fetches the assignable-users list for the current repo. The
+// []byte must round-trip through the members cache hydrate path (which
+// unmarshals directly into []User) so a cache entry written by either backend
+// stays readable by the other.
+type MembersSource interface {
+	FetchAssignableUsers() (users []User, raw []byte, err error)
+}
+
 // CLISource is the original path: shell out to `gh pr list --json`.
 type CLISource struct {
 	R   Runner
