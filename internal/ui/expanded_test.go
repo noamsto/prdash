@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/preview"
 	"github.com/noamsto/prdash/internal/triage"
 )
 
@@ -87,9 +88,26 @@ func TestRenderDiffstatTotals(t *testing.T) {
 		{Path: "a.go", Additions: 10, Deletions: 2},
 		{Path: "b.go", Additions: 1, Deletions: 1},
 	}}
-	out := ansi.Strip(renderDiffstat(d, 60))
+	out := ansi.Strip(renderDiffstat(d, nil, 60))
 	if !strings.Contains(out, "2 files") || !strings.Contains(out, "a.go") {
 		t.Fatalf("diffstat missing totals/files: %q", out)
+	}
+}
+
+func TestRenderFileThreadsHidesResolvedBodies(t *testing.T) {
+	g := preview.FileThreads{Path: "a.go", Threads: []gh.ReviewThread{
+		{Path: "a.go", Line: 10, IsResolved: false, Comments: []gh.ThreadComment{{Author: "alice", Body: "fix this"}}},
+		{Path: "a.go", Line: 20, IsResolved: true, Comments: []gh.ThreadComment{{Author: "bob", Body: "old nit"}}},
+	}}
+	out := renderFileThreads(g, 80, false)
+	if !strings.Contains(out, "fix this") {
+		t.Fatalf("unresolved body must show:\n%s", out)
+	}
+	if strings.Contains(out, "old nit") {
+		t.Fatalf("resolved body must be hidden by default:\n%s", out)
+	}
+	if !strings.Contains(out, "1 resolved") {
+		t.Fatalf("resolved count line missing:\n%s", out)
 	}
 }
 

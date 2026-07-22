@@ -103,14 +103,23 @@ func renderChecks(pr gh.PR, w, cursor int) string {
 	return b.String()
 }
 
-func renderDiffstat(d gh.PRDetail, w int) string {
+func renderDiffstat(d gh.PRDetail, threads []gh.ReviewThread, w int) string {
 	s := d.Diffstat()
 	if s.Files == 0 {
 		return dimStyle.Render("  No file changes.")
 	}
+	byFile := map[string]preview.FileThreads{}
+	for _, g := range preview.GroupByFile(threads) {
+		byFile[g.Path] = g
+	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("  %s files  %s  %s\n\n", accentStyle.Render(fmt.Sprintf("%d", s.Files)),
-		passStyle.Render(fmt.Sprintf("+%d", s.Additions)), failStyle.Render(fmt.Sprintf("-%d", s.Deletions))))
+	unresolved := len(preview.Unresolved(threads))
+	b.WriteString(fmt.Sprintf("  %s files  %s  %s     %s · %s\n\n",
+		accentStyle.Render(fmt.Sprintf("%d", s.Files)),
+		passStyle.Render(fmt.Sprintf("+%d", s.Additions)),
+		failStyle.Render(fmt.Sprintf("-%d", s.Deletions)),
+		failStyle.Render(fmt.Sprintf("%d unresolved", unresolved)),
+		passStyle.Render(fmt.Sprintf("%d resolved", preview.CountResolved(threads)))))
 	paths := make([]string, len(d.Files))
 	pathW := 0
 	for i, f := range d.Files {
@@ -123,6 +132,9 @@ func renderDiffstat(d gh.PRDetail, w int) string {
 		pad := strings.Repeat(" ", pathW-lipgloss.Width(paths[i]))
 		b.WriteString(fmt.Sprintf("  %s%s  %s %s\n", paths[i], pad,
 			passStyle.Render(fmt.Sprintf("+%d", f.Additions)), failStyle.Render(fmt.Sprintf("-%d", f.Deletions))))
+		if g, ok := byFile[f.Path]; ok {
+			b.WriteString(renderFileThreads(g, w, false))
+		}
 	}
 	return b.String()
 }
@@ -175,7 +187,7 @@ func (m Model) expandedBody(w int) string {
 		}
 		return ""
 	case tabDiff:
-		return renderDiffstat(d, w)
+		return renderDiffstat(d, m.threads[v.Number], w)
 	default:
 		items := preview.Timeline(d)
 		return renderDiscussionColumn(w, func(contentWidth int) string {

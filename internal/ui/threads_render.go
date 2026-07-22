@@ -47,3 +47,35 @@ func renderThreadsSummary(ts []gh.ReviewThread, n, w int) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// renderFileThreads renders one file's threads: unresolved with bodies, resolved
+// collapsed to a count line unless showResolved.
+func renderFileThreads(g preview.FileThreads, w int, showResolved bool) string {
+	var b strings.Builder
+	resolved := 0
+	for _, t := range g.Threads {
+		if t.IsResolved && !showResolved {
+			resolved++
+			continue
+		}
+		if len(t.Comments) == 0 {
+			continue
+		}
+		dot := failStyle.Render("●") + " " + failStyle.Render("unresolved")
+		if t.IsResolved {
+			dot = passStyle.Render("✓ resolved")
+		}
+		head := t.Comments[0]
+		b.WriteString("    " + focusBarStyle.Render(fmt.Sprintf("L%d", t.Line)) + "  " +
+			authorStyle(head.Author).Render(head.Author) + "   " + dot + "\n")
+		b.WriteString("      " + dimStyle.Render(truncate(firstLine(head.Body), w-6)) + "\n")
+		for _, reply := range t.Comments[1:] {
+			b.WriteString("      " + sepStyle.Render("└ ") + authorStyle(reply.Author).Render(reply.Author) + "\n")
+			b.WriteString("        " + dimStyle.Render(truncate(firstLine(reply.Body), w-8)) + "\n")
+		}
+	}
+	if resolved > 0 {
+		b.WriteString("    " + dimStyle.Render(fmt.Sprintf("▸ %d resolved", resolved)) + "\n")
+	}
+	return b.String()
+}
