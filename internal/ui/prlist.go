@@ -42,7 +42,8 @@ type Model struct {
 	issueFresh        map[int]bool // issue numbers whose body was refetched this session
 	cache             *cache.Cache
 	runner            gh.Runner
-	prSource          gh.PRSource // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
+	prSource          gh.PRSource     // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
+	detailSource      gh.DetailSource // batched per-PR detail backend; nil ⇒ per-PR gh pr view
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
@@ -137,6 +138,11 @@ func (m *Model) SetRunner(r gh.Runner) {
 // SetPRSource overrides the PR-list backend (e.g. the githubv4 path). Call it
 // after SetRunner to A/B against the CLI default.
 func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
+
+// SetDetailSource installs a batched per-PR detail backend. When set, the
+// refresh/prefetch path fetches the whole visible window in one request instead
+// of one `gh pr view` subprocess per PR. nil (the default) keeps the CLI path.
+func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
@@ -1028,7 +1034,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		m.repaintActive() // keep the log/expanded box painted; don't bleed list rows in
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case issuesFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(issueKey(m.repo, msg.filter), msg.raw)
@@ -1061,7 +1067,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		m.repaintActive()
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // a background prewarm failed; the current view is unaffected
@@ -1110,6 +1116,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repaintActive() // fold the fresh detail into the active view without losing place
 		return m, nil
+	case detailsBatchMsg:
+		for num, d := range msg.details {
+			m.detail[num] = d
+			m.fresh[num] = true
+			if m.cache != nil {
+				if raw := msg.raws[num]; raw != nil {
+					m.cache.Set(detailKey(m.repo, num), raw)
+				}
+			}
+		}
+		m.repaintActive()
+		return m, nil
 	case logFetchedMsg:
 		if !m.logView || msg.job != m.logJobID || msg.all != m.logShowAll {
 			return m, nil // stale: view closed or variant switched
@@ -1137,7 +1155,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.seq != m.detailSeq {
 			return m, nil
 		}
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+		return m, m.warmDetailCmd()
 	case omniDebounceMsg:
 		if msg.seq != m.omniSeq || !m.filtering {
 			return m, nil // superseded by a later keystroke, or already committed
@@ -1148,7 +1166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// state the hydrated rows were painted under and warm detail/poll.
 		m.refreshing = false
 		m.loaded = true
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
 		if !m.refreshing && !m.actionRunning() && !m.logLoading {
 			m.spinning = false // fetch/action settled; let the loop die

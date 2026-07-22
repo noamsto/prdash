@@ -43,10 +43,9 @@ func main() {
 	// in-process HTTP call) instead of shelling out to `gh pr list`.
 	if os.Getenv("PRDASH_GH_GRAPHQL") != "" {
 		if tok, err := runner.Run(dir, "auth", "token"); err == nil {
-			m.SetPRSource(gh.GraphSource{
-				Client: gh.NewGraphClient(strings.TrimSpace(string(tok))),
-				Repo:   repo,
-			})
+			gs := gh.NewGraphSource(strings.TrimSpace(string(tok)), repo)
+			m.SetPRSource(gs)
+			m.SetDetailSource(gs)
 		} else {
 			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but gh auth token failed:", err)
 		}

@@ -90,9 +90,65 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
 			return nil
 		}
+		if m.detailSource != nil {
+			return m.batchDetailCmd([]int{v.Number})
+		}
 		return m.fetchDetailCmd(v.Number)
 	}
 	return nil
+}
+
+// warmDetailCmd warms detail for the cursor row and the prefetch window. With a
+// batched detail source it fetches the cursor row on its own (so the preview
+// paints as soon as that one small query returns) and the rest of the window in
+// a single batched request — so a settle costs two HTTP round trips, not the old
+// fan-out of one `gh pr view` subprocess per PR. Without a batch source it falls
+// back to the per-PR gh commands.
+func (m Model) warmDetailCmd() tea.Cmd {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.detailSource == nil {
+		return tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	}
+	cursorNum := -1
+	if v, ok := m.cursorVars(); ok {
+		cursorNum = v.Number
+	}
+	var rest []int
+	for _, n := range m.detailWindow(ps) {
+		if n != cursorNum {
+			rest = append(rest, n)
+		}
+	}
+	return tea.Batch(m.detailCmdForCursor(), m.batchDetailCmd(rest))
+}
+
+// detailWindow is the cursor-first set of shown PR numbers still needing detail
+// (not refreshed this session, not fresh on disk), bounded by prefetchWindow.
+func (m Model) detailWindow(ps *PRSection) []int {
+	var out []int
+	for _, n := range prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow) {
+		if m.cacheFresh(detailKey(m.repo, n)) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// batchDetailCmd fetches detail for numbers in a single request via the batched
+// source, emitting one detailsBatchMsg for the whole window.
+func (m Model) batchDetailCmd(numbers []int) tea.Cmd {
+	src := m.detailSource
+	if src == nil || len(numbers) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		details, raws, err := src.FetchDetails(numbers)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return detailsBatchMsg{details: details, raws: raws}
+	}
 }
 
 // prefetchWindow bounds how many uncached PR details we fan out per settle.
