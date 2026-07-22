@@ -97,9 +97,10 @@ func TestDenseRowDegradesWithoutCrashAtNarrowWidths(t *testing.T) {
 }
 
 // TestDenseRowFillsWidthWithLabels is TestDenseRowFillsWidthAcrossWidthSweep's
-// labeled-row counterpart: with chips in the flexible middle, exact-fill must
-// still hold at every swept width, focused and unfocused. sweepPRs is left
-// untouched (other tests rely on it carrying no labels).
+// labeled-row counterpart: on a single-line row, labels are dropped and the
+// title alone must still fill exactly the target width, focused and
+// unfocused. sweepPRs is left untouched (other tests rely on it carrying no
+// labels).
 func TestDenseRowFillsWidthWithLabels(t *testing.T) {
 	ps := NewPRSection("is:open")
 	ps.SetPRs([]gh.PR{labeledPR()})
@@ -112,6 +113,48 @@ func TestDenseRowFillsWidthWithLabels(t *testing.T) {
 			}
 			if got := lipgloss.Width(row); got != w {
 				t.Errorf("w=%d focused=%v labeled row width %d, want %d", w, focused, got, w)
+			}
+		}
+	}
+}
+
+// TestRenderRowTwoLineFillsWidthAcrossSweep is TestDenseRowFillsWidthWithLabels's
+// two-line counterpart: line 1 (title) and line 2 (chips/branch, when present)
+// must each fill exactly the target width across the same width sweep. Three
+// fixtures exercise the asymmetric cases — labels+branch, labels only, and
+// branch only (no labels) — since each takes a different path through the
+// line-2 layout. Line count is not asserted; only that every line present is
+// exactly w wide.
+func TestRenderRowTwoLineFillsWidthAcrossSweep(t *testing.T) {
+	fixtures := map[string]gh.PR{
+		"labels+branch": func() gh.PR {
+			p := labeledPR()
+			p.HeadRefName = "feat/some-branch"
+			return p
+		}(),
+		"labels only": func() gh.PR {
+			p := labeledPR()
+			p.HeadRefName = ""
+			return p
+		}(),
+		"branch only": func() gh.PR {
+			p := labeledPR()
+			p.Labels = nil
+			p.HeadRefName = "feat/some-branch"
+			return p
+		}(),
+	}
+
+	for name, pr := range fixtures {
+		s := NewPRSection("is:open")
+		s.SetPRs([]gh.PR{pr})
+		nw := columnWidths(s)
+		for _, w := range []int{40, 52, 64, 80, 100, 120, 160, 200} {
+			row := s.RenderRow(0, RowOpts{Width: w, NumWidth: nw, TwoLine: true})
+			for _, ln := range strings.Split(row, "\n") {
+				if got := lipgloss.Width(ln); got != w {
+					t.Errorf("fixture %q w=%d: line width %d, want %d: %q", name, w, got, w, ln)
+				}
 			}
 		}
 	}

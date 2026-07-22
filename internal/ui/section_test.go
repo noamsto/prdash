@@ -507,9 +507,8 @@ func TestRenderRowTwoLineNoLabelsNoBranch(t *testing.T) {
 
 func TestFocusedLabeledRowIsExactFillSingleLine(t *testing.T) {
 	// Focused rows run through rowBgWrap, which re-injects the row background
-	// after every SGR reset, while each chip carries its own labelChip Background.
-	// This guards against a per-chip-bg vs row-bg refill bug that a width-only
-	// check on an unfocused row would miss.
+	// after every SGR reset. Labels don't render on a single-line row, but the
+	// fixture still exercises the focused-row-bg refill path at exact-fill widths.
 	s := NewPRSection("is:open")
 	s.SetPRs([]gh.PR{labeledPR()})
 	nw := columnWidths(s)
@@ -524,14 +523,14 @@ func TestFocusedLabeledRowIsExactFillSingleLine(t *testing.T) {
 	}
 }
 
-// TestListRowCJKTitleWithChipsExactFill guards the exact-fill invariant for a
-// wide-cell (CJK) title once chips shrink the title budget. Each CJK glyph is 2
-// cells, so a rune-count truncation (rather than cell-count) would let the title
-// overflow the row — the bug this pins.
-func TestListRowCJKTitleWithChipsExactFill(t *testing.T) {
+// TestListRowCJKTitleExactFillSingleLine guards the exact-fill invariant for a
+// wide-cell (CJK) title on a single-line row. Each CJK glyph is 2 cells, so a
+// rune-count truncation (rather than cell-count) would let the title overflow
+// the row — the bug this pins.
+func TestListRowCJKTitleExactFillSingleLine(t *testing.T) {
 	p := labeledPR()
-	// 30 CJK glyphs = 60 display cells; long enough to need truncation once the
-	// chip budget is carved out at every swept width.
+	// 30 CJK glyphs = 60 display cells; long enough to need truncation at every
+	// swept width.
 	p.Title = strings.Repeat("重", 30)
 	s := NewPRSection("is:open")
 	s.SetPRs([]gh.PR{p})
@@ -540,10 +539,10 @@ func TestListRowCJKTitleWithChipsExactFill(t *testing.T) {
 		for _, foc := range []bool{false, true} {
 			row := s.RenderRow(0, RowOpts{Width: w, NumWidth: nw, Focused: foc})
 			if strings.Contains(row, "\n") {
-				t.Fatalf("w=%d foc=%v CJK+chips row must be one line: %q", w, foc, row)
+				t.Fatalf("w=%d foc=%v CJK row must be one line: %q", w, foc, row)
 			}
 			if got := lipgloss.Width(row); got != w {
-				t.Errorf("w=%d foc=%v CJK+chips row width = %d, want %d", w, foc, got, w)
+				t.Errorf("w=%d foc=%v CJK row width = %d, want %d", w, foc, got, w)
 			}
 		}
 	}
