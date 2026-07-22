@@ -23,6 +23,16 @@ func TestMapPRBotAuthorPrefix(t *testing.T) {
 	}
 }
 
+// TestMapPRNodeID pins the field the PR mutations (merge, ready, etc.) key
+// off — the node ID, not the number — is carried through from qlPR into
+// gh.PR.
+func TestMapPRNodeID(t *testing.T) {
+	p := mapPR(qlPR{ID: "PR_kwDOtest", Number: 42})
+	if p.ID != "PR_kwDOtest" {
+		t.Errorf("ID = %q, want PR_kwDOtest", p.ID)
+	}
+}
+
 func TestMapPRNullableTimes(t *testing.T) {
 	p := mapPR(qlPR{UpdatedAt: githubv4.DateTime{Time: time.Unix(100, 0)}}) // MergedAt/ClosedAt nil
 	if p.UpdatedAt.IsZero() {

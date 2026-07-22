@@ -76,6 +76,10 @@ type AutoMergeRequest struct {
 }
 
 type PR struct {
+	// ID is the GraphQL node ID (e.g. "PR_kwDOA..."), populated only on the
+	// GraphSource list path — every mutation input needs it as pullRequestId.
+	// Empty on the gh-CLI path, which mutates by number instead.
+	ID     string `json:"id"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
 	Author struct {
