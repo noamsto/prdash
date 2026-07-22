@@ -1419,3 +1419,26 @@ func TestLegendFitsLargeTerminal(t *testing.T) {
 		t.Fatalf("legend height %d exceeds terminal height %d", h, m.height)
 	}
 }
+
+func TestRenderListTwoLineRowHeight(t *testing.T) {
+	p := labeledPR()
+	p.HeadRefName = "feat/x"
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 44 // tall → two-line mode
+	m.setPRs([]gh.PR{p})
+	m.renderList()
+	if m.cursorRows != 2 {
+		t.Fatalf("labeled PR in two-line mode should be 2 rows tall, got %d", m.cursorRows)
+	}
+}
+
+func TestRenderListSingleLineRowHeight(t *testing.T) {
+	p := labeledPR()
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 12 // short → single-line mode
+	m.setPRs([]gh.PR{p})
+	m.renderList()
+	if m.cursorRows != 1 {
+		t.Fatalf("row in single-line mode should be 1 row tall, got %d", m.cursorRows)
+	}
+}

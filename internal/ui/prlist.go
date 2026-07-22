@@ -44,6 +44,7 @@ type Model struct {
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
+	cursorRows        int // display height of the cursor row (2 in two-line mode)
 	previewOffset     int // ctrl+j/k scroll position within the side preview
 	width             int
 	height            int
@@ -227,23 +228,27 @@ func (m *Model) renderList() {
 				prevGroup = g
 			}
 		}
-		if i == m.cursor {
-			m.cursorLine = line
-		}
 		flag := ""
 		if isPR && ps.prAt(i).State == "OPEN" {
 			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}
-		b.WriteString(m.section.RenderRow(i, RowOpts{
-			Width: innerW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag,
-		}))
+		row := m.section.RenderRow(i, RowOpts{
+			Width: innerW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag, TwoLine: l.TwoLine,
+		})
+		rowH := strings.Count(row, "\n") + 1
+		if i == m.cursor {
+			m.cursorLine = line
+			m.cursorRows = rowH
+		}
+		b.WriteString(row)
 		b.WriteString("\n")
-		line++
+		line += rowH
 	}
 	content := b.String()
 	if m.section.Len() == 0 {
 		m.cursorLine = 0
+		m.cursorRows = 1
 		hint := "Loading…"
 		switch {
 		case m.emptyNotice != "":
@@ -267,12 +272,17 @@ func (m *Model) renderList() {
 // display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
 	top := m.cursorLine
+	rows := m.cursorRows
+	if rows < 1 {
+		rows = 1
+	}
+	bottom := top + rows - 1
 	off := m.vp.YOffset()
 	switch {
 	case top < off:
 		off = top
-	case top >= off+m.vp.Height():
-		off = top - m.vp.Height() + 1
+	case bottom >= off+m.vp.Height():
+		off = bottom - m.vp.Height() + 1
 	}
 	if off < 0 {
 		off = 0
