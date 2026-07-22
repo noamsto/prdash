@@ -53,8 +53,19 @@ func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	}
 }
 
-// fetchIssueDetailCmd lazily loads the selected issue's body.
+// fetchIssueDetailCmd lazily loads the selected issue's body through the
+// active issue-detail source (gh CLI or githubv4).
 func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
+	if m.issueDetailSource != nil {
+		src := m.issueDetailSource
+		return func() tea.Msg {
+			d, raw, err := src.FetchIssueDetail(number)
+			if err != nil {
+				return fetchFailedMsg{err: err}
+			}
+			return issueDetailMsg{number: number, detail: d, raw: raw}
+		}
+	}
 	r, dir := m.runner, m.dir
 	return func() tea.Msg {
 		raw, err := r.Run(dir, gh.IssueViewArgs(number)...)

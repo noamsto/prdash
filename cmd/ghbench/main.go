@@ -26,6 +26,7 @@ func main() {
 	parity := flag.Bool("parity", false, "diff CLI vs githubv4 PR-list output instead of timing")
 	detailParity := flag.Bool("detail-parity", false, "diff gh pr view vs batched githubv4 detail")
 	detailBench := flag.Bool("detail-bench", false, "time batched githubv4 detail vs N gh pr view subprocesses")
+	issueParity := flag.Bool("issue-parity", false, "diff gh issue list/view vs githubv4 FetchIssues/FetchIssueDetail")
 	flag.Parse()
 
 	dir, _ := os.Getwd()
@@ -66,6 +67,10 @@ func main() {
 	}
 	if *detailBench {
 		runDetailBench(graph, *repo, *search, *limit)
+		return
+	}
+	if *issueParity {
+		runIssueParity(graph, *repo, *search, *limit)
 		return
 	}
 
@@ -268,6 +273,121 @@ func labelSet(p gh.PR) []string {
 func scalars(p gh.PR) string {
 	return fmt.Sprintf("title=%q author=%s review=%s draft=%v state=%s automerge=%v labels=%v",
 		p.Title, p.Author.Login, p.ReviewDecision, p.IsDraft, p.State, p.AutoMergeEnabled(), labelSet(p))
+}
+
+// runIssueParity diffs the githubv4 issue list against `gh issue list`, then
+// samples a few issues and diffs githubv4 issue detail against `gh issue view`.
+func runIssueParity(graph gh.GraphSource, repo, search string, limit int) {
+	cliOut, err := exec.Command("gh", append(gh.IssueListArgs(search, limit), "-R", repo)...).Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cli issue list:", err)
+		os.Exit(1)
+	}
+	a, err := gh.ParseIssues(cliOut)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "parse cli issues:", err)
+		os.Exit(1)
+	}
+	b, _, err := graph.FetchIssues(search, limit)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "graph issue list:", err)
+		os.Exit(1)
+	}
+	byNum := func(is []gh.Issue) map[int]gh.Issue {
+		m := map[int]gh.Issue{}
+		for _, i := range is {
+			m[i.Number] = i
+		}
+		return m
+	}
+	ma, mb := byNum(a), byNum(b)
+	fmt.Printf("cli issues=%d  githubv4 issues=%d\n", len(ma), len(mb))
+	diffs := 0
+	for num, ia := range ma {
+		ib, ok := mb[num]
+		if !ok {
+			fmt.Printf("  #%d: only in cli\n", num)
+			diffs++
+			continue
+		}
+		if !issueScalarEqual(ia, ib) {
+			fmt.Printf("  #%d: scalar mismatch\n    cli: %s\n    v4:  %s\n", num, issueScalars(ia), issueScalars(ib))
+			diffs++
+		}
+	}
+	if diffs == 0 {
+		fmt.Println("ISSUE LIST PARITY OK: every issue matches on scalars")
+	} else {
+		fmt.Printf("\n%d list difference(s)\n", diffs)
+	}
+
+	var nums []int
+	for _, i := range b {
+		if len(nums) >= 5 {
+			break
+		}
+		nums = append(nums, i.Number)
+	}
+	fmt.Printf("\ncomparing detail for %d issues\n", len(nums))
+	detailDiffs := 0
+	for _, n := range nums {
+		out, err := exec.Command("gh", append(gh.IssueViewArgs(n), "-R", repo)...).Output()
+		if err != nil {
+			fmt.Printf("  #%d: gh issue view failed: %v\n", n, err)
+			detailDiffs++
+			continue
+		}
+		want, err := gh.ParseIssueDetail(out)
+		if err != nil {
+			fmt.Printf("  #%d: parse gh detail: %v\n", n, err)
+			detailDiffs++
+			continue
+		}
+		got, _, err := graph.FetchIssueDetail(n)
+		if err != nil {
+			fmt.Printf("  #%d: graph detail: %v\n", n, err)
+			detailDiffs++
+			continue
+		}
+		if got.Body != want.Body {
+			fmt.Printf("  #%d: body mismatch\n    cli len=%d\n    v4  len=%d\n", n, len(want.Body), len(got.Body))
+			detailDiffs++
+		}
+	}
+	if detailDiffs == 0 {
+		fmt.Println("ISSUE DETAIL PARITY OK: every issue body matches")
+	} else {
+		fmt.Printf("\n%d detail difference(s)\n", detailDiffs)
+	}
+}
+
+func issueScalarEqual(a, b gh.Issue) bool {
+	return a.Title == b.Title && a.Author.Login == b.Author.Login && a.URL == b.URL &&
+		reflect.DeepEqual(issueLabelSet(a), issueLabelSet(b)) &&
+		reflect.DeepEqual(issueAssigneeSet(a), issueAssigneeSet(b))
+}
+
+func issueLabelSet(i gh.Issue) []string {
+	var s []string
+	for _, l := range i.Labels {
+		s = append(s, l.Name)
+	}
+	sort.Strings(s)
+	return s
+}
+
+func issueAssigneeSet(i gh.Issue) []string {
+	var s []string
+	for _, a := range i.Assignees {
+		s = append(s, a.Login)
+	}
+	sort.Strings(s)
+	return s
+}
+
+func issueScalars(i gh.Issue) string {
+	return fmt.Sprintf("title=%q author=%s labels=%v assignees=%v",
+		i.Title, i.Author.Login, issueLabelSet(i), issueAssigneeSet(i))
 }
 
 func bench(name string, n int, fn func() (int, error)) {

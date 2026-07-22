@@ -42,11 +42,13 @@ type Model struct {
 	issueFresh        map[int]bool // issue numbers whose body was refetched this session
 	cache             *cache.Cache
 	runner            gh.Runner
-	prSource          gh.PRSource     // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
-	detailSource      gh.DetailSource // batched per-PR detail backend; nil ⇒ per-PR gh pr view
-	rowText           []string        // renderList per-row cache: rendered string per shown index
-	rowSig            []rowKey        // the inputs each rowText was rendered under; a miss re-renders that row
-	rowGen            int             // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
+	prSource          gh.PRSource          // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
+	detailSource      gh.DetailSource      // batched per-PR detail backend; nil ⇒ per-PR gh pr view
+	issueSource       gh.IssueSource       // issue-list backend; nil ⇒ gh CLI
+	issueDetailSource gh.IssueDetailSource // per-issue detail backend; nil ⇒ gh CLI
+	rowText           []string             // renderList per-row cache: rendered string per shown index
+	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
+	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
@@ -148,6 +150,13 @@ func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
 // refresh/prefetch path fetches the whole visible window in one request instead
 // of one `gh pr view` subprocess per PR. nil (the default) keeps the CLI path.
 func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
+
+// SetIssueSource overrides the issue-list backend (e.g. the githubv4 path).
+func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
+
+// SetIssueDetailSource overrides the per-issue detail backend (e.g. the
+// githubv4 path).
+func (m *Model) SetIssueDetailSource(s gh.IssueDetailSource) { m.issueDetailSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
@@ -704,8 +713,19 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// issueFetchCmd runs `gh issue list` for filter (gh excludes PRs by default).
+// issueFetchCmd fetches the issue list for filter through the active issue
+// source (gh CLI or githubv4); gh excludes PRs by default.
 func (m Model) issueFetchCmd(filter string) tea.Cmd {
+	if m.issueSource != nil {
+		src := m.issueSource
+		return func() tea.Msg {
+			is, raw, err := src.FetchIssues(filter, defaultLimit)
+			if err != nil {
+				return fetchFailedMsg{err: err, filter: filter}
+			}
+			return issuesFetchedMsg{filter: filter, issues: is, raw: raw}
+		}
+	}
 	r, dir := m.runner, m.dir
 	return func() tea.Msg {
 		raw, err := r.Run(dir, gh.IssueListArgs(filter, defaultLimit)...)

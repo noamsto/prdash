@@ -18,6 +18,20 @@ type DetailSource interface {
 	FetchDetails(numbers []int) (details map[int]PRDetail, raw map[int][]byte, err error)
 }
 
+// IssueSource fetches an issue list for a search filter, mirroring PRSource:
+// the []byte must round-trip through ParseIssues so a cache entry written by
+// either backend stays readable by the other.
+type IssueSource interface {
+	FetchIssues(filter string, limit int) (issues []Issue, raw []byte, err error)
+}
+
+// IssueDetailSource fetches a single issue's detail (currently just Body). It
+// isn't batched like DetailSource — issue detail is already fetched lazily one
+// at a time, so there's no N-subprocess cost to collapse.
+type IssueDetailSource interface {
+	FetchIssueDetail(number int) (detail IssueDetail, raw []byte, err error)
+}
+
 // CLISource is the original path: shell out to `gh pr list --json`.
 type CLISource struct {
 	R   Runner

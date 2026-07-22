@@ -17,9 +17,10 @@ const githubGraphQLURL = "https://api.github.com/graphql"
 // as a fetch error instead of hanging the UI on "Loading…".
 const graphTimeout = 20 * time.Second
 
-// GraphSource fetches PR data straight from GitHub's GraphQL API, skipping the
-// per-call `gh` subprocess. It implements both PRSource (list) and DetailSource
-// (batched per-PR detail). repo is owner/name.
+// GraphSource fetches PR and issue data straight from GitHub's GraphQL API,
+// skipping the per-call `gh` subprocess. It implements PRSource (list),
+// DetailSource (batched per-PR detail), IssueSource (list), and
+// IssueDetailSource (per-issue detail). repo is owner/name.
 type GraphSource struct {
 	repo   string
 	http   *http.Client     // for raw aliased detail queries
