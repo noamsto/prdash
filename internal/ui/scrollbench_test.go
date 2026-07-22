@@ -19,7 +19,6 @@ func BenchmarkScrollRender(b *testing.B) {
 	c := cache.Open(filepath.Join(b.TempDir(), "c.json"))
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	m.SetRunner(stubRunner{})
 
 	prs := make([]gh.PR, 80)
 	for i := range prs {
@@ -80,7 +79,6 @@ func benchBoard(b *testing.B) Model {
 	c := cache.Open(filepath.Join(b.TempDir(), "c.json"))
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	m.SetRunner(stubRunner{})
 	prs := make([]gh.PR, 80)
 	for i := range prs {
 		prs[i] = gh.PR{

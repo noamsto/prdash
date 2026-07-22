@@ -41,15 +41,14 @@ type Model struct {
 	issueDetail       map[int]gh.IssueDetail
 	issueFresh        map[int]bool // issue numbers whose body was refetched this session
 	cache             *cache.Cache
-	runner            gh.Runner
-	prSource          gh.PRSource          // PR-list backend (gh CLI or githubv4); see SetRunner/SetPRSource
-	detailSource      gh.DetailSource      // batched per-PR detail backend; nil ⇒ per-PR gh pr view
-	issueSource       gh.IssueSource       // issue-list backend; nil ⇒ gh CLI
-	issueDetailSource gh.IssueDetailSource // per-issue detail backend; nil ⇒ gh CLI
-	viewerSource      gh.ViewerSource      // viewer-login backend; nil ⇒ gh CLI
-	membersSource     gh.MembersSource     // assignable-users backend; nil ⇒ gh CLI
-	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.); nil ⇒ argv-through-Runner
-	actionsSource     gh.ActionsSource     // Actions rerun/job-log backend; nil ⇒ gh-CLI path (internal/action)
+	prSource          gh.PRSource          // PR-list backend (githubv4)
+	detailSource      gh.DetailSource      // batched per-PR detail backend
+	issueSource       gh.IssueSource       // issue-list backend
+	issueDetailSource gh.IssueDetailSource // per-issue detail backend
+	viewerSource      gh.ViewerSource      // viewer-login backend
+	membersSource     gh.MembersSource     // assignable-users backend
+	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.)
+	actionsSource     gh.ActionsSource     // Actions rerun/job-log backend
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
@@ -136,48 +135,32 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	}
 }
 
-// SetRunner installs the gh CLI runner and, unless an alternate PR source was
-// already set, defaults the PR-list backend to the CLI path — so existing
-// callers keep the current behavior with no extra wiring.
-func (m *Model) SetRunner(r gh.Runner) {
-	m.runner = r
-	if m.prSource == nil {
-		m.prSource = gh.CLISource{R: r, Dir: m.dir}
-	}
-}
-
-// SetPRSource overrides the PR-list backend (e.g. the githubv4 path). Call it
-// after SetRunner to A/B against the CLI default.
+// SetPRSource installs the PR-list backend (githubv4).
 func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
 
-// SetDetailSource installs a batched per-PR detail backend. When set, the
-// refresh/prefetch path fetches the whole visible window in one request instead
-// of one `gh pr view` subprocess per PR. nil (the default) keeps the CLI path.
+// SetDetailSource installs the batched per-PR detail backend: the
+// refresh/prefetch path fetches the whole visible window in one request.
 func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 
-// SetIssueSource overrides the issue-list backend (e.g. the githubv4 path).
+// SetIssueSource installs the issue-list backend (githubv4).
 func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
 
-// SetIssueDetailSource overrides the per-issue detail backend (e.g. the
-// githubv4 path).
+// SetIssueDetailSource installs the per-issue detail backend (githubv4).
 func (m *Model) SetIssueDetailSource(s gh.IssueDetailSource) { m.issueDetailSource = s }
 
-// SetViewerSource overrides the viewer-login backend (e.g. the githubv4 path).
+// SetViewerSource installs the viewer-login backend (githubv4).
 func (m *Model) SetViewerSource(s gh.ViewerSource) { m.viewerSource = s }
 
-// SetMembersSource overrides the assignable-users backend (e.g. the githubv4
-// path).
+// SetMembersSource installs the assignable-users backend (githubv4).
 func (m *Model) SetMembersSource(s gh.MembersSource) { m.membersSource = s }
 
-// SetMutationSource installs the native githubv4 backend for PR mutations
-// (merge, auto-merge, mark-ready, update-branch, request-reviewers) and the
-// --web open-in-browser action. nil (the default) keeps the argv-through-Runner
-// gh CLI path untouched.
+// SetMutationSource installs the githubv4 backend for PR mutations (merge,
+// auto-merge, mark-ready, update-branch, request-reviewers) and the --web
+// open-in-browser action.
 func (m *Model) SetMutationSource(s gh.MutationSource) { m.mutationSource = s }
 
-// SetActionsSource installs the native REST backend for Actions rerun/job-log
-// operations (internal/action.RerunFailed/JobLog). nil (the default) keeps the
-// gh-CLI path in internal/action untouched.
+// SetActionsSource installs the REST backend for Actions rerun/job-log
+// operations (internal/action.RerunFailed/RerunCheck/JobLog).
 func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
@@ -553,7 +536,7 @@ func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
 	return prs, true
 }
 
-// issueSchemaVer is bumped whenever issueFields changes shape.
+// issueSchemaVer is bumped whenever the cached issue field set changes shape.
 const issueSchemaVer = "v1"
 
 // issueKey scopes the cached issue list by repo, kind-prefixed "issue" so it can
@@ -735,26 +718,11 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// issueFetchCmd fetches the issue list for filter through the active issue
-// source (gh CLI or githubv4); gh excludes PRs by default.
+// issueFetchCmd fetches the issue list for filter through the issue source.
 func (m Model) issueFetchCmd(filter string) tea.Cmd {
-	if m.issueSource != nil {
-		src := m.issueSource
-		return func() tea.Msg {
-			is, raw, err := src.FetchIssues(filter, defaultLimit)
-			if err != nil {
-				return fetchFailedMsg{err: err, filter: filter}
-			}
-			return issuesFetchedMsg{filter: filter, issues: is, raw: raw}
-		}
-	}
-	r, dir := m.runner, m.dir
+	src := m.issueSource
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.IssueListArgs(filter, defaultLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: filter}
-		}
-		is, err := gh.ParseIssues(raw)
+		is, raw, err := src.FetchIssues(filter, defaultLimit)
 		if err != nil {
 			return fetchFailedMsg{err: err, filter: filter}
 		}
@@ -984,45 +952,23 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 	return nil
 }
 
-// fetchMembersCmd fetches the assignable-users list through the active
-// members source (gh CLI or githubv4).
+// fetchMembersCmd fetches the assignable-users list through the members source.
 func (m Model) fetchMembersCmd() tea.Cmd {
-	if m.membersSource != nil {
-		src := m.membersSource
-		return func() tea.Msg {
-			users, raw, err := src.FetchAssignableUsers()
-			if err != nil {
-				return fetchFailedMsg{err: err}
-			}
-			return membersFetchedMsg{users: users, raw: raw}
-		}
-	}
-	r, dir, repo := m.runner, m.dir, m.repo
+	src := m.membersSource
 	return func() tea.Msg {
-		users, err := gh.FetchAssignableUsers(r, dir, repo)
+		users, raw, err := src.FetchAssignableUsers()
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
-		return membersFetchedMsg{users: users}
+		return membersFetchedMsg{users: users, raw: raw}
 	}
 }
 
-// fetchViewerCmd fetches the authenticated user's login through the active
-// viewer source (gh CLI or githubv4).
+// fetchViewerCmd fetches the authenticated user's login through the viewer source.
 func (m Model) fetchViewerCmd() tea.Cmd {
-	if m.viewerSource != nil {
-		src := m.viewerSource
-		return func() tea.Msg {
-			login, err := src.FetchViewer()
-			if err != nil {
-				return fetchFailedMsg{err: err}
-			}
-			return viewerFetchedMsg{login: login}
-		}
-	}
-	r, dir := m.runner, m.dir
+	src := m.viewerSource
 	return func() tea.Msg {
-		login, err := gh.FetchViewerLogin(r, dir)
+		login, err := src.FetchViewer()
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}

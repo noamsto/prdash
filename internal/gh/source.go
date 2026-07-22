@@ -1,11 +1,8 @@
 package gh
 
 // PRSource fetches a PR list for a search filter, returning the parsed PRs and
-// the JSON bytes to persist in the on-disk cache. It is the seam the refresh
-// path fetches through, so the gh-CLI and githubv4 backends are swappable and
-// A/B-testable without the UI knowing which one is live. The []byte must
-// round-trip through ParsePRs so a cache entry written by either source stays
-// readable by the other.
+// the JSON bytes to persist in the on-disk cache. The []byte is the marshalled
+// []PR, so the on-disk cache hydrate path round-trips it back unchanged.
 type PRSource interface {
 	FetchPRs(filter string, limit int) (prs []PR, raw []byte, err error)
 }
@@ -19,8 +16,7 @@ type DetailSource interface {
 }
 
 // IssueSource fetches an issue list for a search filter, mirroring PRSource:
-// the []byte must round-trip through ParseIssues so a cache entry written by
-// either backend stays readable by the other.
+// the []byte is the marshalled []Issue for the cache hydrate round-trip.
 type IssueSource interface {
 	FetchIssues(filter string, limit int) (issues []Issue, raw []byte, err error)
 }
@@ -39,16 +35,13 @@ type ViewerSource interface {
 }
 
 // MembersSource fetches the assignable-users list for the current repo. The
-// []byte must round-trip through the members cache hydrate path (which
-// unmarshals directly into []User) so a cache entry written by either backend
-// stays readable by the other.
+// []byte is the marshalled []User for the members cache hydrate round-trip.
 type MembersSource interface {
 	FetchAssignableUsers() (users []User, raw []byte, err error)
 }
 
 // MutationSource performs the PR-mutating actions (merge, auto-merge,
-// mark-ready, update-branch, request-reviewers) via githubv4, replacing the
-// argv-templated `gh` CLI commands in internal/action/defaults.go. Every
+// mark-ready, update-branch, request-reviewers) via githubv4. Every
 // method takes the PR's GraphQL node ID (gh.PR.ID), not its number — mutation
 // inputs require it. RequestReviews takes the full desired reviewer login set
 // and always replaces (union:false); an empty set is the valid "remove all
@@ -69,10 +62,8 @@ type WorkflowRun struct {
 	HeadSHA    string
 }
 
-// ActionsSource performs the Actions rerun/job-log operations via REST,
-// replacing the `gh run` subprocess calls in internal/action/builtin.go.
-// RunID/JobID are the REST API's numeric IDs (gh's CLI --json databaseId).
-// nil at the action boundary ⇒ the existing gh.Runner path.
+// ActionsSource performs the Actions rerun/job-log operations via REST.
+// RunID/JobID are the REST API's numeric IDs.
 type ActionsSource interface {
 	// ListRunsForBranch lists the most recent runs for branch, newest first,
 	// mirroring `gh run list --branch <b> -L 20 --json databaseId,conclusion,headSha`.
@@ -88,22 +79,4 @@ type ActionsSource interface {
 	// `gh run view --log[-failed]` emits so it round-trips through the
 	// existing parseJobLog consumer unchanged.
 	JobLog(jobID int64, failedOnly bool) ([]byte, error)
-}
-
-// CLISource is the original path: shell out to `gh pr list --json`.
-type CLISource struct {
-	R   Runner
-	Dir string
-}
-
-func (s CLISource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
-	raw, err := s.R.Run(s.Dir, PRListArgs(filter, limit)...)
-	if err != nil {
-		return nil, nil, err
-	}
-	prs, err := ParsePRs(raw)
-	if err != nil {
-		return nil, nil, err
-	}
-	return prs, raw, nil
 }

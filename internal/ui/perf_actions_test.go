@@ -122,7 +122,7 @@ func TestSectionsFetchedCachesPerState(t *testing.T) {
 func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("x")
-	m.SetRunner(stubRunner{}) // returns "[]"; backgroundRefresh just needs non-nil
+	stubBackends(&m) // backgroundRefresh just needs sources wired
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 42}})
 	m.renderList()
@@ -147,7 +147,7 @@ func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
 func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil)
 	m.SetRepo("x")
-	m.SetRunner(stubRunner{})
+	stubBackends(&m)
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 42}})
 	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
@@ -190,12 +190,12 @@ func TestSectionsViewRendersBothHeaders(t *testing.T) {
 func TestInlineActionShowsFeedback(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
-	m.SetRunner(stubRunner{})
+	m.SetMutationSource(&fakeMutationSource{})
 	m.width, m.height = 120, 40
 	m.setPRs([]gh.PR{{Number: 1}})
 	m.renderList()
 
-	u, _ := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"}) // update-branch (inline argv)
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"}) // update-branch (inline, native)
 	m = u.(Model)
 	if !m.actionRunning() {
 		t.Fatal("dispatching an inline action should show it running")
@@ -277,20 +277,17 @@ func TestPRListCacheScopedByRepo(t *testing.T) {
 	}
 }
 
-type recordRunner struct{ calls [][]string }
-
-func (r *recordRunner) Run(_ string, args ...string) ([]byte, error) {
-	r.calls = append(r.calls, args)
-	return []byte("[]"), nil
-}
-
 func TestBulkInlineRunsPerSelected(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
-	rr := &recordRunner{}
-	m.SetRunner(rr)
+	fs := &fakeMutationSource{}
+	m.SetMutationSource(fs)
 	m.width, m.height = 120, 40
-	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
+	m.setPRs([]gh.PR{
+		{Number: 1, ID: "n1", State: "OPEN"},
+		{Number: 2, ID: "n2", State: "OPEN"},
+		{Number: 3, ID: "n3", State: "OPEN"},
+	})
 	m.sel.toggle(0)
 	m.sel.toggle(2)
 
@@ -305,7 +302,7 @@ func TestBulkInlineRunsPerSelected(t *testing.T) {
 		t.Fatalf("bulk should consume the selection, %d left", m.sel.count())
 	}
 
-	// Drive the batched command so the runner actually fires per PR.
+	// Drive the batched command so the native mutation fires per PR.
 	if batch, ok := cmd().(tea.BatchMsg); ok {
 		for _, c := range batch {
 			if c != nil {
@@ -313,12 +310,12 @@ func TestBulkInlineRunsPerSelected(t *testing.T) {
 			}
 		}
 	}
-	if len(rr.calls) != 2 {
-		t.Fatalf("want one gh call per selected PR (2), got %d: %v", len(rr.calls), rr.calls)
+	if len(fs.updateBranchCalls) != 2 {
+		t.Fatalf("want one native call per selected PR (2), got %d: %v", len(fs.updateBranchCalls), fs.updateBranchCalls)
 	}
-	for _, args := range rr.calls {
-		if len(args) < 2 || args[0] != "pr" || args[1] != "update-branch" {
-			t.Fatalf("unexpected gh call: %v", args)
+	for _, id := range fs.updateBranchCalls {
+		if id != "n1" && id != "n3" {
+			t.Fatalf("unexpected update-branch call for %q, want n1 or n3", id)
 		}
 	}
 }
@@ -404,9 +401,50 @@ func TestActionPaneHeightIsConstantWhileFiltering(t *testing.T) {
 	}
 }
 
-type stubRunner struct{}
+// stubSource is an empty read backend for tests that only need the fetch/
+// refresh paths wired without asserting on returned data.
+type stubSource struct{}
 
-func (stubRunner) Run(string, ...string) ([]byte, error) { return []byte("[]"), nil }
+func (stubSource) FetchPRs(string, int) ([]gh.PR, []byte, error) { return nil, nil, nil }
+func (stubSource) FetchDetails([]int) (map[int]gh.PRDetail, map[int][]byte, error) {
+	return map[int]gh.PRDetail{}, map[int][]byte{}, nil
+}
+func (stubSource) FetchIssues(string, int) ([]gh.Issue, []byte, error) { return nil, nil, nil }
+func (stubSource) FetchIssueDetail(int) (gh.IssueDetail, []byte, error) {
+	return gh.IssueDetail{}, nil, nil
+}
+func (stubSource) FetchViewer() (string, error)                     { return "", nil }
+func (stubSource) FetchAssignableUsers() ([]gh.User, []byte, error) { return nil, nil, nil }
+
+// stubBackends wires every read source to an empty stub, for tests that need
+// the fetch/refresh paths reachable without asserting on returned data.
+func stubBackends(m *Model) {
+	s := stubSource{}
+	m.SetPRSource(s)
+	m.SetDetailSource(s)
+	m.SetIssueSource(s)
+	m.SetIssueDetailSource(s)
+	m.SetViewerSource(s)
+	m.SetMembersSource(s)
+}
+
+// countingSource records how many source fetches a command tree makes, so a
+// test can assert whether a fresh cache suppressed the launch fetches.
+type countingSource struct{ calls int }
+
+func (c *countingSource) FetchPRs(string, int) ([]gh.PR, []byte, error) {
+	c.calls++
+	return nil, nil, nil
+}
+func (c *countingSource) FetchIssues(string, int) ([]gh.Issue, []byte, error) {
+	c.calls++
+	return nil, nil, nil
+}
+func (c *countingSource) FetchViewer() (string, error) { c.calls++; return "", nil }
+func (c *countingSource) FetchAssignableUsers() ([]gh.User, []byte, error) {
+	c.calls++
+	return nil, nil, nil
+}
 
 func TestDetailHydratesFromCacheOnLaunch(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
@@ -426,7 +464,7 @@ func TestDetailHydratesFromCacheOnLaunch(t *testing.T) {
 func TestCachedDetailStillTriggersRefetch(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("noamsto/prdash")
-	m.SetRunner(stubRunner{})
+	m.SetDetailSource(stubSource{})
 	m.setPRs([]gh.PR{{Number: 7}})
 	m.detail[7] = gh.PRDetail{} // painted from disk cache, but not refreshed this session
 

@@ -14,8 +14,8 @@ func (s GraphSource) FetchIssues(filter string, limit int) ([]Issue, []byte, err
 	if err != nil {
 		return nil, nil, err
 	}
-	// Cache bytes mirror `gh issue list --json` output so the hydrate path
-	// (ParseIssues) round-trips whichever source wrote the entry.
+	// The cache stores the marshalled []Issue; the hydrate path (json.Unmarshal
+	// into []Issue) round-trips it back unchanged.
 	raw, err := json.Marshal(issues)
 	if err != nil {
 		return nil, nil, err
@@ -24,7 +24,7 @@ func (s GraphSource) FetchIssues(filter string, limit int) ([]Issue, []byte, err
 }
 
 // qlIssue is the githubv4 shape of one search result, covering exactly the
-// fields in issueFields.
+// fields mapped into gh.Issue.
 type qlIssue struct {
 	Number    int
 	Title     string

@@ -64,14 +64,14 @@ func TestIssueActionsHaveCopy(t *testing.T) {
 func TestDefaultsHaveUpdateAndReady(t *testing.T) {
 	d := DefaultPRActions()
 	u := d["u"]
-	if u.Command.Argv[0] != "gh" || u.Command.Argv[1] != "pr" || u.Command.Argv[2] != "update-branch" {
-		t.Fatalf("u must be gh pr update-branch: %+v", u.Command.Argv)
+	if u.Command.Native != "update-branch" {
+		t.Fatalf("u must route to the update-branch native mutation: %+v", u.Command)
 	}
 	if u.ExitsTUI {
 		t.Fatal("update-branch is inline, not exits-tui")
 	}
 	ready := d["M"]
-	if ready.Label != "Mark ready" || ready.Command.Argv[2] != "ready" {
+	if ready.Label != "Mark ready" || ready.Command.Native != "mark-ready" {
 		t.Fatalf("ready action wrong: %+v", ready)
 	}
 }

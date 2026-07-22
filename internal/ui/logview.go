@@ -178,9 +178,9 @@ func (m Model) enterLogView() (tea.Model, tea.Cmd) {
 
 // fetchJobLogCmd fetches a job log off the UI thread and reports it back.
 func (m Model) fetchJobLogCmd(job string, all bool) tea.Cmd {
-	r, dir, native := m.runner, m.dir, m.actionsSource
+	native := m.actionsSource
 	return func() tea.Msg {
-		out, err := action.JobLog(r, dir, job, !all, native)
+		out, err := action.JobLog(native, job, !all)
 		return logFetchedMsg{job: job, all: all, raw: out, err: err}
 	}
 }

@@ -20,7 +20,7 @@ type prDetailMsg struct {
 	raw    []byte // cached to disk so the preview paints instantly next launch
 }
 
-// detailSchemaVer is bumped whenever PRViewArgs' --json field set changes, so a
+// detailSchemaVer is bumped whenever the PR-detail field set changes, so a
 // stale-shaped cached detail is a clean miss.
 const detailSchemaVer = "v1"
 
@@ -30,49 +30,22 @@ func detailKey(repo string, number int) string {
 	return cache.Key("prdetail", repo+"#"+strconv.Itoa(number), 0, detailSchemaVer)
 }
 
-// issueDetailSchemaVer is bumped whenever IssueViewArgs' --json field set changes.
+// issueDetailSchemaVer is bumped whenever the issue-detail field set changes.
 const issueDetailSchemaVer = "v1"
 
 func issueDetailKey(repo string, number int) string {
 	return cache.Key("issuedetail", repo+"#"+strconv.Itoa(number), 0, issueDetailSchemaVer)
 }
 
-// fetchDetailCmd lazily loads the selected PR's comments/reviews.
-func (m Model) fetchDetailCmd(number int) tea.Cmd {
-	r, dir := m.runner, m.dir
-	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.PRViewArgs(number)...)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		d, err := gh.ParsePRDetail(raw)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		return prDetailMsg{number: number, detail: d, raw: raw}
-	}
-}
-
 // fetchIssueDetailCmd lazily loads the selected issue's body through the
-// active issue-detail source (gh CLI or githubv4).
+// issue-detail source.
 func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
-	if m.issueDetailSource != nil {
-		src := m.issueDetailSource
-		return func() tea.Msg {
-			d, raw, err := src.FetchIssueDetail(number)
-			if err != nil {
-				return fetchFailedMsg{err: err}
-			}
-			return issueDetailMsg{number: number, detail: d, raw: raw}
-		}
+	src := m.issueDetailSource
+	if src == nil {
+		return nil
 	}
-	r, dir := m.runner, m.dir
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.IssueViewArgs(number)...)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		d, err := gh.ParseIssueDetail(raw)
+		d, raw, err := src.FetchIssueDetail(number)
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
@@ -84,9 +57,6 @@ func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
 // refreshed this session or its disk cache is still within launchFreshTTL — so
 // navigating right after a launch reuses recent detail instead of refetching it.
 func (m *Model) detailCmdForCursor() tea.Cmd {
-	if m.runner == nil {
-		return nil
-	}
 	v, ok := m.cursorVars()
 	if !ok {
 		return nil
@@ -101,24 +71,20 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
 			return nil
 		}
-		if m.detailSource != nil {
-			return m.batchDetailCmd([]int{v.Number})
-		}
-		return m.fetchDetailCmd(v.Number)
+		return m.batchDetailCmd([]int{v.Number})
 	}
 	return nil
 }
 
-// warmDetailCmd warms detail for the cursor row and the prefetch window. With a
-// batched detail source it fetches the cursor row on its own (so the preview
-// paints as soon as that one small query returns) and the rest of the window in
-// a single batched request — so a settle costs two HTTP round trips, not the old
-// fan-out of one `gh pr view` subprocess per PR. Without a batch source it falls
-// back to the per-PR gh commands.
+// warmDetailCmd warms detail for the cursor row and the prefetch window. It
+// fetches the cursor row on its own (so the preview paints as soon as that one
+// small query returns) and the rest of the window in a single batched request —
+// so a settle costs two HTTP round trips, not a fan-out of one request per PR.
+// On the issue board (no PRSection) it warms only the cursor row's detail.
 func (m Model) warmDetailCmd() tea.Cmd {
 	ps, ok := m.section.(*PRSection)
-	if !ok || m.detailSource == nil {
-		return tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+	if !ok {
+		return m.detailCmdForCursor()
 	}
 	cursorNum := -1
 	if v, ok := m.cursorVars(); ok {
@@ -177,27 +143,6 @@ func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) 
 		out = append(out, num)
 	}
 	return out
-}
-
-// prefetchCmd warms detail for a bounded window of visible PRs so the ! column
-// and the side card fill in without a fetch per keystroke.
-func (m Model) prefetchCmd() tea.Cmd {
-	ps, ok := m.section.(*PRSection)
-	if !ok || m.runner == nil {
-		return nil
-	}
-	nums := prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow)
-	cmds := make([]tea.Cmd, 0, len(nums))
-	for _, n := range nums {
-		if m.cacheFresh(detailKey(m.repo, n)) {
-			continue // recent disk detail; the hydrated card is good enough
-		}
-		cmds = append(cmds, m.fetchDetailCmd(n))
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
 }
 
 // discussionHeader keeps identity and separation on one line. This gives each

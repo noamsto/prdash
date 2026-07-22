@@ -15,11 +15,19 @@ import (
 
 func main() {
 	dir, _ := os.Getwd()
-	runner := gh.ExecRunner{}
 
 	repo, err := gh.RepoFromGit(dir)
 	if err != nil {
 		ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a github.com origin remote, then run prdash again.")
+		os.Exit(1)
+	}
+
+	// prdash talks to GitHub over githubv4/REST, so a token is mandatory. It
+	// comes from GH_TOKEN/GITHUB_TOKEN or, failing that, `gh auth token`.
+	tok, err := gh.Token()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "prdash: no GitHub token found.")
+		fmt.Fprintln(os.Stderr, "Set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.")
 		os.Exit(1)
 	}
 
@@ -31,26 +39,16 @@ func main() {
 	c := cache.Open(filepath.Join(stateDir, "prdash", "results-cache.json"))
 
 	m := ui.NewModel(dir, "is:open", c)
-	m.SetRunner(runner)
 	m.SetRepo(repo)
-	// Prototype A/B: PRDASH_GH_GRAPHQL=1 fetches reads via githubv4 (in-process
-	// HTTP) instead of shelling out to `gh`. Token comes from GH_TOKEN/GITHUB_TOKEN
-	// or, failing that, `gh auth token`.
-	if os.Getenv("PRDASH_GH_GRAPHQL") != "" {
-		if tok, err := gh.Token(); err == nil {
-			gs := gh.NewGraphSource(tok, repo)
-			m.SetPRSource(gs)
-			m.SetDetailSource(gs)
-			m.SetIssueSource(gs)
-			m.SetIssueDetailSource(gs)
-			m.SetViewerSource(gs)
-			m.SetMembersSource(gs)
-			m.SetMutationSource(gs)
-			m.SetActionsSource(gs)
-		} else {
-			fmt.Fprintln(os.Stderr, "prdash: PRDASH_GH_GRAPHQL set but no token:", err)
-		}
-	}
+	gs := gh.NewGraphSource(tok, repo)
+	m.SetPRSource(gs)
+	m.SetDetailSource(gs)
+	m.SetIssueSource(gs)
+	m.SetIssueDetailSource(gs)
+	m.SetViewerSource(gs)
+	m.SetMembersSource(gs)
+	m.SetMutationSource(gs)
+	m.SetActionsSource(gs)
 	m.InitTheme()
 	m.Hydrate()
 

@@ -30,7 +30,6 @@ func batchModel(t *testing.T, fd *fakeDetailSource, prs []gh.PR) Model {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("owner/repo")
-	m.SetRunner(stubRunner{})
 	m.SetDetailSource(fd)
 	m.setPRs(prs)
 	return m

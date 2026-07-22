@@ -1,10 +1,6 @@
 package gh
 
-import (
-	"encoding/json"
-	"strconv"
-	"time"
-)
+import "time"
 
 type Comment struct {
 	Author struct {
@@ -56,15 +52,4 @@ func (d PRDetail) Diffstat() Diffstat {
 		s.Deletions += f.Deletions
 	}
 	return s
-}
-
-func PRViewArgs(number int) []string {
-	return []string{"pr", "view", strconv.Itoa(number), "--json",
-		"comments,reviews,latestReviews,mergeStateStatus,mergeable,isDraft,reviewRequests,files"}
-}
-
-func ParsePRDetail(b []byte) (PRDetail, error) {
-	var d PRDetail
-	err := json.Unmarshal(b, &d)
-	return d, err
 }

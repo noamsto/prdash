@@ -22,9 +22,10 @@ type Command struct {
 	Argv    []string // templated, exec'd directly (no shell) — injection-safe
 	Builtin string   // e.g. "rerun-failed", "copy-url", "copy-branch"
 	Shell   string   // opt-in: run through `sh -c` (user actions only)
-	// Native names the githubv4 mutation/open this action runs when the UI's
-	// mutation source is set (e.g. "merge-squash", "open-web"); Argv above
-	// still stays valid as the untouched gate-off fallback.
+	// Native names the githubv4 mutation/open this action runs (e.g.
+	// "merge-squash", "open-web"). The packaged PR/issue mutations set only
+	// Native; Argv is reserved for exits-TUI actions (wt switch) and any
+	// user-configured commands.
 	Native string
 }
 

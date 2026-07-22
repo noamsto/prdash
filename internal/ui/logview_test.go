@@ -121,7 +121,7 @@ func logViewModel(t *testing.T) Model {
 	t.Helper()
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
-	m.SetRunner(stubRunner{})
+	m.SetActionsSource(&fakeActionsSource{})
 	m.width, m.height = 120, 40
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
 		{State: "FAILURE", Name: "test", DetailsUrl: "https://github.com/x/actions/runs/1/job/99"},

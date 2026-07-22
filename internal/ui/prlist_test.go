@@ -719,13 +719,15 @@ func TestEmptyStateSaysIssues(t *testing.T) {
 	}
 }
 
-// countingRunner records how many gh invocations a command tree makes, so a
-// test can assert whether a fresh cache suppressed the launch fetches.
-type countingRunner struct{ calls int }
-
-func (r *countingRunner) Run(string, ...string) ([]byte, error) {
-	r.calls++
-	return []byte("[]"), nil
+// countLaunchSources wires a single countingSource into every read backend the
+// launch fan-out touches, so a test can assert how many fetches fired.
+func countLaunchSources(m *Model) *countingSource {
+	cs := &countingSource{}
+	m.SetPRSource(cs)
+	m.SetIssueSource(cs)
+	m.SetMembersSource(cs)
+	m.SetViewerSource(cs)
+	return cs
 }
 
 func launchModel(t *testing.T) (Model, *cache.Cache) {
@@ -749,32 +751,30 @@ func TestLaunchReusesFreshCache(t *testing.T) {
 	m, c := launchModel(t)
 	warmLaunchCache(m, c)
 	m.hydrateViewer() // mirrors production: Hydrate() runs before Init()
-	rec := &countingRunner{}
-	m.SetRunner(rec)
+	cs := countLaunchSources(&m)
 
 	for _, cmd := range m.launchFetchCmds() {
 		if cmd != nil {
 			cmd()
 		}
 	}
-	if rec.calls != 0 {
-		t.Fatalf("fresh cache should suppress all launch fetches, got %d gh calls", rec.calls)
+	if cs.calls != 0 {
+		t.Fatalf("fresh cache should suppress all launch fetches, got %d source calls", cs.calls)
 	}
 }
 
 func TestLaunchFetchesWhenCacheCold(t *testing.T) {
 	m, _ := launchModel(t)
-	rec := &countingRunner{}
-	m.SetRunner(rec)
+	cs := countLaunchSources(&m)
 
 	for _, cmd := range m.launchFetchCmds() {
 		if cmd != nil {
 			cmd()
 		}
 	}
-	// sections (review+is:open) + issues + members + viewer = 5 gh invocations.
-	if rec.calls != 5 {
-		t.Fatalf("cold cache should fire the full launch fan-out, got %d gh calls, want 5", rec.calls)
+	// sections (review+is:open) + issues + members + viewer = 5 source fetches.
+	if cs.calls != 5 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 5", cs.calls)
 	}
 }
 
@@ -795,7 +795,7 @@ func TestDetailCmdSkipsFreshDiskCache(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	m := NewModel("/repo", "is:open", c)
 	m.SetRepo("r")
-	m.SetRunner(stubRunner{})
+	m.SetDetailSource(stubSource{})
 	m.setPRs([]gh.PR{{Number: 7}})
 
 	if m.detailCmdForCursor() == nil {
@@ -804,23 +804,6 @@ func TestDetailCmdSkipsFreshDiskCache(t *testing.T) {
 	c.Set(detailKey(m.repo, 7), json.RawMessage("{}"))
 	if m.detailCmdForCursor() != nil {
 		t.Fatal("fresh disk detail should suppress the fetch")
-	}
-}
-
-func TestPrefetchSkipsFreshDiskDetails(t *testing.T) {
-	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
-	m := NewModel("/repo", "is:open", c)
-	m.SetRepo("r")
-	m.SetRunner(stubRunner{})
-	m.setPRs([]gh.PR{{Number: 1}, {Number: 2}})
-
-	if m.prefetchCmd() == nil {
-		t.Fatal("cold window should prefetch detail")
-	}
-	c.Set(detailKey(m.repo, 1), json.RawMessage("{}"))
-	c.Set(detailKey(m.repo, 2), json.RawMessage("{}"))
-	if m.prefetchCmd() != nil {
-		t.Fatal("all-fresh window should skip prefetch entirely")
 	}
 }
 
@@ -1168,7 +1151,7 @@ func TestOmniAutocomplete(t *testing.T) {
 // so the board never keeps stale rows for the committed query.
 func TestOmniEnterReconcilesServerQuery(t *testing.T) {
 	m := newTestModelWithRows(t)
-	m.SetRunner(stubRunner{})
+	stubBackends(&m)
 	m.filtering = true
 	m.filterInput.Focus()
 	m.filterInput.SetValue("label:bu")
@@ -1188,7 +1171,7 @@ func TestOmniEnterReconcilesServerQuery(t *testing.T) {
 
 	// A bare-text-only commit has nothing to reconcile: no fetch, filter kept.
 	m2 := newTestModelWithRows(t)
-	m2.SetRunner(stubRunner{})
+	stubBackends(&m2)
 	m2.filtering = true
 	m2.filterInput.Focus()
 	m2.filterInput.SetValue("flaky")
@@ -1210,7 +1193,7 @@ func TestOmniEnterReconcilesServerQuery(t *testing.T) {
 // recomposes the filter from the committed omni qualifier, not the stale m.body.
 func TestStateTogglePreservesOmniQualifier(t *testing.T) {
 	m := newTestModelWithRows(t)
-	m.SetRunner(stubRunner{})
+	stubBackends(&m)
 	m.body = "author:@me" // must NOT be used to compose on the PR board
 	m.omniServer = "label:bug"
 	m.state = "open"

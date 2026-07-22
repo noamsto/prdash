@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -140,42 +139,27 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // OSC 52 is fire-and-forget
 		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
 	case "rerun-failed":
-		r, dir, branch, native := m.runner, m.dir, v.HeadRefName, m.actionsSource
+		branch, native := v.HeadRefName, m.actionsSource
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
 		m.actionStatus.nums = []int{v.Number}
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: action.RerunFailed(r, dir, branch, native)}
+			return actionDoneMsg{err: action.RerunFailed(native, branch)}
 		}, m.startSpinner())
-	default: // argv (e.g. gh pr merge), or the native mutation/open when the gate is on
-		if m.mutationSource != nil && a.Command.Native != "" {
-			if cmd, ok := m.singleNativeCmd(a, v); ok {
-				return cmd
-			}
+	default: // native mutation/open (merge, ready, update-branch, open-web)
+		if cmd, ok := m.singleNativeCmd(a, v); ok {
+			return cmd
 		}
-		argv, err := a.ExpandArgv(v)
-		if err != nil {
-			m.err = err
-			return nil
-		}
-		r, dir := m.runner, m.dir
-		m.actionStatus = statFor(a)
-		m.actionStatus.refresh = a.Refresh
-		m.actionStatus.nums = []int{v.Number}
-		return tea.Batch(func() tea.Msg {
-			_, err := r.Run(dir, argv[1:]...) // argv[0]=="gh"
-			return actionDoneMsg{err: err}
-		}, m.startSpinner())
+		return nil
 	}
 }
 
-// singleNativeCmd is runAction's native-mutation counterpart to the argv path
-// above, for the (currently unreachable via the packaged Scope:"single"
-// defaults, but user-configurable) single-row case; runBulkNative below is the
-// one every default merge/ready/update-branch/open-web keybinding actually
-// hits, since all of them are Scope:"per-selected". ok is false when
-// a.Command.Native names something this dispatcher doesn't recognize, or when
-// the action isn't on the PR board — callers fall back to the argv path.
+// singleNativeCmd runs a Scope:"single" native mutation/open. It is unreachable
+// via the packaged defaults (all merge/ready/update-branch/open-web keybindings
+// are Scope:"per-selected", so runBulkNative below is what fires), but a
+// user-configured single-row action with the same Command.Native marker routes
+// here. ok is false when a.Command.Native names something this dispatcher
+// doesn't recognize, or when the action isn't on the PR board.
 func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) {
 	if a.Command.Native == "open-web" {
 		url := v.URL
@@ -305,43 +289,25 @@ func reviewerDiff(current []string, picked map[string]bool) (add, remove []strin
 	return add, remove
 }
 
-// assignReviewersCmd applies an add/remove reviewer diff to one PR, then
-// refetches. add/remove only decide whether anything changed (nothing to do
-// when both are empty); prID and picked (the full desired reviewer-login set)
-// are only used on the native path, which sends picked in one
-// requestReviewsByLogin(union:false) call rather than gh's separate
-// add/remove flags — see research/request-reviews.md.
+// assignReviewersCmd applies a reviewer change to one PR, then refetches.
+// add/remove only decide whether anything changed (nothing to do when both are
+// empty); the request sends picked (the full desired reviewer-login set) in one
+// requestReviewsByLogin(union:false) call — see research/request-reviews.md.
 func (m Model) assignReviewersCmd(number int, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
 	delete(m.fresh, number) // reviewer set changed → summary must revalidate
 	fetch := m.fetchCmd(m.filter)
-	if m.mutationSource != nil {
-		src := m.mutationSource
-		var logins []string
-		for login, on := range picked {
-			if on {
-				logins = append(logins, login)
-			}
+	src := m.mutationSource
+	var logins []string
+	for login, on := range picked {
+		if on {
+			logins = append(logins, login)
 		}
-		return func() tea.Msg {
-			if err := src.RequestReviews(prID, logins); err != nil {
-				return fetchFailedMsg{err: err}
-			}
-			return fetch()
-		}
-	}
-	r, dir := m.runner, m.dir
-	args := []string{"pr", "edit", strconv.Itoa(number)}
-	if len(add) > 0 {
-		args = append(args, "--add-reviewer", strings.Join(add, ","))
-	}
-	if len(remove) > 0 {
-		args = append(args, "--remove-reviewer", strings.Join(remove, ","))
 	}
 	return func() tea.Msg {
-		if _, err := r.Run(dir, args...); err != nil {
+		if err := src.RequestReviews(prID, logins); err != nil {
 			return fetchFailedMsg{err: err}
 		}
 		return fetch()
@@ -377,16 +343,15 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 
 // runBulk applies a per-selected action to each selected row (or the cursor row
 // if none selected). Exits-tui actions write one handoff line each and quit;
-// inline gh actions run across the selection and settle to an aggregate badge.
+// native mutations run across the selection and settle to an aggregate badge.
 // Every default merge/auto-merge/ready/update-branch/open-web keybinding is
-// Scope:"per-selected", so runBulkNative below — not singleNativeCmd — is the
-// one that actually fires for a single cursor-row press too.
+// Scope:"per-selected", so runBulkNative — not singleNativeCmd — is the one
+// that actually fires for a single cursor-row press too.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
-	if m.mutationSource != nil && a.Command.Native != "" {
+	if a.Command.Native != "" {
 		return m.runBulkNative(a)
 	}
-	var argvs [][]string
-	var nums []int
+	// The only non-native bulk actions are exits-TUI worktree fan-outs.
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -398,40 +363,12 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 			m.err = err
 			continue
 		}
-		if a.ExitsTUI {
-			m.queueExit(a.Key, argv)
-		} else {
-			argvs = append(argvs, argv)
-			nums = append(nums, v.Number)
-		}
+		m.queueExit(a.Key, argv)
 	}
 	if a.ExitsTUI {
 		return tea.Quit
 	}
-	if len(argvs) == 0 {
-		return nil
-	}
-	n := len(argvs)
-	m.actionStatus = statForBulk(a, n)
-	m.actionStatus.refresh = a.Refresh
-	m.actionStatus.nums = nums
-	m.sel.clear() // the batch op consumes the selection
-	r, dir := m.runner, m.dir
-	return tea.Batch(func() tea.Msg {
-		var failed int
-		for _, argv := range argvs {
-			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
-				failed++
-			}
-		}
-		if failed == 0 {
-			return actionDoneMsg{}
-		}
-		return actionDoneMsg{
-			err:  fmt.Errorf("%d of %d failed", failed, n),
-			fail: fmt.Sprintf("%d of %d failed", failed, n),
-		}
-	}, m.startSpinner())
+	return nil
 }
 
 // runBulkNative is runBulk's native-mutation counterpart, firing
