@@ -120,3 +120,80 @@ func TestReviewerDiff(t *testing.T) {
 		t.Fatalf("no change expected, got add=%v rm=%v", add, rm)
 	}
 }
+
+func automergeAction() action.Action {
+	return action.Action{
+		Key: "A", Scope: "per-selected", ConfirmOthers: true,
+		Command: action.Command{Argv: []string{"gh", "pr", "merge", "{{.Number}}", "--auto", "--squash"}},
+	}
+}
+
+func TestConfirmOthersOwnPRRunsImmediately(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	sec := NewPRSection("is:open")
+	p := gh.PR{Number: 7}
+	p.Author.Login = "me"
+	sec.SetPRs([]gh.PR{p})
+	m.section = sec
+
+	if cmd := m.startBulk(automergeAction()); cmd == nil {
+		t.Fatal("own PR should run without a prompt")
+	}
+	if m.pending != nil {
+		t.Fatal("own PR must not set pending")
+	}
+}
+
+func TestConfirmOthersForeignPRPrompts(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	sec := NewPRSection("is:open")
+	p := gh.PR{Number: 7}
+	p.Author.Login = "alice"
+	sec.SetPRs([]gh.PR{p})
+	m.section = sec
+
+	if cmd := m.startBulk(automergeAction()); cmd != nil {
+		t.Fatal("foreign PR should defer to a prompt (nil cmd)")
+	}
+	if m.pending == nil {
+		t.Fatal("foreign PR must set pending")
+	}
+}
+
+func TestConfirmOthersBulkAlwaysPrompts(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	sec := NewPRSection("is:open")
+	p1, p2 := gh.PR{Number: 7}, gh.PR{Number: 9}
+	p1.Author.Login = "me"
+	p2.Author.Login = "me"
+	sec.SetPRs([]gh.PR{p1, p2})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+
+	if cmd := m.startBulk(automergeAction()); cmd != nil {
+		t.Fatal("bulk should always defer to a prompt (nil cmd)")
+	}
+	if m.pending == nil {
+		t.Fatal("bulk must set pending even when all PRs are the viewer's")
+	}
+}
+
+func TestConfirmOthersUnknownViewerPrompts(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil) // viewerLogin == ""
+	sec := NewPRSection("is:open")
+	p := gh.PR{Number: 7}
+	p.Author.Login = "alice"
+	sec.SetPRs([]gh.PR{p})
+	m.section = sec
+
+	if cmd := m.startBulk(automergeAction()); cmd != nil {
+		t.Fatal("unresolved viewer login should defer to a prompt (nil cmd)")
+	}
+	if m.pending == nil {
+		t.Fatal("unresolved viewer login must set pending")
+	}
+}
