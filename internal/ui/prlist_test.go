@@ -1473,25 +1473,6 @@ func TestMainViewJumpsTabWithDigit(t *testing.T) {
 	}
 }
 
-// TestMainViewEnterMaximizesInWideLayout guards Enter's repurposed meaning:
-// with a side pane present it toggles previewMax rather than running the
-// "enter" action (Open worktree).
-func TestMainViewEnterMaximizesInWideLayout(t *testing.T) {
-	m := newTestModelWideWithPR(t)
-	nm, cmd := m.Update(keyMsg("enter"))
-	got := nm.(Model)
-	if !got.previewMax {
-		t.Fatal("enter in the wide layout should toggle previewMax on")
-	}
-	if cmd != nil {
-		t.Fatal("maximizing must not dispatch a command")
-	}
-	nm2, _ := got.Update(keyMsg("enter"))
-	if nm2.(Model).previewMax {
-		t.Fatal("a second enter should toggle previewMax back off")
-	}
-}
-
 // TestMainViewNarrowKeysUnchanged pins the narrow-layout paths that must
 // keep their pre-existing behavior: l opens the full-screen expanded view,
 // and h/1-6 are no-ops (there is no pane to address).
@@ -1520,9 +1501,8 @@ func TestMainViewNarrowKeysUnchanged(t *testing.T) {
 }
 
 // TestMainViewEnterActionSurvivesNarrowLayout guards the pre-existing
-// "enter" action binding (Open worktree) outside the wide-PR pane case: the
-// new maximize case must fall through to the default action dispatch, not
-// swallow the key.
+// "enter" action binding (Open worktree): the new tab/pane keys (h/l/1-6)
+// must not touch "enter" — it stays a plain action key in every layout.
 func TestMainViewEnterActionSurvivesNarrowLayout(t *testing.T) {
 	m := newTestModelWideWithPR(t)
 	m.width, m.height = 80, 40 // narrow: no pane, enter is an action key

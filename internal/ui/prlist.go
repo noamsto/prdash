@@ -1479,12 +1479,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expandedTab = int(msg.String()[0] - '1')
 			m.checkCursor = 0
 			return m, nil
-		case "enter":
-			if m.mode == "pr" && computeLayout(m.width, m.height).ShowSide {
-				m.previewMax = !m.previewMax
-				return m, nil
-			}
-			fallthrough // narrow / issues: "enter" is also bound to an action (e.g. "Open worktree")
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
