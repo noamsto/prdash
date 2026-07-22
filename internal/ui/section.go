@@ -363,7 +363,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
-	// The title owns the whole flexible middle — chips no longer share it.
+	// The title owns the whole flexible middle; chips live on line 2, not here.
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
 	if titleRoom < 1 {
 		titleRoom = 1
