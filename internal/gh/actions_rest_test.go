@@ -184,6 +184,24 @@ func TestJobLogRedirectDropsAuthOnFollowup(t *testing.T) {
 	}
 }
 
+// TestJobLogClientsCarryTimeout guards against both job-log hops hanging
+// forever: neither reuses s.http (see JobLog's doc comment), so each must
+// build its own client bounded by graphTimeout.
+func TestJobLogClientsCarryTimeout(t *testing.T) {
+	if got := timeoutHTTPClient(nil).Timeout; got != graphTimeout {
+		t.Errorf("blob-fetch client Timeout = %v, want %v", got, graphTimeout)
+	}
+	noRedirect := timeoutHTTPClient(func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
+	if noRedirect.Timeout != graphTimeout {
+		t.Errorf("no-redirect client Timeout = %v, want %v", noRedirect.Timeout, graphTimeout)
+	}
+	if noRedirect.CheckRedirect == nil {
+		t.Fatal("no-redirect client must still refuse to auto-follow redirects")
+	}
+}
+
 func TestJobLogNon302IsError(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

@@ -193,7 +193,19 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 // closes over plain values (mutationSource, p.ID, a precomputed error) — never
 // m itself — so it's safe to run later from runBulkNative's async batch. ok is
 // false for any native marker this dispatcher doesn't recognize.
+//
+// p.ID is guarded here, once, for every marker that needs it: a stale cache
+// entry written by the old gh-CLI prdash (no node id) can outlive the
+// launch-fresh TTL and reach this dispatcher with p.ID == "", which would
+// otherwise surface as a confusing raw GraphQL error from the mutation itself.
 func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bool) {
+	if p.ID == "" {
+		switch native {
+		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch":
+			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
+			return func() error { return err }, true
+		}
+	}
 	src := m.mutationSource
 	switch native {
 	case "merge-squash":
@@ -293,9 +305,17 @@ func reviewerDiff(current []string, picked map[string]bool) (add, remove []strin
 // add/remove only decide whether anything changed (nothing to do when both are
 // empty); the request sends picked (the full desired reviewer-login set) in one
 // requestReviewsByLogin(union:false) call — see research/request-reviews.md.
+//
+// prID is guarded the same way as nativeMutationFn's p.ID: a stale gh-CLI-era
+// cache entry can carry an empty node id, which would otherwise reach
+// RequestReviews and surface as a confusing raw GraphQL error.
 func (m Model) assignReviewersCmd(number int, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
+	}
+	if prID == "" {
+		err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", number)
+		return func() tea.Msg { return fetchFailedMsg{err: err} }
 	}
 	delete(m.fresh, number) // reviewer set changed → summary must revalidate
 	fetch := m.fetchCmd(m.filter)
