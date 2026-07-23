@@ -704,9 +704,9 @@ func (m *Model) Hydrate() {
 	m.hydrateMembers()
 }
 
-// fetchCmd fetches the PR list for filter through the active PR source (gh CLI
-// or githubv4), tagging the result so a background prewarm of a non-current
-// preset lands in the cache without repainting the view.
+// fetchCmd fetches the PR list for filter through the PR source, tagging the
+// result so a background prewarm of a non-current preset lands in the cache
+// without repainting the view.
 func (m Model) fetchCmd(filter string) tea.Cmd {
 	src := m.prSource
 	return func() tea.Msg {
@@ -1123,13 +1123,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case membersFetchedMsg:
 		m.members = msg.users
 		if m.cache != nil {
-			raw := msg.raw
-			if raw == nil {
-				raw, _ = json.Marshal(msg.users)
-			}
-			if raw != nil {
-				m.cache.Set(membersKey(m.repo), raw)
-			}
+			m.cache.Set(membersKey(m.repo), msg.raw)
 		}
 		if m.showPicker {
 			m.pick.cands = msg.users
