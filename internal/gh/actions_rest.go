@@ -127,6 +127,15 @@ func (s GraphSource) RerunJob(jobID int64) error {
 	return s.postAction(fmt.Sprintf("/repos/%s/%s/actions/jobs/%d/rerun", owner, name, jobID))
 }
 
+// timeoutHTTPClient builds a bare (non-oauth2) http.Client bounded by the same
+// graphTimeout every other call in this package carries via s.http, so the
+// job-log path's two hops — which can't reuse s.http (see JobLog's doc
+// comment) — don't hang the log view forever on a stalled network. checkRedirect
+// is nil for the plain, redirect-following blob fetch.
+func timeoutHTTPClient(checkRedirect func(*http.Request, []*http.Request) error) *http.Client {
+	return &http.Client{Timeout: graphTimeout, CheckRedirect: checkRedirect}
+}
+
 // JobLog fetches jobID's plain-text log via the REST single-job endpoint,
 // which responds with a short-lived (~1 minute) redirect to a blob-storage
 // URL rather than the body directly, and converts it into the tab-delimited
@@ -157,11 +166,9 @@ func (s GraphSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
 
-	noRedirect := &http.Client{
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	noRedirect := timeoutHTTPClient(func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
 	resp, err := noRedirect.Do(req)
 	if err != nil {
 		return nil, err
@@ -175,8 +182,10 @@ func (s GraphSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
 	// Second, independent request: no auth headers at all. The blob URL is
 	// already a fully-signed, short-lived query-string-authenticated link;
 	// attaching a GitHub token here both leaks it needlessly off github.com and
-	// can trigger a signature-mismatch rejection from the storage backend.
-	logResp, err := http.Get(loc)
+	// can trigger a signature-mismatch rejection from the storage backend. It
+	// still needs its own timeout, though — neither hop reuses s.http, so
+	// neither inherits its bound.
+	logResp, err := timeoutHTTPClient(nil).Get(loc)
 	if err != nil {
 		return nil, err
 	}

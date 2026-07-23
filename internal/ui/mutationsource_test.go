@@ -201,6 +201,21 @@ func TestSingleNativeCmdRoutesToNativeSource(t *testing.T) {
 	}
 }
 
+// TestNativeMutationSkipsWhenNodeIDEmpty covers a stale cache entry written by
+// the old gh-CLI prdash (no node id) reaching the native mutation dispatcher:
+// it must short-circuit to a clear error instead of ever invoking the fake
+// MutationSource with an empty id.
+func TestNativeMutationSkipsWhenNodeIDEmpty(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 7, State: "OPEN"}}) // ID left unset
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (empty node id)", msg)
+	}
+	if len(fs.mergeCalls) != 0 {
+		t.Errorf("mergeCalls = %v, want none — the empty-id guard must short-circuit before firing", fs.mergeCalls)
+	}
+}
+
 func TestRequestReviewsSendsFullSetWithUnionFalse(t *testing.T) {
 	m, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
 	picked := map[string]bool{"alice": true, "bob": true}
@@ -254,5 +269,27 @@ func TestRequestReviewsSkipsWhenNothingChanged(t *testing.T) {
 	}
 	if len(fs.reviewCalls) != 0 {
 		t.Errorf("reviewCalls = %+v, want none", fs.reviewCalls)
+	}
+}
+
+// TestRequestReviewsSkipsWhenNodeIDEmpty covers the same stale-cache scenario
+// as TestNativeMutationSkipsWhenNodeIDEmpty, but for the reviewer-assignment
+// path, which reaches the mutation source through assignReviewersCmd rather
+// than nativeMutationFn.
+func TestRequestReviewsSkipsWhenNodeIDEmpty(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 5, State: "OPEN"}}) // ID left unset
+	picked := map[string]bool{"alice": true}
+	add, remove := reviewerDiff(nil, picked)
+
+	cmd := m.assignReviewersCmd(5, "", add, remove, picked)
+	if cmd == nil {
+		t.Fatal("expected a command surfacing the empty-id error")
+	}
+	msg := cmd()
+	if failed, ok := msg.(fetchFailedMsg); !ok || failed.err == nil {
+		t.Fatalf("msg = %+v, want a fetchFailedMsg (empty node id)", msg)
+	}
+	if len(fs.reviewCalls) != 0 {
+		t.Errorf("reviewCalls = %+v, want none — the empty-id guard must short-circuit before firing", fs.reviewCalls)
 	}
 }
