@@ -111,7 +111,7 @@ func TestRenderFileThreadsHidesResolvedBodies(t *testing.T) {
 	}
 }
 
-// TestRenderFileThreadsHeaderLineNeverOverflows is the M-B regression: unlike
+// TestRenderFileThreadsHeaderLineNeverOverflows guards width-safety: unlike
 // the body line below it, the "L%d" + author + status header was never
 // width-truncated, so a long author name could push the line past w. 24 is
 // the realistic floor (renderItemRow's own documented sub-floor threshold):
@@ -134,9 +134,8 @@ func TestRenderFileThreadsHeaderLineNeverOverflows(t *testing.T) {
 	}
 }
 
-// TestRenderFileThreadsRendersReplies is the M-C regression: renderFileThreads
-// renders t.Comments[1:] as replies under a "└" connector, but no prior test
-// exercised the multi-comment (reply) path.
+// TestRenderFileThreadsRendersReplies covers the reply path: renderFileThreads
+// renders t.Comments[1:] as replies under a "└" connector.
 func TestRenderFileThreadsRendersReplies(t *testing.T) {
 	g := preview.FileThreads{Path: "a.go", Threads: []gh.ReviewThread{
 		{Path: "a.go", Line: 10, IsResolved: false, Comments: []gh.ThreadComment{

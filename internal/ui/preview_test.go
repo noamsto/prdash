@@ -495,7 +495,7 @@ func TestRenderThreadsSummaryShowsFileAndAuthor(t *testing.T) {
 	}
 }
 
-// TestRenderThreadsSummaryLocAuthorLineNeverOverflows is the M-A regression:
+// TestRenderThreadsSummaryLocAuthorLineNeverOverflows guards width-safety:
 // unlike the body line below it, the loc+author line was never width-truncated,
 // so a long author name could push the line past w. 24 is the realistic floor
 // (renderItemRow's own documented sub-floor threshold): below it, a fixed-format

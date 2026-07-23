@@ -1,4 +1,3 @@
-// internal/preview/threads_test.go
 package preview
 
 import (

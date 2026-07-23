@@ -67,8 +67,8 @@ func TestDropLines(t *testing.T) {
 	}
 }
 
-// TestTabSegmentWidthBoundedKeepsActiveVisible is the I-1 regression: unlike
-// renderTabBar's side-pane strip (which can just drop trailing tabs),
+// TestTabSegmentWidthBoundedKeepsActiveVisible guards the tab-strip windowing
+// invariant: unlike renderTabBar's side-pane strip (which can just drop trailing tabs),
 // tabSegment must never exceed maxW while still windowing the visible tabs so
 // the active one — even a trailing tab like Diff — always shows in full. 16 is
 // the narrowest width that fits the widest tab ("Conversation", 12+2 padding)
@@ -107,7 +107,7 @@ func TestTabSegmentDegenerateWidthNeverExceedsBudget(t *testing.T) {
 }
 
 // TestTabbedBoxTopLineNeverExceedsWidth locks tabbedBox's contribution to the
-// I-1 invariant: at every width, the composed top edge (tabSegment plus the
+// tab-strip-never-overflows invariant: at every width, the composed top edge (tabSegment plus the
 // boxTop corner/rule chrome) must stay exactly at the box's outer width.
 func TestTabbedBoxTopLineNeverExceedsWidth(t *testing.T) {
 	tabs := []string{"Overview", "Description", "Conversation", "Reviews", "Checks", "Diff"}
