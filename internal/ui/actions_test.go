@@ -124,7 +124,7 @@ func TestReviewerDiff(t *testing.T) {
 func automergeAction() action.Action {
 	return action.Action{
 		Key: "A", Scope: "per-selected", ConfirmOthers: true,
-		Command: action.Command{Argv: []string{"gh", "pr", "merge", "{{.Number}}", "--auto", "--squash"}},
+		Command: action.Command{Native: "auto-merge-squash"},
 	}
 }
 
