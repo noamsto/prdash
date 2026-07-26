@@ -3,6 +3,8 @@ package preview
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestRenderInlineCodeAndTable(t *testing.T) {
@@ -41,5 +43,19 @@ func TestSetModeChangesOutputAndFlushes(t *testing.T) {
 	if renderMisses != before+1 {
 		t.Errorf("SetMode should flush caches so Render misses once: misses=%d want=%d",
 			renderMisses, before+1)
+	}
+}
+
+func TestRenderDropsHeadingMarkers(t *testing.T) {
+	out, err := Render("### Advisory lost after commit retry\n", 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := ansi.Strip(out)
+	if strings.Contains(plain, "###") {
+		t.Errorf("heading marker leaked into output: %q", plain)
+	}
+	if !strings.Contains(plain, "Advisory lost after commit retry") {
+		t.Errorf("heading text missing: %q", plain)
 	}
 }
