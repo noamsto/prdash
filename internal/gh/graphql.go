@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/go-github/v89/github"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
 )
@@ -25,19 +26,23 @@ const graphTimeout = 20 * time.Second
 // ActionsSource (Actions rerun/job-log REST calls). repo is owner/name.
 type GraphSource struct {
 	repo    string
-	http    *http.Client     // for raw aliased detail queries and REST calls
+	http    *http.Client     // for raw aliased detail queries
 	client  *githubv4.Client // for the typed list query
-	token   string           // raw token; actions_rest.go's job-log redirect handling can't reuse http (see its doc comment)
-	apiBase string           // REST API origin override; "" ⇒ https://api.github.com. Set only by tests.
+	actions *github.Client   // for the Actions REST calls (see actions.go)
 }
 
 // NewGraphSource builds a GraphSource authenticated with token, as returned by
-// `gh auth token`.
-func NewGraphSource(token, repo string) GraphSource {
+// `gh auth token`. github.WithHTTPClient copies hc by value, so the Actions
+// client inherits its graphTimeout bound along with the oauth2 transport.
+func NewGraphSource(token, repo string) (GraphSource, error) {
 	hc := oauth2.NewClient(context.Background(),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
 	hc.Timeout = graphTimeout
-	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc), token: token}
+	actions, err := github.NewClient(github.WithHTTPClient(hc))
+	if err != nil {
+		return GraphSource{}, fmt.Errorf("github client: %w", err)
+	}
+	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc), actions: actions}, nil
 }
 
 func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {

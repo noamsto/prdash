@@ -40,7 +40,11 @@ func main() {
 
 	m := ui.NewModel(dir, "is:open", c)
 	m.SetRepo(repo)
-	gs := gh.NewGraphSource(tok, repo)
+	gs, err := gh.NewGraphSource(tok, repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "prdash:", err)
+		os.Exit(1)
+	}
 	m.SetPRSource(gs)
 	m.SetDetailSource(gs)
 	m.SetThreadsSource(gs)

@@ -134,7 +134,21 @@ both ways), `nix build` to confirm the new `vendorHash`, and measure the binary
 size delta — go-github ships every service in one package, so the growth is
 worth reporting rather than assuming.
 
-## Cost
+## Cost (measured)
 
-One sizable, well-maintained dependency. `go.mod`, `go.sum`, and `flake.nix`'s
-`vendorHash` all change. Net roughly −115 lines in `internal/gh` (251 → ~135).
+One sizable, well-maintained dependency, plus `google/go-querystring` as an
+indirect. `go.mod`, `go.sum`, and `flake.nix`'s `vendorHash` all change.
+
+- **Client code:** `actions_rest.go` 251 lines → `actions.go` 174 (−77). Most of
+  the remainder is `nativeLogToGHFormat` plus the two doc comments carrying the
+  token-safety and log-heuristic rationale.
+- **Binary:** 16.99 MB → 21.31 MB (`-ldflags="-s -w"`), **+4.3 MB / +25%**.
+  go-github ships every service in one package, so the linker prunes little of
+  what we don't call. This is the real price of the swap and the main reason to
+  reconsider it.
+
+Deleting 77 lines of code we own for 4.3 MB of binary is a genuine trade, not a
+free win. It's worth taking because the deleted lines are the error-prone kind —
+hand-built requests, hand-parsed pagination, hand-rolled redirect handling — and
+because prdash is a developer tool distributed via Nix, where binary size is
+cheap. If that ever stops being true, this is the change to revisit.
