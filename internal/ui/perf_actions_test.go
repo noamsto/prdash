@@ -45,7 +45,9 @@ func TestOmniEscPaintsCachedSectionsImmediately(t *testing.T) {
 	m.filterInput.SetValue("label:bug")
 	m.omniServer = "label:bug"
 
-	u, _ := m.Update(keyMsg("esc")) // restores the sections default
+	u, _ := m.Update(keyMsg("esc")) // stage 1: blur but keep the query
+	m = u.(Model)
+	u, _ = m.Update(keyMsg("esc")) // stage 2: clear the query, restores the sections default
 	m = u.(Model)
 
 	if m.filter != "is:open" {

@@ -75,3 +75,18 @@ func TestDefaultsHaveUpdateAndReady(t *testing.T) {
 		t.Fatalf("ready action wrong: %+v", ready)
 	}
 }
+
+func TestDefaultsConfirmOthers(t *testing.T) {
+	d := DefaultPRActions()
+	if !d["A"].ConfirmOthers {
+		t.Error("auto-merge (A) must confirm on others' PRs")
+	}
+	if !d["M"].ConfirmOthers {
+		t.Error("mark ready (M) must confirm on others' PRs")
+	}
+	for _, k := range []string{"m", "u", "r", "o", "enter", "W"} {
+		if d[k].ConfirmOthers {
+			t.Errorf("action %q should not set ConfirmOthers", k)
+		}
+	}
+}

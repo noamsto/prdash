@@ -266,3 +266,8 @@ func mergedMark() string { return mergedStyle.Render(mergedGlyph) }
 const closedGlyph = "✗"
 
 func closedMark() string { return dimStyle.Render(closedGlyph) }
+
+// warnGlyph is the conflict/behind flag. U+FE0E (VS15) forces text presentation
+// so it occupies one terminal cell like ✓/✗/●; the bare U+26A0 defaults to a
+// ~2-cell emoji that shoves the row's columns off the monospace grid.
+const warnGlyph = "⚠︎"
