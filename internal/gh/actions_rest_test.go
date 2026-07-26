@@ -4,50 +4,38 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/go-github/v89/github"
 	"golang.org/x/oauth2"
 )
 
-// testSource builds a GraphSource whose Actions client and oauth2
+// testSource builds a GraphSource whose REST calls (restBase()) and oauth2
 // Authorization header target srv, mirroring NewGraphSource's real wiring
 // minus the live network origin.
-func testSource(t *testing.T, srv *httptest.Server, repo, token string) GraphSource {
-	t.Helper()
+func testSource(srv *httptest.Server, repo, token string) GraphSource {
 	hc := oauth2.NewClient(context.Background(),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
-	actions, err := github.NewClient(github.WithHTTPClient(hc), github.WithURLs(&srv.URL, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return GraphSource{repo: repo, http: hc, actions: actions}
+	return GraphSource{repo: repo, http: hc, token: token, apiBase: srv.URL}
 }
 
-// requireHeaders asserts the headers go-github puts on every Actions request.
-// The API version is spelled out rather than read back from the library so a
-// future change to its default surfaces here instead of passing silently.
 func requireHeaders(t *testing.T, r *http.Request, wantAuth string) {
 	t.Helper()
 	if got := r.Header.Get("Authorization"); got != wantAuth {
 		t.Errorf("Authorization = %q, want %q", got, wantAuth)
 	}
-	if got := r.Header.Get("Accept"); got != "application/vnd.github.v3+json" {
-		t.Errorf("Accept = %q, want application/vnd.github.v3+json", got)
+	if got := r.Header.Get("Accept"); got != "application/vnd.github+json" {
+		t.Errorf("Accept = %q, want application/vnd.github+json", got)
 	}
-	if got := r.Header.Get("X-GitHub-Api-Version"); got != "2022-11-28" {
-		t.Errorf("X-GitHub-Api-Version = %q, want 2022-11-28", got)
+	if got := r.Header.Get("X-GitHub-Api-Version"); got != githubAPIVersion {
+		t.Errorf("X-GitHub-Api-Version = %q, want %q", got, githubAPIVersion)
 	}
 }
 
 func TestListRunsForBranch(t *testing.T) {
 	var gotPath, gotMethod string
-	var gotQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotMethod, gotQuery = r.URL.Path, r.Method, r.URL.Query()
+		gotPath, gotMethod = r.URL.String(), r.Method
 		requireHeaders(t, r, "Bearer tok123")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"total_count":2,"workflow_runs":[
@@ -57,7 +45,7 @@ func TestListRunsForBranch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := testSource(t, srv, "owner/repo", "tok123")
+	s := testSource(srv, "owner/repo", "tok123")
 	runs, err := s.ListRunsForBranch("feat/x")
 	if err != nil {
 		t.Fatal(err)
@@ -65,16 +53,9 @@ func TestListRunsForBranch(t *testing.T) {
 	if gotMethod != http.MethodGet {
 		t.Errorf("method = %q, want GET", gotMethod)
 	}
-	if want := "/repos/owner/repo/actions/runs"; gotPath != want {
-		t.Errorf("path = %q, want %q", gotPath, want)
-	}
-	// Assert the params, not a literal query string: go-github serializes
-	// ListWorkflowRunsOptions in struct-field order, which isn't ours to pin.
-	if got := gotQuery.Get("branch"); got != "feat/x" {
-		t.Errorf("branch = %q, want feat/x", got)
-	}
-	if got := gotQuery.Get("per_page"); got != "20" {
-		t.Errorf("per_page = %q, want 20", got)
+	wantPath := "/repos/owner/repo/actions/runs?branch=feat%2Fx&per_page=20"
+	if gotPath != wantPath {
+		t.Errorf("path = %q, want %q", gotPath, wantPath)
 	}
 	if len(runs) != 2 {
 		t.Fatalf("runs = %+v, want 2 entries", runs)
@@ -95,7 +76,7 @@ func TestListRunsForBranchHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := testSource(t, srv, "owner/repo", "tok")
+	s := testSource(srv, "owner/repo", "tok")
 	if _, err := s.ListRunsForBranch("feat/x"); err == nil {
 		t.Fatal("expected an error on 404")
 	}
@@ -110,7 +91,7 @@ func TestRerunFailedJobs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := testSource(t, srv, "owner/repo", "tok123")
+	s := testSource(srv, "owner/repo", "tok123")
 	if err := s.RerunFailedJobs(200); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +112,7 @@ func TestRerunJob(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := testSource(t, srv, "owner/repo", "tok123")
+	s := testSource(srv, "owner/repo", "tok123")
 	if err := s.RerunJob(555); err != nil {
 		t.Fatal(err)
 	}
@@ -143,16 +124,16 @@ func TestRerunJob(t *testing.T) {
 	}
 }
 
-func TestRerunFailedJobsNon2xxIsError(t *testing.T) {
+func TestRerunFailedJobsNon201IsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"message":"rate limited"}`))
 	}))
 	defer srv.Close()
 
-	s := testSource(t, srv, "owner/repo", "tok")
+	s := testSource(srv, "owner/repo", "tok")
 	if err := s.RerunFailedJobs(1); err == nil {
-		t.Fatal("expected an error on non-2xx")
+		t.Fatal("expected an error on non-201")
 	}
 }
 
@@ -184,7 +165,7 @@ func TestJobLogRedirectDropsAuthOnFollowup(t *testing.T) {
 	}))
 	defer api.Close()
 
-	s := testSource(t, api, "owner/repo", "supersecrettoken")
+	s := testSource(api, "owner/repo", "supersecrettoken")
 	raw, err := s.JobLog(42, false)
 	if err != nil {
 		t.Fatal(err)
@@ -203,18 +184,21 @@ func TestJobLogRedirectDropsAuthOnFollowup(t *testing.T) {
 	}
 }
 
-// TestActionsCtxCarriesDeadline guards the job-log first hop against hanging
-// forever. GetWorkflowJobLogs reaches Transport.RoundTrip directly, so it never
-// sees http.Client.Timeout — graphTimeout only binds it if it rides on the ctx.
-func TestActionsCtxCarriesDeadline(t *testing.T) {
-	ctx, cancel := actionsCtx()
-	defer cancel()
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		t.Fatal("actionsCtx returned a ctx with no deadline")
+// TestJobLogClientsCarryTimeout guards against both job-log hops hanging
+// forever: neither reuses s.http (see JobLog's doc comment), so each must
+// build its own client bounded by graphTimeout.
+func TestJobLogClientsCarryTimeout(t *testing.T) {
+	if got := timeoutHTTPClient(nil).Timeout; got != graphTimeout {
+		t.Errorf("blob-fetch client Timeout = %v, want %v", got, graphTimeout)
 	}
-	if remaining := time.Until(deadline); remaining <= 0 || remaining > graphTimeout {
-		t.Errorf("deadline in %v, want (0, %v]", remaining, graphTimeout)
+	noRedirect := timeoutHTTPClient(func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
+	if noRedirect.Timeout != graphTimeout {
+		t.Errorf("no-redirect client Timeout = %v, want %v", noRedirect.Timeout, graphTimeout)
+	}
+	if noRedirect.CheckRedirect == nil {
+		t.Fatal("no-redirect client must still refuse to auto-follow redirects")
 	}
 }
 
@@ -224,7 +208,7 @@ func TestJobLogNon302IsError(t *testing.T) {
 	}))
 	defer api.Close()
 
-	s := testSource(t, api, "owner/repo", "tok")
+	s := testSource(api, "owner/repo", "tok")
 	if _, err := s.JobLog(1, false); err == nil {
 		t.Fatal("expected an error on non-302 response")
 	}
