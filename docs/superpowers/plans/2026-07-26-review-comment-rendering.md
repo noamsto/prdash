@@ -77,7 +77,8 @@ Expected: FAIL — `heading marker leaked into output:` followed by output conta
 
 - [ ] **Step 3: Write the implementation**
 
-Replace the whole body of `internal/preview/theme.go` below the imports:
+Replace the entire contents of `internal/preview/theme.go` with this (the file is
+17 lines today; this is the whole new file, imports included):
 
 ```go
 package preview
@@ -824,18 +825,37 @@ func renderCommentBody(body string, w int, pad string) string {
 
 - [ ] **Step 4: Rewrite the body lines in `renderFileThreads`**
 
-Replace line 84 (the head-comment body):
+Match by content, not line number — Task 4 deleted `firstLine`, so every line
+below it has shifted.
+
+Find the head-comment body line, which after Task 4 reads:
+
+```go
+		b.WriteString("      " + dimStyle.Render(truncate(preview.PlainTitle(head.Body), w-6)) + "\n")
+```
+
+Replace it with:
 
 ```go
 		b.WriteString(renderDiffHunk(head.DiffHunk, w))
 		b.WriteString(renderCommentBody(head.Body, w, "      "))
 ```
 
-Replace the reply body inside the loop (line 87), keeping the existing author line above it:
+Then find the reply body line inside the `for _, reply := range t.Comments[1:]`
+loop, which after Task 4 reads:
+
+```go
+			b.WriteString("        " + dimStyle.Render(truncate(preview.PlainTitle(reply.Body), w-8)) + "\n")
+```
+
+Replace it with:
 
 ```go
 			b.WriteString(renderCommentBody(reply.Body, w, "        "))
 ```
+
+Leave the reply author line (`sepStyle.Render("└ ")` …) directly above it
+untouched.
 
 `renderFileThreads` keeps its signature. `preview.PlainTitle` is still used by `renderThreadsSummary` and by `renderCommentBody`'s fallback.
 
