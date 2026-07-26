@@ -21,12 +21,25 @@ button.
    Stock `styles.DarkStyleConfig` sets `H3.Prefix = "### "`. Reachable: `H1`–`H6`
    are `ansi.StyleBlock` fields on `ansi.StyleConfig`.
 2. Inline images and links print their destination —
-   `P1 Badge https://img.shields.io/badge/P1-orange?style=flat`. This is **not**
-   style-configurable: `ansi/image.go` gates URL emission on `ImageElement.TextOnly`
-   and `ansi/link.go` on `LinkElement.SkipHref`, and `ansi/elements.go` sets both
-   only when `isInsideTable(node)`. Setting `Image.Format`/`ImageText.Format` to
-   `""` removes the `Image: ` label but not the URL. A markdown pre-pass is the
-   only lever.
+   `P1 Badge https://img.shields.io/badge/P1-orange?style=flat`.
+
+   > **Superseded 2026-07-26, during implementation.** This section originally
+   > concluded that a markdown pre-pass was "the only lever," reasoning that
+   > `ansi/image.go` gates URL emission on `ImageElement.TextOnly`, `ansi/link.go`
+   > on `LinkElement.SkipHref`, and `ansi/elements.go` sets both only when
+   > `isInsideTable(node)`. That is true of the *element* fields but overlooked
+   > `StylePrimitive.Format`. Setting `ImageText.Format`, `Image.Format`, and
+   > `Link.Format` to a template that evaluates to nothing
+   > (`{{if false}}{{.text}}{{end}}` — an empty `Format` means passthrough)
+   > suppresses all three runs through style config alone.
+   >
+   > This is strictly better than the pre-pass, which would have destroyed link
+   > clickability (removing the AST link node means glamour emits no OSC 8) and
+   > risked corrupting code — `arr[0](ctx)` inside a fence matches the link
+   > pattern. Suppressing `Link.Format` keeps the hyperlink and drops only the
+   > painted URL. See Task 2 of
+   > `docs/superpowers/plans/2026-07-26-review-comment-rendering.md` for the
+   > measured results.
 
 **Summary lines are a different problem.** Glamour emits multi-line styled
 blocks; the Overview `THREADS` block and the Diff tab's per-thread head line each
@@ -39,14 +52,14 @@ Two seams, both in `internal/preview`, so the Conversation tab benefits from the
 same fix:
 
 ```
-body ──┬─► Render(md, w)         ─► glamour ─► styled multi-line block  (full body)
-       │     └─ prePass(md)
-       └─► PlainTitle(body)      ─► one plain line                      (summary)
+body ──┬─► Render(md, w) ─► glamour(terminalStyle) ─► styled block  (full body)
+       └─► PlainTitle(body) ───────────────────────► one plain line  (summary)
 ```
 
-`prePass` runs inside `Render`, before glamour. Callers do not opt in — the
-Conversation tab has the identical badge/URL noise today, and fixing it at the
-shared seam fixes both surfaces at once.
+Everything glamour paints is corrected by `terminalStyle` in `theme.go` — the
+style config `Render` already builds its renderers from. Callers do not opt in,
+and no markdown is rewritten: the Conversation tab has the identical badge/URL
+noise today, and fixing it in the shared style fixes both surfaces at once.
 
 `PlainTitle` is exported alongside `Render`. `firstLine` in `threads_render.go`
 has three call sites, and they are not all summaries:
@@ -64,25 +77,26 @@ used only at `:35`.
 
 ## Components
 
-### `internal/preview/theme.go` — heading prefixes
+### `internal/preview/theme.go` — `terminalStyle`
 
 Wrap the stock configs rather than hand-rolling a style: copy
-`styles.DarkStyleConfig`/`LightStyleConfig`, then for `H1`–`H6` set
-`Prefix = ""` and `Bold = true`. Keeps every other stock decision (including
-tables, which the existing comment in this file warns not to break).
+`styles.DarkStyleConfig`/`LightStyleConfig` and adapt three things. Keeps every
+other stock decision (including tables, which the existing comment in this file
+warns not to break).
 
-### `internal/preview` — `prePass`
+- **Headings:** `H1`–`H6` get `Prefix = ""` and `Bold = true`, so `### ` stops
+  being painted.
+- **Images:** `ImageText.Format` and `Image.Format` both suppressed, dropping alt
+  text and URL. Every image in a review comment is a shields.io severity badge
+  that cannot render in a terminal.
+- **Link hrefs:** `Link.Format` suppressed. The OSC 8 wrapper is emitted by
+  `LinkElement` independently of `Format`, so links stay clickable while the URL
+  stops being painted. Table links are unaffected — inside a table glamour sets
+  `LinkElement.SkipHref`, so `renderHrefPart` never reads `Link.Format`.
 
-Unexported. Two transforms, in order:
-
-- strip image syntax entirely: `![alt](url)` → `` (removes badges)
-- collapse links to their text: `[text](url)` → `text`
-
-Regex-based. Markdown link/image syntax does not nest in these bodies, and a
-full CommonMark inline walk to delete two node types is not warranted.
-
-OSC 8 hyperlinks are emitted by glamour from the AST, so links remain clickable
-in kitty after the pre-pass — only the printed URL text goes away.
+Suppression value is `{{if false}}{{.text}}{{end}}`: `StylePrimitive.Format` is a
+Go template applied to the token, and an **empty** `Format` means "no template"
+(passthrough), so silencing a run needs a template that evaluates to nothing.
 
 ### `internal/preview` — `PlainTitle`
 
@@ -156,12 +170,14 @@ a hunk for) renders the thread with no hunk block, not an empty bordered box.
 `internal/preview`:
 
 - `PlainTitle` table test with the four real 2936 first-lines as fixtures, plus
-  the badge-only-first-line case that must fall through, plus empty input
-- `prePass` table test: image stripped, link collapsed to text, text with neither
-  passes through unchanged
-- an end-to-end `Render` assertion that a body containing `### h`, a badge image,
-  and an HTML comment produces output with none of `###`, `img.shields.io`, or
-  `<!--`
+  the badge-only-first-line case that must fall through, plus empty input, plus a
+  snake_case identifier that must survive
+- an end-to-end `Render` assertion, on `ansi.Strip`ped output with whitespace
+  collapsed (glamour word-wraps, so a split URL slips past a plain substring
+  check), that a body containing `### h`, a badge image, and a link paints none of
+  `###`, `img.shields.io`, `Image:`, or the link URL — while still painting the
+  heading text and the link label
+- an assertion that the link's OSC 8 wrapper survives, i.e. it is still clickable
 
 All of the above is PR A. PR B adds:
 
@@ -179,7 +195,7 @@ All of the above is PR A. PR B adds:
 
 ## Staging
 
-**PR A — rendering.** `theme.go` heading prefixes, `Render` pre-pass,
+**PR A — rendering.** `theme.go` heading prefixes and image/link-href suppression,
 `PlainTitle` replacing all three `firstLine` call sites, delete `firstLine`. No
 GraphQL change, no cache bump. Fixes what is visibly broken on screen today.
 

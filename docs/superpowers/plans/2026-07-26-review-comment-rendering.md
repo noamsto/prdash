@@ -4,7 +4,7 @@
 
 **Goal:** Make PR review comments readable in prdash — render their markdown, drop bot badge/URL noise, and show the diff context each comment was written against.
 
-**Architecture:** Two seams in `internal/preview`, so the Conversation tab benefits alongside the threads UI. `Render` gains a markdown pre-pass that deletes inline images and collapses links to their label; a new `PlainTitle` distills a body to one plain line for summary contexts. The glamour style configs stop printing literal heading markers. Then `internal/gh` selects the per-comment `diffHunk` already available in the existing threads query, and `renderFileThreads` paints it above a fully-rendered body.
+**Architecture:** Two seams in `internal/preview`, so the Conversation tab benefits alongside the threads UI. Everything glamour paints is corrected in the style config `Render` already uses — heading markers stop printing, badge images are suppressed, and a link's URL stops being painted while its OSC 8 wrapper (and so its clickability) survives. No markdown is rewritten and no rendered ANSI is post-processed. A new `PlainTitle` covers summary rows, which never reach glamour. Then `internal/gh` selects the per-comment `diffHunk` already available in the existing threads query, and `renderFileThreads` paints it above a fully-rendered body.
 
 **Tech Stack:** Go, `charm.land/glamour/v2` (markdown→ANSI), `charm.land/lipgloss/v2` (styling), githubv4 GraphQL.
 
@@ -21,11 +21,10 @@
 
 | File | Responsibility | Task |
 |---|---|---|
-| `internal/preview/theme.go` | modify — wrap stock glamour configs to drop heading markers | 1 |
-| `internal/preview/plaintext.go` | **create** — shared markdown regexes, `prePass`, `PlainTitle` | 2, 3 |
-| `internal/preview/plaintext_test.go` | **create** — table tests for both | 2, 3 |
-| `internal/preview/render.go` | modify — call `prePass` inside `Render` | 2 |
-| `internal/preview/render_test.go` | modify — end-to-end no-`###`/no-URL assertions | 1, 2 |
+| `internal/preview/theme.go` | modify — adapt stock glamour configs: heading markers (1), image + link href suppression (2) | 1, 2 |
+| `internal/preview/plaintext.go` | **create** — markdown regexes + `PlainTitle` | 3 |
+| `internal/preview/plaintext_test.go` | **create** — `PlainTitle` table test | 3 |
+| `internal/preview/render_test.go` | modify — end-to-end no-`###`/no-badge/no-URL assertions | 1, 2 |
 | `internal/ui/threads_render.go` | modify — `PlainTitle` swap (4), hunk block + full body (6) | 4, 6 |
 | `internal/ui/threads_render_test.go` | **create** — render assertions | 4, 6 |
 | `internal/gh/threads.go` | modify — `diffHunk` in query, `ThreadComment.DiffHunk` | 5 |
@@ -33,7 +32,9 @@
 | `internal/gh/threads_test.go` | modify — assert `DiffHunk` parses | 5 |
 | `internal/ui/preview.go` | modify — `threadsSchemaVer` v1→v2 | 5 |
 
-`prePass` and `PlainTitle` share the same four regexes, so they live in one file. Both are markdown→plainer-markdown/text transforms; that is the file's single responsibility.
+Everything glamour renders is fixed in `theme.go` through style config alone — no
+markdown rewriting and no post-processing of rendered ANSI. `plaintext.go` exists
+only for `PlainTitle`, which serves summary rows that never reach glamour.
 
 ---
 
@@ -130,191 +131,165 @@ git commit -m "fix(preview): stop glamour printing literal heading markers (#55)
 
 ---
 
-## Task 2: Markdown pre-pass — drop images, collapse links
+## Task 2: Suppress badge images and printed link URLs
 
-Glamour renders an inline image as `Image: alt → url` and a link as `text url`. Bot severity badges are images, so a codex comment prints `P1 Badge https://img.shields.io/badge/P1-orange?style=flat`. This is **not** style-configurable — `ansi/image.go` gates URL output on `ImageElement.TextOnly` and `ansi/link.go` on `LinkElement.SkipHref`, and `ansi/elements.go` sets both only when `isInsideTable(node)`.
+Glamour renders an inline image as `Image: alt → url` and a link as `text url`.
+Bot severity badges are images, so a codex comment prints
+`P1 Badge https://img.shields.io/badge/P1-orange?style=flat`, and Cursor's
+"Additional Locations" block wraps a 100-character blob URL across four lines.
+
+Both are suppressible through `ansi.StyleConfig` alone. `StylePrimitive.Format`
+is a Go template applied to the rendered token; a template that emits nothing
+suppresses the run. An **empty** `Format` means "no template" (passthrough), so
+the suppressing value must be a template that evaluates to nothing:
+`{{if false}}{{.text}}{{end}}`.
+
+Measured on `charm.land/glamour/v2@v2.0.1`:
+
+| Config | badge URL | badge alt | link URL painted | link OSC 8 | title text |
+|---|---|---|---|---|---|
+| stock | shown | shown | shown | kept | kept |
+| `ImageText.Format` hidden | shown | **gone** | — | — | kept |
+| `ImageText`+`Image.Format` hidden | **gone** | **gone** | — | — | kept |
+| `Link.Format` hidden | — | — | **gone** | **kept** | kept |
+
+Suppressing `Link.Format` keeps the OSC 8 hyperlink, so links stay clickable in
+a terminal that supports them while the noisy URL text disappears. Table links
+are unaffected: inside a table glamour sets `LinkElement.SkipHref`, so
+`renderHrefPart` — the only consumer of `Link.Format` — never runs.
 
 **Files:**
-- Create: `internal/preview/plaintext.go`
-- Create: `internal/preview/plaintext_test.go`
-- Modify: `internal/preview/render.go:46`
+- Modify: `internal/preview/theme.go` (extend `noHeadingMarkers` from Task 1)
 - Test: `internal/preview/render_test.go` (append)
 
 **Interfaces:**
-- Consumes: nothing
-- Produces: `prePass(md string) string` (unexported); package vars `mdImage`, `mdLink`, `htmlTag`, `mdEmph`, `wsRun` (`*regexp.Regexp`) — Task 3 reuses all five
+- Consumes: `noHeadingMarkers(ansi.StyleConfig) ansi.StyleConfig` from Task 1
+- Produces: nothing new — `darkStyle`/`lightStyle`/`activeStyle` keep their names and types
 
 - [ ] **Step 1: Write the failing test**
 
-Create `internal/preview/plaintext_test.go`:
+Append to `internal/preview/render_test.go`. `ansi` here is
+`github.com/charmbracelet/x/ansi`, already imported by this file after Task 1:
 
 ```go
-package preview
-
-import "testing"
-
-func TestPrePass(t *testing.T) {
-	cases := []struct {
-		name, in, want string
-	}{
-		{
-			name: "image stripped entirely",
-			in:   "![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Handle nulls",
-			want: "  Handle nulls",
-		},
-		{
-			name: "link collapses to its label",
-			in:   "see [the schema](https://github.com/x/y/blob/main/a.sql#L1) for detail",
-			want: "see the schema for detail",
-		},
-		{
-			name: "plain prose untouched",
-			in:   "The error rolls back the entire binding transaction.",
-			want: "The error rolls back the entire binding transaction.",
-		},
-		{
-			name: "index expression inside a fence is not mistaken for a link",
-			in:   "```go\nv := arr[0](ctx)\n```",
-			want: "```go\nv := arr[0](ctx)\n```",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := prePass(c.in); got != c.want {
-				t.Errorf("prePass() = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `go test ./internal/preview/ -run TestPrePass -v`
-Expected: FAIL to build — `undefined: prePass`
-
-- [ ] **Step 3: Write the implementation**
-
-Create `internal/preview/plaintext.go`:
-
-```go
-package preview
-
-import (
-	"regexp"
-	"strings"
-)
-
-// Markdown inline patterns shared by prePass and PlainTitle.
-//
-// mdImage must be applied before mdLink: an image is a link with a leading "!",
-// so collapsing links first would consume the "[alt](url)" part and leave a
-// stray "!" behind.
-//
-// mdEmph deliberately omits "_": underscore emphasis is rare in review-comment
-// titles, while snake_case identifiers are common, and stripping "_" would turn
-// substitution_value into substitutionvalue.
-var (
-	mdImage = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
-	mdLink  = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
-	htmlTag = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
-	mdEmph  = regexp.MustCompile("[*`]+")
-	wsRun   = regexp.MustCompile(`\s+`)
-)
-
-// prePass strips the inline markdown glamour insists on expanding to "text url"
-// in a terminal: images go entirely (bot severity badges are images) and links
-// collapse to their label. Glamour still emits the OSC 8 hyperlink from the AST,
-// so links stay clickable — only the printed URL goes away.
-//
-// Fenced code blocks pass through untouched: a line like arr[0](ctx) inside a
-// fence matches mdLink and would otherwise be silently corrupted.
-func prePass(md string) string {
-	lines := strings.Split(md, "\n")
-	inFence := false
-	for i, ln := range lines {
-		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		s := mdImage.ReplaceAllString(ln, "")
-		lines[i] = mdLink.ReplaceAllString(s, "$1")
-	}
-	return strings.Join(lines, "\n")
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `go test ./internal/preview/ -run TestPrePass -v`
-Expected: PASS, all four subtests.
-
-- [ ] **Step 5: Wire prePass into Render**
-
-In `internal/preview/render.go`, change line 46 from:
-
-```go
-	out, err := r.Render(md)
-```
-
-to:
-
-```go
-	out, err := r.Render(prePass(md))
-```
-
-The `outputByKey` cache key stays keyed on the original `md` (line 29) — `prePass` is deterministic, so the same input still maps to the same output and the memoization is unaffected.
-
-- [ ] **Step 6: Write the end-to-end test**
-
-Append to `internal/preview/render_test.go`:
-
-```go
-func TestRenderDropsBadgeAndURLNoise(t *testing.T) {
-	const md = "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Handle nulls**\n\n" +
+func TestRenderSuppressesBadgeAndURLNoise(t *testing.T) {
+	const md = "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Handle nulls**\n\n" +
 		"See [the schema](https://github.com/x/y/blob/main/a.sql) for detail.\n"
-	out, err := Render(md, 80)
+	out, err := Render(md, 72)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"img.shields.io", "Image:", "github.com/x/y"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("%q leaked into output: %q", bad, out)
+	// Collapse whitespace: glamour word-wraps, and a long URL split across
+	// lines would otherwise slip past a plain substring check.
+	painted := wsCollapse.ReplaceAllString(ansi.Strip(out), "")
+	for _, bad := range []string{"img.shields.io", "Image:", "P1Badge", "github.com/x/y"} {
+		if strings.Contains(painted, bad) {
+			t.Errorf("%q is painted but should be suppressed: %q", bad, painted)
 		}
 	}
-	if !strings.Contains(out, "Handle nulls") || !strings.Contains(out, "the schema") {
-		t.Errorf("meaningful text missing: %q", out)
+	if !strings.Contains(painted, "Handlenulls") {
+		t.Errorf("title text missing: %q", painted)
+	}
+	if !strings.Contains(painted, "theschema") {
+		t.Errorf("link label missing: %q", painted)
+	}
+	// The link must remain clickable: its OSC 8 wrapper survives even though
+	// the URL is no longer painted.
+	if !strings.Contains(out, "\x1b]8;") {
+		t.Error("link lost its OSC 8 hyperlink; it is no longer clickable")
 	}
 }
 ```
 
-- [ ] **Step 7: Run the full package tests**
+Add this helper next to it (the test file has no regexp import yet):
 
-Run: `go test ./internal/preview/ -v`
-Expected: PASS. `TestRenderInlineCodeAndTable` still passes — its markdown has no images or links.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add internal/preview/plaintext.go internal/preview/plaintext_test.go internal/preview/render.go internal/preview/render_test.go
-git commit -m "fix(preview): drop badge images and printed URLs from rendered markdown (#55)"
+```go
+var wsCollapse = regexp.MustCompile(`\s+`)
 ```
 
+Add `"regexp"` to the import block.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./internal/preview/ -run TestRenderSuppressesBadgeAndURLNoise -v`
+Expected: FAIL — reports `"img.shields.io" is painted but should be suppressed` and `"P1Badge" is painted but should be suppressed`.
+
+- [ ] **Step 3: Extend the style wrapper**
+
+In `internal/preview/theme.go`, rename `noHeadingMarkers` to `terminalStyle` and
+add the image and link suppression. The whole function becomes:
+
+```go
+// hideFormat is a Format template that emits nothing. StylePrimitive.Format is
+// a Go template applied to the rendered token, and an EMPTY Format means "no
+// template" (passthrough) — so suppressing a run needs a template that
+// evaluates to nothing rather than "".
+const hideFormat = "{{if false}}{{.text}}{{end}}"
+
+// terminalStyle adapts a stock glamour style for a terminal PR dashboard:
+//
+//   - H1-H6 lose their literal "#" marker prefix and bold instead. Bot review
+//     comments lead with a markdown heading (Cursor BugBot titles findings with
+//     ###) and the stock configs print the marker verbatim.
+//   - Images are suppressed entirely, alt text and URL both. Every image in a
+//     review comment is a shields.io severity badge that cannot render here.
+//   - A link's href stops being painted, but its OSC 8 wrapper is untouched, so
+//     links stay clickable while a 100-character blob URL no longer wraps across
+//     four lines. Table links are unaffected: inside a table glamour sets
+//     LinkElement.SkipHref, so renderHrefPart never consults Link.Format.
+//
+// s is a copy, and Bold is replaced rather than written through, so the stock
+// package-level configs are left intact.
+func terminalStyle(s ansi.StyleConfig) ansi.StyleConfig {
+	bold := true
+	for _, h := range []*ansi.StyleBlock{&s.H1, &s.H2, &s.H3, &s.H4, &s.H5, &s.H6} {
+		h.Prefix = ""
+		h.Bold = &bold
+	}
+	s.ImageText.Format = hideFormat
+	s.Image.Format = hideFormat
+	s.Link.Format = hideFormat
+	return s
+}
+```
+
+Update both call sites in the same file:
+
+```go
+var (
+	darkStyle  = terminalStyle(styles.DarkStyleConfig)
+	lightStyle = terminalStyle(styles.LightStyleConfig)
+)
+```
+
+- [ ] **Step 4: Run the full package tests**
+
+Run: `go test ./internal/preview/ -v`
+Expected: PASS. In particular `TestRenderInlineCodeAndTable` must still pass —
+it asserts table content survives, and table links take the `SkipHref` path that
+never reads `Link.Format`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/preview/theme.go internal/preview/render_test.go
+git commit -m "fix(preview): suppress badge images and printed link URLs (#55)"
+```
 ---
 
 ## Task 3: `PlainTitle` — one plain line for summary contexts
 
 Glamour emits multi-line styled blocks. The Overview `THREADS` block needs exactly one line of plain text, so it needs a different function, not a `Render` mode.
 
+Summary rows never reach glamour, so Task 2's style config does nothing for them
+— they need their own plain-text distillation of the raw markdown.
+
 **Files:**
-- Modify: `internal/preview/plaintext.go` (append)
-- Modify: `internal/preview/plaintext_test.go` (append)
+- Create: `internal/preview/plaintext.go`
+- Create: `internal/preview/plaintext_test.go`
 
 **Interfaces:**
-- Consumes: `mdImage`, `mdLink`, `htmlTag`, `mdEmph`, `wsRun` from Task 2
+- Consumes: nothing from earlier tasks
 - Produces: `PlainTitle(body string) string` — exported; Task 4 calls it from `internal/ui`
 
 - [ ] **Step 1: Write the failing test**
@@ -374,14 +349,41 @@ Expected: FAIL to build — `undefined: PlainTitle`
 
 - [ ] **Step 3: Write the implementation**
 
-Append to `internal/preview/plaintext.go`:
+Create `internal/preview/plaintext.go` with the whole file below.
+
+Two notes on the regexes, both load-bearing:
+
+- `mdImage` must be applied before `mdLink`. An image is a link with a leading
+  `!`, so collapsing links first would consume the `[alt](url)` part and leave a
+  stray `!` behind.
+- `mdEmph` deliberately omits `_`. Underscore emphasis is rare in review-comment
+  titles, while snake_case identifiers are common, and stripping `_` would turn
+  `substitution_value` into `substitutionvalue`.
 
 ```go
+package preview
+
+import (
+	"regexp"
+	"strings"
+)
+
+// Inline markdown patterns used to distill a body down to plain text.
+var (
+	mdImage = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+	mdLink  = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	htmlTag = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
+	mdEmph  = regexp.MustCompile("[*`]+")
+	wsRun   = regexp.MustCompile(`\s+`)
+)
+
 // PlainTitle distills a comment body to a single line of plain text, for
-// summary rows that have one line to spend. It returns the first line that is
-// non-empty *after* distillation — a bot comment whose first line is only a
-// severity badge distills to "" and must fall through rather than yielding a
-// blank row. Returns "" when no line survives.
+// summary rows that have one line to spend. Those rows never reach glamour, so
+// the style config that cleans up rendered bodies does nothing for them.
+//
+// It returns the first line that is non-empty *after* distillation — a bot
+// comment whose first line is only a severity badge distills to "" and must fall
+// through rather than yielding a blank row. Returns "" when no line survives.
 func PlainTitle(body string) string {
 	for _, ln := range strings.Split(body, "\n") {
 		s := mdImage.ReplaceAllString(ln, "")
@@ -547,18 +549,19 @@ gh pr create --assignee @me --title "fix: render review comment markdown, drop b
 Review comment bodies were written straight to \`dimStyle\` after \`firstLine\`, so the Overview THREADS block and the Diff tab showed raw markdown — a bot severity badge rendered as \`**<sub><sub>![P2 Badge](https://img.shields.io/...)</sub></sub>  Guard JSON casts with CASE**\`.
 
 ### What changed
-- \`preview/theme.go\` — wrap the stock glamour configs to drop literal heading markers (\`### \`), bolding instead.
-- \`preview/plaintext.go\` — new \`prePass\` runs inside \`Render\`: strips inline images (bot badges) and collapses links to their label. Glamour still emits the OSC 8 hyperlink, so links stay clickable — only the printed URL goes away. Fenced code blocks pass through untouched so \`arr[0](ctx)\` isn't mistaken for a link.
-- \`preview.PlainTitle\` — distills a body to one plain line for summary rows, falling through badge-only first lines.
+- \`preview/theme.go\` — \`terminalStyle\` adapts the stock glamour configs three ways: H1-H6 lose their literal \`#\` marker prefix and bold instead; images are suppressed entirely (every image in a review comment is a shields.io severity badge); a link's href stops being painted while its OSC 8 wrapper survives, so **links stay clickable** but a 100-character blob URL no longer wraps across four lines.
+- \`preview/plaintext.go\` — new \`PlainTitle\` distills a body to one plain line for summary rows, falling through badge-only first lines. Summary rows never reach glamour, so the style config does nothing for them.
 - \`ui/threads_render.go\` — all three \`firstLine\` call sites now use \`PlainTitle\`; \`firstLine\` deleted.
 
-The pre-pass lives in \`Render\`, not the threads renderer, because **the Conversation tab has the same badge/URL noise today** — this fixes both surfaces.
+Everything glamour renders is fixed through style config alone — no markdown rewriting, no post-processing of rendered ANSI (\`theme.go\` warns against the latter; it is what broke tables before). This also means **the Conversation tab gets the same fix**, since it already renders through \`Render\`.
 
-### Why no HTML sanitizer
-Spiking glamour over the real bodies on \`factify-inc/mono#2936\` showed it already strips \`<!-- -->\` marker comments, \`<details>\` blocks, and Cursor BugBot's ~600-char base64 \"Fix in Cursor\" button. The only gaps were heading markers (style-configurable) and inline image/link URLs (not — \`SkipHref\`/\`TextOnly\` are set only inside tables). See the design doc for the file-level evidence.
+### Why no HTML sanitizer, and why no markdown pre-pass
+Spiking glamour over the real bodies on \`factify-inc/mono#2936\` showed it already strips \`<!-- -->\` marker comments, \`<details>\` blocks, and Cursor BugBot's ~600-char base64 \"Fix in Cursor\" button — so no sanitizer is needed.
+
+An earlier draft rewrote the markdown before rendering to strip badges and collapse links. Measurement killed it: collapsing \`[text](url)\` removes the AST link node, so glamour emits no OSC 8 and the link stops being clickable. Suppressing \`Link.Format\` instead keeps the hyperlink and drops only the painted URL. \`StylePrimitive.Format\` is a Go template and an **empty** value means passthrough, so the suppressing value is a template that evaluates to nothing (\`{{if false}}{{.text}}{{end}}\`). Table links are unaffected — inside a table glamour sets \`LinkElement.SkipHref\`, so \`renderHrefPart\` never reads \`Link.Format\`.
 
 ### Verification
-\`go build\` / \`go vet\` / \`go test ./...\` green. New table tests cover \`prePass\` (incl. the code-fence case), \`PlainTitle\` (incl. badge-only fall-through and snake_case preservation), and both render functions asserting no markdown leaks.
+\`go build\` / \`go vet\` / \`go test ./...\` green. Tests cover: heading markers gone, badge alt text and URL both unpainted, link label painted but URL not, the link's OSC 8 wrapper still present, and \`PlainTitle\` (badge-only fall-through, snake_case preservation, blockquote and heading markers, empty input). The pre-existing table test still passes.
 
 Diff context (\`diffHunk\`) follows in part 2."
 ```
@@ -915,11 +918,11 @@ Bot footers (\`Useful? React with 👍 / 👎\`, \`Reviewed by Cursor Bugbot…\
 | Spec section | Task |
 |---|---|
 | Findings: heading prefixes | 1 |
-| Findings: inline image/link URLs not configurable | 2 |
-| Architecture: `prePass` inside `Render` | 2 (Step 5) |
+| Findings: inline image/link URL noise | 2 |
+| Architecture: fix rendered output at the shared `Render` seam | 1, 2 (via `theme.go`) |
 | Architecture: `PlainTitle` separate function | 3 |
 | Components: `theme.go` heading prefixes | 1 |
-| Components: `prePass` | 2 |
+| Components: image + link href suppression | 2 |
 | Components: `PlainTitle` incl. fall-through rule | 3 |
 | Components: `diffHunk` + `threadsSchemaVer` v1→v2 | 5 |
 | Components: layout (hunk block, full body, replies) | 6 |
@@ -929,11 +932,31 @@ Bot footers (\`Useful? React with 👍 / 👎\`, \`Reviewed by Cursor Bugbot…\
 | Testing: all listed assertions | 1–6 |
 | Staging: PR A = 1–4, PR B = 5–6 | Global Constraints |
 
-**Two additions beyond the spec**, both defensible and noted here so review can reject them:
+**Divergences from the spec**, noted so review can reject them:
 
-1. **Code-fence awareness in `prePass`** (Task 2). The spec said "regex-based, markdown link/image syntax does not nest in these bodies." It missed that `arr[0](ctx)` inside a code fence matches `mdLink` and would be silently corrupted. Review comments frequently contain code. Covered by a test case.
-2. **`mdEmph` omits `_`** (Task 2). The spec's distillation list said "strip emphasis and backtick runs," which would turn `substitution_value` into `substitutionvalue`. Snake_case in identifiers is far more common in these titles than underscore emphasis. Covered by a test case.
+1. **No markdown pre-pass.** The spec called for rewriting the markdown before
+   rendering (strip `![alt](url)`, collapse `[text](url)` → `text`) on the
+   grounds that "a markdown pre-pass is the only lever." Measurement disproved
+   that: setting `ImageText.Format`, `Image.Format`, and `Link.Format` to a
+   template that evaluates to nothing suppresses all three runs through style
+   config alone. The spec's claim rested on `SkipHref`/`TextOnly` being the only
+   gate, which is true for the *element* fields but ignores `Format`.
+
+   This is strictly better, not merely equivalent: the pre-pass would have
+   destroyed link clickability (removing the AST link node means glamour emits no
+   OSC 8), and it carried a silent-corruption risk — `arr[0](ctx)` inside a code
+   fence matches the link pattern. Suppressing `Link.Format` keeps the hyperlink
+   and touches no markdown. Task 2 records the measured table.
+2. **`mdEmph` omits `_`** (Task 3). The spec's distillation list said "strip
+   emphasis and backtick runs," which would turn `substitution_value` into
+   `substitutionvalue` — and that identifier appears in the 2936 bodies the spec
+   cites. Snake_case is far more common in these titles than underscore
+   emphasis. Covered by a test case.
+
+The spec's Findings, Architecture, Components, and Testing sections have been
+amended to match, with the superseded reasoning kept as a marked block quote so
+the dead end is not rediscovered.
 
 **Placeholder scan:** none — every code step contains complete code, every run step an exact command and expected result.
 
-**Type consistency:** `PlainTitle(string) string` defined Task 3, called Tasks 4 and 6. `prePass(string) string` defined Task 2, called in `Render`. `ThreadComment.DiffHunk string` defined Task 5, read Task 6. `renderDiffHunk(string, int) string`, `indentBlock(string, string) string`, `renderCommentBody(string, int, string) string` all defined and called within Task 6. `dimStyle`/`passStyle`/`failStyle`/`sepStyle` are all `lipgloss.Style` (`internal/ui/theme.go:110-113`), so the `st := dimStyle` reassignment in `renderDiffHunk` type-checks.
+**Type consistency:** `PlainTitle(string) string` defined Task 3, called Tasks 4 and 6. `terminalStyle(ansi.StyleConfig) ansi.StyleConfig` defined Task 1, extended Task 2, called twice in `theme.go`. `ThreadComment.DiffHunk string` defined Task 5, read Task 6. `renderDiffHunk(string, int) string`, `indentBlock(string, string) string`, `renderCommentBody(string, int, string) string` all defined and called within Task 6. `dimStyle`/`passStyle`/`failStyle`/`sepStyle` are all `lipgloss.Style` (`internal/ui/theme.go:110-113`), so the `st := dimStyle` reassignment in `renderDiffHunk` type-checks.
