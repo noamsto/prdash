@@ -1,0 +1,62 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": true,
+              "path": "internal/gh/threads.go",
+              "line": 42,
+              "originalLine": 42,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": { "login": "alice" },
+                    "body": "Nit: could this be a named constant?",
+                    "createdAt": "2026-07-10T14:03:00Z"
+                  },
+                  {
+                    "author": { "login": "bob" },
+                    "body": "Good catch, fixed.",
+                    "createdAt": "2026-07-10T14:20:00Z"
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "path": "internal/ui/detail.go",
+              "line": 17,
+              "originalLine": 17,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": { "login": "alice" },
+                    "body": "Should this handle the empty-slice case?",
+                    "createdAt": "2026-07-11T09:15:00Z"
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": true,
+              "path": "internal/ui/board.go",
+              "line": null,
+              "originalLine": 88,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": { "login": "carol" },
+                    "body": "This line moved after a rebase, but the comment still applies.",
+                    "createdAt": "2026-07-09T11:47:00Z"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

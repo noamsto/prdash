@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/preview"
 	"github.com/noamsto/prdash/internal/triage"
 )
 
@@ -87,9 +88,78 @@ func TestRenderDiffstatTotals(t *testing.T) {
 		{Path: "a.go", Additions: 10, Deletions: 2},
 		{Path: "b.go", Additions: 1, Deletions: 1},
 	}}
-	out := ansi.Strip(renderDiffstat(d, 60))
+	out := ansi.Strip(renderDiffstat(d, nil, 60))
 	if !strings.Contains(out, "2 files") || !strings.Contains(out, "a.go") {
 		t.Fatalf("diffstat missing totals/files: %q", out)
+	}
+}
+
+func TestRenderFileThreadsHidesResolvedBodies(t *testing.T) {
+	g := preview.FileThreads{Path: "a.go", Threads: []gh.ReviewThread{
+		{Path: "a.go", Line: 10, IsResolved: false, Comments: []gh.ThreadComment{{Author: "alice", Body: "fix this"}}},
+		{Path: "a.go", Line: 20, IsResolved: true, Comments: []gh.ThreadComment{{Author: "bob", Body: "old nit"}}},
+	}}
+	out := renderFileThreads(g, 80, false)
+	if !strings.Contains(out, "fix this") {
+		t.Fatalf("unresolved body must show:\n%s", out)
+	}
+	if strings.Contains(out, "old nit") {
+		t.Fatalf("resolved body must be hidden by default:\n%s", out)
+	}
+	if !strings.Contains(out, "1 resolved") {
+		t.Fatalf("resolved count line missing:\n%s", out)
+	}
+}
+
+// TestRenderFileThreadsHeaderLineNeverOverflows guards width-safety: unlike
+// the body line below it, the "L%d" + author + status header was never
+// width-truncated, so a long author name could push the line past w. 24 is
+// the realistic floor (renderItemRow's own documented sub-floor threshold):
+// below it, the fixed-format "L%d"/indent/status text alone can outgrow the
+// width, same as any other fixed-format text in this codebase at a degenerate
+// width.
+func TestRenderFileThreadsHeaderLineNeverOverflows(t *testing.T) {
+	g := preview.FileThreads{Path: "a.go", Threads: []gh.ReviewThread{
+		{Path: "a.go", Line: 10, IsResolved: false, Comments: []gh.ThreadComment{
+			{Author: strings.Repeat("verboseauthorname", 5), Body: "fix this"},
+		}},
+	}}
+	for w := 24; w <= 60; w++ {
+		out := renderFileThreads(g, w, false)
+		for i, ln := range strings.Split(out, "\n") {
+			if got := lipgloss.Width(ln); got > w {
+				t.Fatalf("w=%d line %d width %d exceeds w: %q", w, i, got, ln)
+			}
+		}
+	}
+}
+
+// TestRenderFileThreadsRendersReplies covers the reply path: renderFileThreads
+// renders t.Comments[1:] as replies under a "└" connector.
+func TestRenderFileThreadsRendersReplies(t *testing.T) {
+	g := preview.FileThreads{Path: "a.go", Threads: []gh.ReviewThread{
+		{Path: "a.go", Line: 10, IsResolved: false, Comments: []gh.ThreadComment{
+			{Author: "alice", Body: "fix this"},
+			{Author: "bob", Body: "done, ptal"},
+			{Author: "alice", Body: "lgtm now"},
+		}},
+	}}
+	out := renderFileThreads(g, 80, false)
+	if !strings.Contains(out, "fix this") {
+		t.Fatalf("head comment body must show:\n%s", out)
+	}
+	if !strings.Contains(out, "└") {
+		t.Fatalf("reply connector must show:\n%s", out)
+	}
+	for _, want := range []string{"bob", "done, ptal", "lgtm now"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("reply %q must render:\n%s", want, out)
+		}
+	}
+	// bob's reply is the first "└" line; alice's second reply must be a
+	// separate "└" line, not merged into bob's.
+	if got := strings.Count(out, "└"); got != 2 {
+		t.Fatalf("want 2 reply connectors for 2 replies, got %d:\n%s", got, out)
 	}
 }
 
@@ -126,7 +196,7 @@ func TestExpandedFooterNeverOffersPan(t *testing.T) {
 }
 
 func TestTabSegmentMarksActive(t *testing.T) {
-	out := tabSegment(expandedTabs, tabChecks)
+	out := tabSegment(expandedTabs, tabChecks, 200)
 	if !strings.Contains(ansi.Strip(out), "Checks") {
 		t.Fatalf("active tab missing from segment: %q", out)
 	}
@@ -256,6 +326,20 @@ func TestExpandedBoxWidthCapsEveryTab(t *testing.T) {
 	m.width = 80 // narrow terminal: never wider than the terminal
 	if got := m.expandedBoxWidth(); got != 80 {
 		t.Fatalf("narrow width = %d, want 80", got)
+	}
+}
+
+func TestRenderOverviewShowsBlockerAndLatest(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.renderList()
+	out := ansi.Strip(m.renderOverview(60))
+	if !strings.Contains(out, "LATEST") {
+		t.Fatalf("overview missing LATEST section:\n%s", out)
 	}
 }
 
@@ -474,5 +558,17 @@ func TestExpandedLegendTogglesAndDismisses(t *testing.T) {
 	m = u.(Model)
 	if m.showLegend {
 		t.Fatal("a key should close the expanded-view legend")
+	}
+}
+
+func TestExpandedTabsIncludeOverviewFirst(t *testing.T) {
+	if expandedTabs[0] != "Overview" {
+		t.Fatalf("first tab = %q, want Overview", expandedTabs[0])
+	}
+	if tabOverview != 0 {
+		t.Fatalf("tabOverview = %d, want 0", tabOverview)
+	}
+	if len(expandedTabs) != 6 {
+		t.Fatalf("len(expandedTabs) = %d, want 6", len(expandedTabs))
 	}
 }

@@ -62,9 +62,11 @@ type Model struct {
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
-	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
-	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
-	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
+	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
+	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
+	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
+	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
+	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
 	previewN          int
 	expanded          bool
@@ -117,6 +119,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
 		logCache:  map[string][]logStep{},
@@ -531,6 +534,7 @@ func (m *Model) hydrate() bool {
 		}
 		m.setSections(rev, open, m.viewerLogin)
 		m.hydrateDetail()
+		m.hydrateThreads()
 		return true
 	}
 	prs, ok := m.cachedPRs(m.filter, defaultLimit)
@@ -539,6 +543,7 @@ func (m *Model) hydrate() bool {
 	}
 	m.setPRs(prs)
 	m.hydrateDetail()
+	m.hydrateThreads()
 	return true
 }
 
@@ -568,6 +573,34 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		m.detail[num] = d
+	}
+}
+
+// hydrateThreads paints each shown PR's review threads from the disk cache
+// (leaving threadsFresh false, so the live fetch still revalidates).
+func (m *Model) hydrateThreads() {
+	if m.cache == nil {
+		return
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return
+	}
+	for i := 0; i < ps.Len(); i++ {
+		num := ps.prAt(i).Number
+		if _, ok := m.threads[num]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(threadsKey(m.repo, num))
+		if !hit {
+			continue
+		}
+		ts, err := gh.ParseReviewThreads(e.Rows)
+		if err != nil {
+			slog.Debug("threads cache unmarshal failed", "err", err)
+			continue
+		}
+		m.threads[num] = ts
 	}
 }
 
@@ -1101,6 +1134,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repaintActive() // fold the fresh detail into the active view without losing place
 		return m, nil
+	case threadsMsg:
+		m.threads[msg.number] = msg.threads
+		m.threadsFresh[msg.number] = true
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(threadsKey(m.repo, msg.number), msg.raw)
+		}
+		m.repaintActive()
+		return m, nil
 	case logFetchedMsg:
 		if !m.logView || msg.job != m.logJobID || msg.all != m.logShowAll {
 			return m, nil // stale: view closed or variant switched
@@ -1483,11 +1524,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.debounceDetailCmd()
 		case "right", "l":
 			if m.mode != "pr" {
-				return m, nil // expanded view is PR-only in v1
+				return m, nil // tabs/expanded view are PR-only in v1
 			}
-			m.enterExpanded()
+			if computeLayout(m.width, m.height).ShowSide {
+				m.expandedTab = (m.expandedTab + 1) % len(expandedTabs)
+				m.checkCursor = 0
+				return m, nil
+			}
+			m.enterExpanded() // narrow: no pane, open full-screen tabs
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
+		case "left", "h":
+			if m.mode != "pr" || !computeLayout(m.width, m.height).ShowSide {
+				return m, nil
+			}
+			m.expandedTab = (m.expandedTab + len(expandedTabs) - 1) % len(expandedTabs)
+			m.checkCursor = 0
+			return m, nil
+		case "1", "2", "3", "4", "5", "6":
+			if m.mode != "pr" || !computeLayout(m.width, m.height).ShowSide {
+				return m, nil
+			}
+			m.expandedTab = int(msg.String()[0] - '1')
+			m.checkCursor = 0
+			return m, nil
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
 				if a.Scope == "per-selected" {
@@ -1818,6 +1878,9 @@ func (m Model) legendGroups() []legendGroup {
 	view := []keyHint{}
 	if m.mode == "pr" {
 		view = append(view, keyHint{"p", "all comments"}) // only the PR preview renders the timeline p unfolds
+		if computeLayout(m.width, m.height).ShowSide {
+			view = append(view, keyHint{"h/l", "switch tab"}, keyHint{"1-6", "jump tab"})
+		}
 	}
 	view = append(view, keyHint{"z", "maximize"}, keyHint{"alt+j/k", "scroll"})
 	groups = append(groups, legendGroup{"view", view})
@@ -1901,7 +1964,7 @@ func navHintsFor(mode string) []keyHint {
 	}
 	if mode == "pr" {
 		pr := []keyHint{
-			{"→", "expand"}, {"z", "max"}, {"alt+j/k", "scroll"},
+			{"→", "tabs"}, {"z", "max"}, {"alt+j/k", "scroll"},
 			{"R", "reviewers"}, {"D", "drafts"},
 		}
 		return append(base, pr...)

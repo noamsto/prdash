@@ -37,6 +37,42 @@ func issueDetailKey(repo string, number int) string {
 	return cache.Key("issuedetail", repo+"#"+strconv.Itoa(number), 0, issueDetailSchemaVer)
 }
 
+// threadsSchemaVer is bumped whenever the review-threads GraphQL query's field
+// set changes, so a stale-shaped cached response is a clean miss.
+const threadsSchemaVer = "v1"
+
+// threadsKey scopes cached review threads by repo so #7 in one repo can't
+// paint #7 in another.
+func threadsKey(repo string, number int) string {
+	return cache.Key("threads", repo+"#"+strconv.Itoa(number), 0, threadsSchemaVer)
+}
+
+type threadsMsg struct {
+	number  int
+	threads []gh.ReviewThread
+	raw     []byte // cached to disk so the preview paints instantly next launch
+}
+
+// fetchThreadsCmd lazily loads the selected PR's inline review threads.
+func (m Model) fetchThreadsCmd(number int) tea.Cmd {
+	r, dir, repo := m.runner, m.dir, m.repo
+	return func() tea.Msg {
+		owner, name, ok := strings.Cut(repo, "/")
+		if !ok {
+			return fetchFailedMsg{err: fmt.Errorf("bad repo %q", repo)}
+		}
+		raw, err := r.Run(dir, gh.ReviewThreadsArgs(owner, name, number)...)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		ts, err := gh.ParseReviewThreads(raw)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return threadsMsg{number: number, threads: ts, raw: raw}
+	}
+}
+
 // fetchDetailCmd lazily loads the selected PR's comments/reviews.
 func (m Model) fetchDetailCmd(number int) tea.Cmd {
 	r, dir := m.runner, m.dir
@@ -87,10 +123,14 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		}
 		return m.fetchIssueDetailCmd(v.Number)
 	case "pr":
-		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
-			return nil
+		var cmds []tea.Cmd
+		if !m.fresh[v.Number] && !m.cacheFresh(detailKey(m.repo, v.Number)) {
+			cmds = append(cmds, m.fetchDetailCmd(v.Number))
 		}
-		return m.fetchDetailCmd(v.Number)
+		if !m.threadsFresh[v.Number] && !m.cacheFresh(threadsKey(m.repo, v.Number)) {
+			cmds = append(cmds, m.fetchThreadsCmd(v.Number))
+		}
+		return tea.Batch(cmds...)
 	}
 	return nil
 }
@@ -237,30 +277,49 @@ func sectionRule(label string, w int) string {
 	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
 }
 
-// previewPane renders the triage card followed by the timeline. Before the
-// per-PR detail loads it pre-fills the identity header and a card from list-only
-// data (triage.Preliminary) so the cursor never lands on a bare "Loading…";
-// detail enriches the card and adds the review/timeline sections in place.
+// previewPane renders the side pane as identity header + tab bar + the active
+// tab's body. The Overview tab renders via renderOverview directly (not
+// expandedBody) because it — not expandedBody's pre-switch !cached gate — owns
+// the pre-fill from list-only data (triage.Preliminary), so the cursor never
+// lands on a bare "Loading…" before detail arrives.
 func (m Model) previewPane() string {
+	if _, ok := m.cursorVars(); !ok {
+		return ""
+	}
+	w := m.previewWidth()
+	if is, ok := m.section.(*IssueSection); ok {
+		return m.issuePreviewPane(is, w, w-2)
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return ""
+	}
+	header := identityHeader(ps.prAt(m.cursor))
+	bar := renderTabBar(expandedTabs, m.expandedTab, w)
+	var body string
+	if m.expandedTab == tabOverview {
+		body = m.renderOverview(w)
+	} else {
+		body = m.expandedBody(w)
+	}
+	return strings.Join([]string{header, bar, body}, "\n\n")
+}
+
+// renderOverview is the Overview tab body: the triage summary shown by default.
+// Identity is owned by the container; this is everything below it.
+func (m Model) renderOverview(w int) string {
 	v, ok := m.cursorVars()
 	if !ok {
 		return ""
 	}
-	w := m.previewWidth()
-	bw := w - 2 // body width: leave room for the 2-col section indent below
-	// A section is its label (flush) + body indented one level under it; the blank
-	// line between blocks (the join below) separates sections so they breathe.
+	bw := w - 2
 	section := func(label, body string) string {
 		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
-	}
-	if is, ok := m.section.(*IssueSection); ok {
-		return m.issuePreviewPane(is, w, bw)
 	}
 	d, cached := m.detail[v.Number]
 	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
-		blocks = append(blocks, identityHeader(pr))
 		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
 			blocks = append(blocks, section("description", body))
 		}
@@ -271,9 +330,6 @@ func (m Model) previewPane() string {
 		if card := renderCard(tc, bw); card != "" {
 			blocks = append(blocks, section("blocker", card))
 		}
-		// The checks section is redundant when the blocker card is already about
-		// CI; show it only when the blocker is something else (review/conflict)
-		// that would otherwise mask failing checks.
 		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
 			if ci := ciLine(pr); ci != "" {
 				blocks = append(blocks, section("checks", ci))
@@ -285,6 +341,12 @@ func (m Model) previewPane() string {
 		return strings.Join(blocks, "\n\n")
 	}
 	blocks = append(blocks, section("review", reviewLine(d)))
+	if ts := m.threads[v.Number]; len(ts) > 0 {
+		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
+		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
+			blocks = append(blocks, section(label, body))
+		}
+	}
 	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
 	return strings.Join(blocks, "\n\n")
 }
