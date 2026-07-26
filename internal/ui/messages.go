@@ -31,12 +31,24 @@ type sectionsFetchedMsg struct {
 	reviewRaw, openRaw []byte
 }
 
+// detailsBatchMsg carries one batched detail fetch — the whole prefetch window
+// resolved in a single request (githubv4 aliased query).
+type detailsBatchMsg struct {
+	details map[int]gh.PRDetail
+	raws    map[int][]byte
+}
+
 type fetchFailedMsg struct {
 	err    error
 	filter string // set for list fetches; a background prewarm failure is dropped
 }
 
-type membersFetchedMsg struct{ users []gh.User }
+// membersFetchedMsg carries the assignable-users list; raw is the marshaled
+// []User for the members cache (see hydrateMembers/membersKey).
+type membersFetchedMsg struct {
+	users []gh.User
+	raw   []byte
+}
 
 // viewerFetchedMsg carries the authenticated user's login, fetched once per
 // launch and cached indefinitely (see viewerKey).

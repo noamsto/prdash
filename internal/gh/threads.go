@@ -2,7 +2,6 @@ package gh
 
 import (
 	"encoding/json"
-	"strconv"
 	"time"
 )
 
@@ -20,16 +19,6 @@ type ReviewThread struct {
 }
 
 const reviewThreadsQuery = `query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{isResolved path line originalLine comments(first:100){nodes{author{login} body createdAt}}}}}}}`
-
-func ReviewThreadsArgs(owner, repo string, number int) []string {
-	return []string{
-		"api", "graphql",
-		"-f", "query=" + reviewThreadsQuery,
-		"-F", "owner=" + owner,
-		"-F", "repo=" + repo,
-		"-F", "num=" + strconv.Itoa(number),
-	}
-}
 
 func ParseReviewThreads(b []byte) ([]ReviewThread, error) {
 	var env struct {

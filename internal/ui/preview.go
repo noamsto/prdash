@@ -20,7 +20,7 @@ type prDetailMsg struct {
 	raw    []byte // cached to disk so the preview paints instantly next launch
 }
 
-// detailSchemaVer is bumped whenever PRViewArgs' --json field set changes, so a
+// detailSchemaVer is bumped whenever the PR-detail field set changes, so a
 // stale-shaped cached detail is a clean miss.
 const detailSchemaVer = "v1"
 
@@ -30,7 +30,7 @@ func detailKey(repo string, number int) string {
 	return cache.Key("prdetail", repo+"#"+strconv.Itoa(number), 0, detailSchemaVer)
 }
 
-// issueDetailSchemaVer is bumped whenever IssueViewArgs' --json field set changes.
+// issueDetailSchemaVer is bumped whenever the issue-detail field set changes.
 const issueDetailSchemaVer = "v1"
 
 func issueDetailKey(repo string, number int) string {
@@ -55,17 +55,12 @@ type threadsMsg struct {
 
 // fetchThreadsCmd lazily loads the selected PR's inline review threads.
 func (m Model) fetchThreadsCmd(number int) tea.Cmd {
-	r, dir, repo := m.runner, m.dir, m.repo
+	src := m.threadsSource
+	if src == nil {
+		return nil
+	}
 	return func() tea.Msg {
-		owner, name, ok := strings.Cut(repo, "/")
-		if !ok {
-			return fetchFailedMsg{err: fmt.Errorf("bad repo %q", repo)}
-		}
-		raw, err := r.Run(dir, gh.ReviewThreadsArgs(owner, name, number)...)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		ts, err := gh.ParseReviewThreads(raw)
+		ts, raw, err := src.FetchReviewThreads(number)
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
@@ -73,31 +68,16 @@ func (m Model) fetchThreadsCmd(number int) tea.Cmd {
 	}
 }
 
-// fetchDetailCmd lazily loads the selected PR's comments/reviews.
-func (m Model) fetchDetailCmd(number int) tea.Cmd {
-	r, dir := m.runner, m.dir
-	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.PRViewArgs(number)...)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		d, err := gh.ParsePRDetail(raw)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		return prDetailMsg{number: number, detail: d, raw: raw}
-	}
-}
 
-// fetchIssueDetailCmd lazily loads the selected issue's body.
+// fetchIssueDetailCmd lazily loads the selected issue's body through the
+// issue-detail source.
 func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.issueDetailSource
+	if src == nil {
+		return nil
+	}
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.IssueViewArgs(number)...)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		d, err := gh.ParseIssueDetail(raw)
+		d, raw, err := src.FetchIssueDetail(number)
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
@@ -109,9 +89,6 @@ func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
 // refreshed this session or its disk cache is still within launchFreshTTL — so
 // navigating right after a launch reuses recent detail instead of refetching it.
 func (m *Model) detailCmdForCursor() tea.Cmd {
-	if m.runner == nil {
-		return nil
-	}
 	v, ok := m.cursorVars()
 	if !ok {
 		return nil
@@ -125,7 +102,7 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 	case "pr":
 		var cmds []tea.Cmd
 		if !m.fresh[v.Number] && !m.cacheFresh(detailKey(m.repo, v.Number)) {
-			cmds = append(cmds, m.fetchDetailCmd(v.Number))
+			cmds = append(cmds, m.batchDetailCmd([]int{v.Number}))
 		}
 		if !m.threadsFresh[v.Number] && !m.cacheFresh(threadsKey(m.repo, v.Number)) {
 			cmds = append(cmds, m.fetchThreadsCmd(v.Number))
@@ -133,6 +110,58 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	return nil
+}
+
+// warmDetailCmd warms detail for the cursor row and the prefetch window. It
+// fetches the cursor row on its own (so the preview paints as soon as that one
+// small query returns) and the rest of the window in a single batched request —
+// so a settle costs two HTTP round trips, not a fan-out of one request per PR.
+// On the issue board (no PRSection) it warms only the cursor row's detail.
+func (m Model) warmDetailCmd() tea.Cmd {
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return m.detailCmdForCursor()
+	}
+	cursorNum := -1
+	if v, ok := m.cursorVars(); ok {
+		cursorNum = v.Number
+	}
+	var rest []int
+	for _, n := range m.detailWindow(ps) {
+		if n != cursorNum {
+			rest = append(rest, n)
+		}
+	}
+	return tea.Batch(m.detailCmdForCursor(), m.batchDetailCmd(rest))
+}
+
+// detailWindow is the cursor-first set of shown PR numbers still needing detail
+// (not refreshed this session, not fresh on disk), bounded by prefetchWindow.
+func (m Model) detailWindow(ps *PRSection) []int {
+	var out []int
+	for _, n := range prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow) {
+		if m.cacheFresh(detailKey(m.repo, n)) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// batchDetailCmd fetches detail for numbers in a single request via the batched
+// source, emitting one detailsBatchMsg for the whole window.
+func (m Model) batchDetailCmd(numbers []int) tea.Cmd {
+	src := m.detailSource
+	if src == nil || len(numbers) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		details, raws, err := src.FetchDetails(numbers)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return detailsBatchMsg{details: details, raws: raws}
+	}
 }
 
 // prefetchWindow bounds how many uncached PR details we fan out per settle.
@@ -150,27 +179,6 @@ func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) 
 		out = append(out, num)
 	}
 	return out
-}
-
-// prefetchCmd warms detail for a bounded window of visible PRs so the ! column
-// and the side card fill in without a fetch per keystroke.
-func (m Model) prefetchCmd() tea.Cmd {
-	ps, ok := m.section.(*PRSection)
-	if !ok || m.runner == nil {
-		return nil
-	}
-	nums := prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow)
-	cmds := make([]tea.Cmd, 0, len(nums))
-	for _, n := range nums {
-		if m.cacheFresh(detailKey(m.repo, n)) {
-			continue // recent disk detail; the hydrated card is good enough
-		}
-		cmds = append(cmds, m.fetchDetailCmd(n))
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
 }
 
 // discussionHeader keeps identity and separation on one line. This gives each

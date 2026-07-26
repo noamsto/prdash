@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/noamsto/prdash/internal/action"
+	"github.com/noamsto/prdash/internal/gh"
 )
 
 // cursorVars returns the template vars for the row under the cursor, or
@@ -139,28 +139,113 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // OSC 52 is fire-and-forget
 		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
 	case "rerun-failed":
-		r, dir, branch := m.runner, m.dir, v.HeadRefName
+		branch, native := v.HeadRefName, m.actionsSource
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
 		m.actionStatus.nums = []int{v.Number}
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: action.RerunFailed(r, dir, branch)}
+			return actionDoneMsg{err: action.RerunFailed(native, branch)}
 		}, m.startSpinner())
-	default: // argv (e.g. gh pr merge)
-		argv, err := a.ExpandArgv(v)
-		if err != nil {
-			m.err = err
-			return nil
+	default: // native mutation/open (merge, ready, update-branch, open-web)
+		if cmd, ok := m.singleNativeCmd(a, v); ok {
+			return cmd
 		}
-		r, dir := m.runner, m.dir
+		return nil
+	}
+}
+
+// singleNativeCmd runs a Scope:"single" native mutation/open. It is unreachable
+// via the packaged defaults (all merge/ready/update-branch/open-web keybindings
+// are Scope:"per-selected", so runBulkNative below is what fires), but a
+// user-configured single-row action with the same Command.Native marker routes
+// here. ok is false when a.Command.Native names something this dispatcher
+// doesn't recognize, or when the action isn't on the PR board.
+func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) {
+	if a.Command.Native == "open-web" {
+		url := v.URL
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
-		m.actionStatus.nums = []int{v.Number}
 		return tea.Batch(func() tea.Msg {
-			_, err := r.Run(dir, argv[1:]...) // argv[0]=="gh"
-			return actionDoneMsg{err: err}
-		}, m.startSpinner())
+			return actionDoneMsg{err: openURL(url)}
+		}, m.startSpinner()), true
 	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return nil, false // native PR mutations don't apply to the issue board
+	}
+	p := ps.prAt(m.cursor)
+	fn, ok := m.nativeMutationFn(a.Command.Native, p)
+	if !ok {
+		return nil, false
+	}
+	m.actionStatus = statFor(a)
+	m.actionStatus.refresh = a.Refresh
+	m.actionStatus.nums = []int{p.Number}
+	return tea.Batch(func() tea.Msg {
+		return actionDoneMsg{err: fn()}
+	}, m.startSpinner()), true
+}
+
+// nativeMutationFn resolves the client-side pre-checks the research contracts
+// specify (merge/auto-merge: PR state + cached mergeable; mark-ready: IsDraft)
+// against live Model state on the calling (synchronous) goroutine, then
+// returns a closure that performs the actual network call. The closure only
+// closes over plain values (mutationSource, p.ID, a precomputed error) — never
+// m itself — so it's safe to run later from runBulkNative's async batch. ok is
+// false for any native marker this dispatcher doesn't recognize.
+//
+// p.ID is guarded here, once, for every marker that needs it: a stale cache
+// entry written by the old gh-CLI prdash (no node id) can outlive the
+// launch-fresh TTL and reach this dispatcher with p.ID == "", which would
+// otherwise surface as a confusing raw GraphQL error from the mutation itself.
+func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bool) {
+	if p.ID == "" {
+		switch native {
+		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch":
+			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
+			return func() error { return err }, true
+		}
+	}
+	src := m.mutationSource
+	switch native {
+	case "merge-squash":
+		if err := m.mergePreCheck(p); err != nil {
+			return func() error { return err }, true
+		}
+		return func() error { return src.MergePR(p.ID) }, true
+	case "auto-merge-squash":
+		if err := m.mergePreCheck(p); err != nil {
+			return func() error { return err }, true
+		}
+		return func() error { return src.EnableAutoMerge(p.ID) }, true
+	case "mark-ready":
+		if p.State != "OPEN" {
+			err := fmt.Errorf("PR #%d is not open", p.Number)
+			return func() error { return err }, true
+		}
+		if !p.IsDraft {
+			return func() error { return nil }, true // already ready: gh's own CLI treats this as a benign no-op
+		}
+		return func() error { return src.MarkReady(p.ID) }, true
+	case "update-branch":
+		return func() error { return src.UpdateBranch(p.ID) }, true
+	}
+	return nil, false
+}
+
+// mergePreCheck mirrors gh CLI's client-side guard for merge/auto-merge —
+// state and conflicts — using data prdash already has, instead of depending on
+// GitHub's free-text GraphQL error (research/merge.md §4). mergeable is only
+// checked when this PR's detail happens to be cached; the list fetch alone
+// doesn't carry it.
+func (m *Model) mergePreCheck(p gh.PR) error {
+	if p.State != "OPEN" {
+		return fmt.Errorf("PR #%d is not open", p.Number)
+	}
+	if d, cached := m.detail[p.Number]; cached && d.Mergeable == "CONFLICTING" {
+		return fmt.Errorf("PR #%d has conflicts", p.Number)
+	}
+	return nil
 }
 
 // actionStat is an inline action's transient progress, surfaced by the header
@@ -216,23 +301,33 @@ func reviewerDiff(current []string, picked map[string]bool) (add, remove []strin
 	return add, remove
 }
 
-// assignReviewersCmd applies an add/remove reviewer diff to one PR, then refetches.
-func (m Model) assignReviewersCmd(number int, add, remove []string) tea.Cmd {
+// assignReviewersCmd applies a reviewer change to one PR, then refetches.
+// add/remove only decide whether anything changed (nothing to do when both are
+// empty); the request sends picked (the full desired reviewer-login set) in one
+// requestReviewsByLogin(union:false) call — see research/request-reviews.md.
+//
+// prID is guarded the same way as nativeMutationFn's p.ID: a stale gh-CLI-era
+// cache entry can carry an empty node id, which would otherwise reach
+// RequestReviews and surface as a confusing raw GraphQL error.
+func (m Model) assignReviewersCmd(number int, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
+	if prID == "" {
+		err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", number)
+		return func() tea.Msg { return fetchFailedMsg{err: err} }
+	}
 	delete(m.fresh, number) // reviewer set changed → summary must revalidate
-	r, dir := m.runner, m.dir
-	args := []string{"pr", "edit", strconv.Itoa(number)}
-	if len(add) > 0 {
-		args = append(args, "--add-reviewer", strings.Join(add, ","))
-	}
-	if len(remove) > 0 {
-		args = append(args, "--remove-reviewer", strings.Join(remove, ","))
-	}
 	fetch := m.fetchCmd(m.filter)
+	src := m.mutationSource
+	var logins []string
+	for login, on := range picked {
+		if on {
+			logins = append(logins, login)
+		}
+	}
 	return func() tea.Msg {
-		if _, err := r.Run(dir, args...); err != nil {
+		if err := src.RequestReviews(prID, logins); err != nil {
 			return fetchFailedMsg{err: err}
 		}
 		return fetch()
@@ -290,10 +385,15 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 
 // runBulk applies a per-selected action to each selected row (or the cursor row
 // if none selected). Exits-tui actions write one handoff line each and quit;
-// inline gh actions run across the selection and settle to an aggregate badge.
+// native mutations run across the selection and settle to an aggregate badge.
+// Every default merge/auto-merge/ready/update-branch/open-web keybinding is
+// Scope:"per-selected", so runBulkNative — not singleNativeCmd — is the one
+// that actually fires for a single cursor-row press too.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
-	var argvs [][]string
-	var nums []int
+	if a.Command.Native != "" {
+		return m.runBulkNative(a)
+	}
+	// The only non-native bulk actions are exits-TUI worktree fan-outs.
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -305,29 +405,56 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 			m.err = err
 			continue
 		}
-		if a.ExitsTUI {
-			m.queueExit(a.Key, argv)
-		} else {
-			argvs = append(argvs, argv)
-			nums = append(nums, v.Number)
-		}
+		m.queueExit(a.Key, argv)
 	}
 	if a.ExitsTUI {
 		return tea.Quit
 	}
-	if len(argvs) == 0 {
+	return nil
+}
+
+// runBulkNative is runBulk's native-mutation counterpart, firing
+// a.Command.Native against mutationSource for each selected row instead of
+// building/running gh CLI argv, with the same aggregate success/fail counting.
+// open-web only needs the row's URL (works on either board); the PR mutations
+// need the full gh.PR (ID/State/IsDraft/mergeable) and so are skipped when the
+// active board isn't the PR section.
+func (m *Model) runBulkNative(a action.Action) tea.Cmd {
+	var calls []func() error
+	var nums []int
+	for _, i := range m.selectedOrCursor() {
+		if i < 0 || i >= m.section.Len() {
+			continue
+		}
+		if a.Command.Native == "open-web" {
+			url := m.section.VarsAt(i).URL
+			calls = append(calls, func() error { return openURL(url) })
+			continue
+		}
+		ps, ok := m.section.(*PRSection)
+		if !ok {
+			continue // native PR mutations don't apply to the issue board
+		}
+		p := ps.prAt(i)
+		fn, ok := m.nativeMutationFn(a.Command.Native, p)
+		if !ok {
+			continue
+		}
+		calls = append(calls, fn)
+		nums = append(nums, p.Number)
+	}
+	if len(calls) == 0 {
 		return nil
 	}
-	n := len(argvs)
+	n := len(calls)
 	m.actionStatus = statForBulk(a, n)
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
 	m.sel.clear() // the batch op consumes the selection
-	r, dir := m.runner, m.dir
 	return tea.Batch(func() tea.Msg {
 		var failed int
-		for _, argv := range argvs {
-			if _, err := r.Run(dir, argv[1:]...); err != nil { // argv[0]=="gh"
+		for _, fn := range calls {
+			if err := fn(); err != nil {
 				failed++
 			}
 		}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,15 +15,19 @@ import (
 
 func main() {
 	dir, _ := os.Getwd()
-	runner := gh.ExecRunner{}
 
-	repo, err := gh.CurrentRepo(runner, dir)
+	repo, err := gh.RepoFromGit(dir)
 	if err != nil {
-		if errors.Is(err, gh.ErrNoRepo) {
-			ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a GitHub remote, then run prdash again.")
-		} else {
-			ui.RunNotice("prdash", "Couldn't reach GitHub:\n\n"+err.Error())
-		}
+		ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a github.com origin remote, then run prdash again.")
+		os.Exit(1)
+	}
+
+	// prdash talks to GitHub over githubv4/REST, so a token is mandatory. It
+	// comes from GH_TOKEN/GITHUB_TOKEN or, failing that, `gh auth token`.
+	tok, err := gh.Token()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "prdash: no GitHub token found.")
+		fmt.Fprintln(os.Stderr, "Set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.")
 		os.Exit(1)
 	}
 
@@ -36,12 +39,22 @@ func main() {
 	c := cache.Open(filepath.Join(stateDir, "prdash", "results-cache.json"))
 
 	m := ui.NewModel(dir, "is:open", c)
-	m.SetRunner(runner)
 	m.SetRepo(repo)
+	gs := gh.NewGraphSource(tok, repo)
+	m.SetPRSource(gs)
+	m.SetDetailSource(gs)
+	m.SetThreadsSource(gs)
+	m.SetIssueSource(gs)
+	m.SetIssueDetailSource(gs)
+	m.SetViewerSource(gs)
+	m.SetMembersSource(gs)
+	m.SetMutationSource(gs)
+	m.SetActionsSource(gs)
 	m.InitTheme()
 	m.Hydrate()
 
 	final, err := tea.NewProgram(m).Run()
+	c.Flush() // persist any debounced cache writes before we exit
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

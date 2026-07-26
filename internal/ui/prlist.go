@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -40,7 +41,18 @@ type Model struct {
 	issueDetail       map[int]gh.IssueDetail
 	issueFresh        map[int]bool // issue numbers whose body was refetched this session
 	cache             *cache.Cache
-	runner            gh.Runner
+	prSource          gh.PRSource          // PR-list backend (githubv4)
+	detailSource      gh.DetailSource      // batched per-PR detail backend
+	threadsSource     gh.ThreadsSource     // per-PR inline review-threads backend
+	issueSource       gh.IssueSource       // issue-list backend
+	issueDetailSource gh.IssueDetailSource // per-issue detail backend
+	viewerSource      gh.ViewerSource      // viewer-login backend
+	membersSource     gh.MembersSource     // assignable-users backend
+	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.)
+	actionsSource     gh.ActionsSource     // Actions rerun/job-log backend
+	rowText           []string             // renderList per-row cache: rendered string per shown index
+	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
+	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
@@ -81,6 +93,8 @@ type Model struct {
 	logSteps          []logStep
 	logLines          []logLine
 	logCursor         int                  // line cursor within logLines
+	logStyled         []string             // renderLogBody cache: styled line (no gutter) per logLines index
+	logStyledW        int                  // width logStyled was built at; a change rebuilds it
 	logCache          map[string][]logStep // keyed by logCacheKey(job, all)
 	loaded            bool                 // first live fetch has returned; distinguishes empty from loading
 	emptyNotice       string               // overrides the empty-board hint (e.g. issues disabled on this repo)
@@ -127,8 +141,38 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	}
 }
 
-func (m *Model) SetRunner(r gh.Runner) { m.runner = r }
-func (m *Model) SetRepo(repo string)   { m.repo = repo }
+// SetPRSource installs the PR-list backend (githubv4).
+func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
+
+// SetDetailSource installs the batched per-PR detail backend: the
+// refresh/prefetch path fetches the whole visible window in one request.
+func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
+
+// SetThreadsSource installs the per-PR inline review-threads backend (githubv4).
+func (m *Model) SetThreadsSource(s gh.ThreadsSource) { m.threadsSource = s }
+
+// SetIssueSource installs the issue-list backend (githubv4).
+func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
+
+// SetIssueDetailSource installs the per-issue detail backend (githubv4).
+func (m *Model) SetIssueDetailSource(s gh.IssueDetailSource) { m.issueDetailSource = s }
+
+// SetViewerSource installs the viewer-login backend (githubv4).
+func (m *Model) SetViewerSource(s gh.ViewerSource) { m.viewerSource = s }
+
+// SetMembersSource installs the assignable-users backend (githubv4).
+func (m *Model) SetMembersSource(s gh.MembersSource) { m.membersSource = s }
+
+// SetMutationSource installs the githubv4 backend for PR mutations (merge,
+// auto-merge, mark-ready, update-branch, request-reviewers) and the --web
+// open-in-browser action.
+func (m *Model) SetMutationSource(s gh.MutationSource) { m.mutationSource = s }
+
+// SetActionsSource installs the REST backend for Actions rerun/job-log
+// operations (internal/action.RerunFailed/RerunCheck/JobLog).
+func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
+
+func (m *Model) SetRepo(repo string) { m.repo = repo }
 
 func (m *Model) setPRs(prs []gh.PR) {
 	if s, ok := m.section.(*PRSection); ok {
@@ -204,6 +248,17 @@ func (m *Model) moveCursor(delta int) {
 	m.renderList()
 }
 
+// rowKey is the set of inputs a cached row string was rendered under. When the
+// live inputs still match, renderList reuses the cached string instead of
+// re-styling the row — so a cursor move re-renders only the two rows whose focus
+// flipped, not all of them. gen invalidates the whole cache on a content change.
+type rowKey struct {
+	gen, w, numW      int
+	focused, selected bool
+	flag              string
+	twoLine           bool
+}
+
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
@@ -218,9 +273,14 @@ func (m *Model) renderList() {
 	numW := columnWidths(m.section)
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
+	n := m.section.Len()
+	if len(m.rowText) != n { // shown set resized (or first paint): reset the cache
+		m.rowText = make([]string, n)
+		m.rowSig = make([]rowKey, n)
+	}
 	var b strings.Builder
 	line, prevGroup := 0, ""
-	for i := 0; i < m.section.Len(); i++ {
+	for i := 0; i < n; i++ {
 		if grouped {
 			if g := ps.groupLabel(i); g != prevGroup {
 				if prevGroup != "" { // blank line between groups, not above the first
@@ -237,9 +297,14 @@ func (m *Model) renderList() {
 			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}
-		row := m.section.RenderRow(i, RowOpts{
-			Width: innerW, NumWidth: numW, Focused: i == m.cursor, Selected: m.sel.has(i), Flag: flag, TwoLine: l.TwoLine,
-		})
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine}
+		if m.rowSig[i] != key || m.rowText[i] == "" {
+			m.rowText[i] = m.section.RenderRow(i, RowOpts{
+				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine,
+			})
+			m.rowSig[i] = key
+		}
+		row := m.rowText[i]
 		rowH := strings.Count(row, "\n") + 1
 		if i == m.cursor {
 			m.cursorLine = line
@@ -343,6 +408,7 @@ func (m *Model) applyFilter() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+	m.rowGen++ // the shown set/order/content changed; invalidate the per-row cache
 	m.renderList()
 }
 
@@ -489,7 +555,7 @@ func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
 	return prs, true
 }
 
-// issueSchemaVer is bumped whenever issueFields changes shape.
+// issueSchemaVer is bumped whenever the cached issue field set changes shape.
 const issueSchemaVer = "v1"
 
 // issueKey scopes the cached issue list by repo, kind-prefixed "issue" so it can
@@ -687,16 +753,13 @@ func (m *Model) Hydrate() {
 	m.hydrateMembers()
 }
 
-// fetchCmd runs `gh pr list` for filter, tagging the result so a background
-// prewarm of a non-current preset lands in the cache without repainting the view.
+// fetchCmd fetches the PR list for filter through the PR source, tagging the
+// result so a background prewarm of a non-current preset lands in the cache
+// without repainting the view.
 func (m Model) fetchCmd(filter string) tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.prSource
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.PRListArgs(filter, defaultLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: filter}
-		}
-		prs, err := gh.ParsePRs(raw)
+		prs, raw, err := src.FetchPRs(filter, defaultLimit)
 		if err != nil {
 			return fetchFailedMsg{err: err, filter: filter}
 		}
@@ -704,15 +767,11 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// issueFetchCmd runs `gh issue list` for filter (gh excludes PRs by default).
+// issueFetchCmd fetches the issue list for filter through the issue source.
 func (m Model) issueFetchCmd(filter string) tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.issueSource
 	return func() tea.Msg {
-		raw, err := r.Run(dir, gh.IssueListArgs(filter, defaultLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: filter}
-		}
-		is, err := gh.ParseIssues(raw)
+		is, raw, err := src.FetchIssues(filter, defaultLimit)
 		if err != nil {
 			return fetchFailedMsg{err: err, filter: filter}
 		}
@@ -722,29 +781,37 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 
 // sectionsFetchCmd fetches both halves of the empty-default open view — the
 // review-requested search and the wider is:open list — caching each under its
-// own filter+limit key. Sequential (not parallel): two quick gh calls.
+// own filter+limit key. The two fetches run concurrently: they're independent,
+// so wall-clock is the slower of the two rather than their sum.
 func (m Model) sectionsFetchCmd() tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.prSource
 	state := m.state
 	reviewF := searchFor("pr", state, reviewBody)
 	return func() tea.Msg {
-		revRaw, err := r.Run(dir, gh.PRListArgs(reviewF, defaultLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: reviewF}
+		type half struct {
+			prs []gh.PR
+			raw []byte
+			err error
 		}
-		rev, err := gh.ParsePRs(revRaw)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: reviewF}
+		var review, open half
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			review.prs, review.raw, review.err = src.FetchPRs(reviewF, defaultLimit)
+		}()
+		go func() {
+			defer wg.Done()
+			open.prs, open.raw, open.err = src.FetchPRs("is:open", openListLimit)
+		}()
+		wg.Wait()
+		if review.err != nil {
+			return fetchFailedMsg{err: review.err, filter: reviewF}
 		}
-		openRaw, err := r.Run(dir, gh.PRListArgs("is:open", openListLimit)...)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: "is:open"}
+		if open.err != nil {
+			return fetchFailedMsg{err: open.err, filter: "is:open"}
 		}
-		open, err := gh.ParsePRs(openRaw)
-		if err != nil {
-			return fetchFailedMsg{err: err, filter: "is:open"}
-		}
-		return sectionsFetchedMsg{state: state, review: rev, reviewRaw: revRaw, open: open, openRaw: openRaw}
+		return sectionsFetchedMsg{state: state, review: review.prs, reviewRaw: review.raw, open: open.prs, openRaw: open.raw}
 	}
 }
 
@@ -934,21 +1001,23 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 	return nil
 }
 
+// fetchMembersCmd fetches the assignable-users list through the members source.
 func (m Model) fetchMembersCmd() tea.Cmd {
-	r, dir, repo := m.runner, m.dir, m.repo
+	src := m.membersSource
 	return func() tea.Msg {
-		users, err := gh.FetchAssignableUsers(r, dir, repo)
+		users, raw, err := src.FetchAssignableUsers()
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
-		return membersFetchedMsg{users: users}
+		return membersFetchedMsg{users: users, raw: raw}
 	}
 }
 
+// fetchViewerCmd fetches the authenticated user's login through the viewer source.
 func (m Model) fetchViewerCmd() tea.Cmd {
-	r, dir := m.runner, m.dir
+	src := m.viewerSource
 	return func() tea.Msg {
-		login, err := gh.FetchViewerLogin(r, dir)
+		login, err := src.FetchViewer()
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
@@ -989,7 +1058,7 @@ func (m *Model) confirmPicker() tea.Cmd {
 			}
 		}
 		add, remove := reviewerDiff(current, checked)
-		return m.assignReviewersCmd(v.Number, add, remove)
+		return m.assignReviewersCmd(v.Number, v.ID, add, remove, checked)
 	}
 	return nil
 }
@@ -1052,7 +1121,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		m.repaintActive() // keep the log/expanded box painted; don't bleed list rows in
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case issuesFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(issueKey(m.repo, msg.filter), msg.raw)
@@ -1085,7 +1154,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = false
 		}
 		m.repaintActive()
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // a background prewarm failed; the current view is unaffected
@@ -1103,9 +1172,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case membersFetchedMsg:
 		m.members = msg.users
 		if m.cache != nil {
-			if raw, err := json.Marshal(msg.users); err == nil {
-				m.cache.Set(membersKey(m.repo), raw)
-			}
+			m.cache.Set(membersKey(m.repo), msg.raw)
 		}
 		if m.showPicker {
 			m.pick.cands = msg.users
@@ -1142,6 +1209,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repaintActive()
 		return m, nil
+	case detailsBatchMsg:
+		for num, d := range msg.details {
+			m.detail[num] = d
+			m.fresh[num] = true
+			if m.cache != nil {
+				if raw := msg.raws[num]; raw != nil {
+					m.cache.Set(detailKey(m.repo, num), raw)
+				}
+			}
+		}
+		m.repaintActive()
+		return m, nil
 	case logFetchedMsg:
 		if !m.logView || msg.job != m.logJobID || msg.all != m.logShowAll {
 			return m, nil // stale: view closed or variant switched
@@ -1169,7 +1248,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.seq != m.detailSeq {
 			return m, nil
 		}
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd())
+		return m, m.warmDetailCmd()
 	case omniDebounceMsg:
 		if msg.seq != m.omniSeq || !m.filtering {
 			return m, nil // superseded by a later keystroke, or already committed
@@ -1180,7 +1259,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// state the hydrated rows were painted under and warm detail/poll.
 		m.refreshing = false
 		m.loaded = true
-		return m, tea.Batch(m.detailCmdForCursor(), m.prefetchCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
 		if !m.refreshing && !m.actionRunning() && !m.logLoading {
 			m.spinning = false // fetch/action settled; let the loop die

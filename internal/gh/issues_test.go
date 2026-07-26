@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -17,16 +18,14 @@ func TestIssuesDisabled(t *testing.T) {
 	}
 }
 
-func TestIssueListArgs(t *testing.T) {
-	args := IssueListArgs("assignee:@me", 20)
-	if args[0] != "issue" || args[1] != "list" || args[2] != "--search" {
-		t.Fatalf("args = %v", args)
+// The issue-list cache stores marshalled []Issue and hydrate decodes it with
+// json.Unmarshal, so this guards that struct's JSON-tag contract.
+func TestIssueJSONRoundTrips(t *testing.T) {
+	var is []Issue
+	if err := json.Unmarshal([]byte(`[{"number":4,"title":"bug","labels":[{"name":"fix"}]}]`), &is); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-}
-
-func TestParseIssues(t *testing.T) {
-	is, err := ParseIssues([]byte(`[{"number":4,"title":"bug","labels":[{"name":"fix"}]}]`))
-	if err != nil || len(is) != 1 || is[0].Number != 4 || is[0].Labels[0].Name != "fix" {
-		t.Fatalf("parsed=%+v err=%v", is, err)
+	if len(is) != 1 || is[0].Number != 4 || is[0].Labels[0].Name != "fix" {
+		t.Fatalf("parsed=%+v", is)
 	}
 }

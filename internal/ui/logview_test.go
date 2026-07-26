@@ -121,7 +121,7 @@ func logViewModel(t *testing.T) Model {
 	t.Helper()
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
-	m.SetRunner(stubRunner{})
+	m.SetActionsSource(&fakeActionsSource{})
 	m.width, m.height = 120, 40
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
 		{State: "FAILURE", Name: "test", DetailsUrl: "https://github.com/x/actions/runs/1/job/99"},
@@ -209,6 +209,39 @@ func TestRenderLogBody(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if !strings.Contains(lines[1], "▎") { // cursor gutter on the focused line
 		t.Fatalf("cursor gutter not on focused line: %q", lines)
+	}
+}
+
+// TestLogBodyCacheInvalidatesOnContentChange guards the styled-line cache: new
+// log content (via setLogSteps) must not serve stale cached lines.
+func TestLogBodyCacheInvalidatesOnContentChange(t *testing.T) {
+	m := logViewModel(t)
+	m.setLogSteps([]logStep{{name: "step", lines: []string{"alpha-line"}}})
+	if !strings.Contains(ansi.Strip(m.renderLogBody(80)), "alpha-line") {
+		t.Fatal("first render missing alpha-line")
+	}
+	m.setLogSteps([]logStep{{name: "step", lines: []string{"bravo-line"}}})
+	out := ansi.Strip(m.renderLogBody(80))
+	if strings.Contains(out, "alpha-line") {
+		t.Error("stale cached log line survived a content change")
+	}
+	if !strings.Contains(out, "bravo-line") {
+		t.Error("new log line not rendered after content change")
+	}
+}
+
+// TestLogBodyCursorMoveKeepsLines: moving the cursor reuses cached lines but
+// still emits every line (only the gutter shifts).
+func TestLogBodyCursorMoveKeepsLines(t *testing.T) {
+	m := logViewModel(t)
+	m.setLogSteps([]logStep{{name: "step", lines: []string{"line-one", "line-two", "line-three"}}})
+	_ = m.renderLogBody(80) // populate the cache at cursor 0
+	m.logCursor = len(m.logLines) - 1
+	out := ansi.Strip(m.renderLogBody(80))
+	for _, want := range []string{"line-one", "line-two", "line-three"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log line %q missing after cursor move", want)
+		}
 	}
 }
 

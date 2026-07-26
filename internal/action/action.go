@@ -15,12 +15,18 @@ type Vars struct {
 	Repo        string
 	Author      string
 	Branch      string // derived branch (issue) or HeadRefName (PR)
+	ID          string // GraphQL node ID (PR only); "" on the issue board or the gh-CLI path
 }
 
 type Command struct {
 	Argv    []string // templated, exec'd directly (no shell) — injection-safe
 	Builtin string   // e.g. "rerun-failed", "copy-url", "copy-branch"
 	Shell   string   // opt-in: run through `sh -c` (user actions only)
+	// Native names the githubv4 mutation/open this action runs (e.g.
+	// "merge-squash", "open-web"). The packaged PR/issue mutations set only
+	// Native; Argv is reserved for exits-TUI actions (wt switch) and any
+	// user-configured commands.
+	Native string
 }
 
 type Action struct {
