@@ -11,13 +11,6 @@ import (
 	"github.com/noamsto/prdash/internal/preview"
 )
 
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
 // renderThreadsSummary is the Overview THREADS block body: top-N unresolved
 // threads then a "more / resolved hidden" tail. Empty when nothing is unresolved.
 func renderThreadsSummary(ts []gh.ReviewThread, n, w int) string {
@@ -32,7 +25,7 @@ func renderThreadsSummary(ts []gh.ReviewThread, n, w int) string {
 		body := ""
 		if len(t.Comments) > 0 {
 			author = t.Comments[0].Author
-			body = firstLine(t.Comments[0].Body)
+			body = preview.PlainTitle(t.Comments[0].Body)
 		}
 		sep := "  "
 		// Budget the line to w by truncating the variable-length author (loc is
@@ -81,10 +74,10 @@ func renderFileThreads(g preview.FileThreads, w int, showResolved bool) string {
 		fixed := lipgloss.Width(indent) + lipgloss.Width(label) + lipgloss.Width(sep1) + lipgloss.Width(sep2) + lipgloss.Width(dot)
 		author := truncate(head.Author, max(0, w-fixed))
 		b.WriteString(indent + label + sep1 + authorStyle(author).Render(author) + sep2 + dot + "\n")
-		b.WriteString("      " + dimStyle.Render(truncate(firstLine(head.Body), w-6)) + "\n")
+		b.WriteString("      " + dimStyle.Render(truncate(preview.PlainTitle(head.Body), w-6)) + "\n")
 		for _, reply := range t.Comments[1:] {
 			b.WriteString("      " + sepStyle.Render("└ ") + authorStyle(reply.Author).Render(reply.Author) + "\n")
-			b.WriteString("        " + dimStyle.Render(truncate(firstLine(reply.Body), w-8)) + "\n")
+			b.WriteString("        " + dimStyle.Render(truncate(preview.PlainTitle(reply.Body), w-8)) + "\n")
 		}
 	}
 	if resolved > 0 {
