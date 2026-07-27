@@ -1210,6 +1210,31 @@ func TestOmniAutocomplete(t *testing.T) {
 	}
 }
 
+// TestOmniEnterCommitsOverSuggestions guards that an open @-dropdown never
+// swallows enter: a completed "@alice" still fuzzy-matches itself, so gating the
+// commit on "are there suggestions?" left enter re-completing the same token
+// forever.
+func TestOmniEnterCommitsOverSuggestions(t *testing.T) {
+	m := newTestModelWithRows(t)
+	stubBackends(&m)
+	m.members = []gh.User{{Login: "alice"}, {Login: "bob"}}
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("@alice")
+	m.filterInput.SetCursor(len("@alice"))
+	if len(m.omniSuggestions()) == 0 {
+		t.Fatal("need an active suggestion to exercise the commit gate")
+	}
+	u, _ := m.Update(keyMsg("enter"))
+	m = u.(Model)
+	if m.filtering {
+		t.Fatal("enter must commit and exit omni mode even with the dropdown open")
+	}
+	if got := m.filterInput.Value(); got != "@alice" {
+		t.Fatalf("enter rewrote the query to %q, want @alice kept applied", got)
+	}
+}
+
 // TestOmniEnterReconcilesServerQuery guards that committing a server qualifier
 // with Enter issues a reconcile fetch even when the 250ms debounce never fired,
 // so the board never keeps stale rows for the committed query.
@@ -1292,56 +1317,54 @@ func TestHydrateViewerBeforeSectionsPartition(t *testing.T) {
 	}
 }
 
-// TestOmniHintRowsReservesDropdown guards that the height render() draws under
-// the filter input is reserved by contentHeight, so the dropdown/hint never
-// overflows the frame.
-func TestOmniHintRowsReservesDropdown(t *testing.T) {
+// TestOmniDropdownFloatsOverList guards that the @-mention panel is composited
+// over the list instead of joined into the filter bar: opening it must not move
+// a single row, and it must stay inside the frame at its anchor.
+func TestOmniDropdownFloatsOverList(t *testing.T) {
 	m := newTestModelWithRows(t)
 	m.members = []gh.User{
 		{Login: "aa1"}, {Login: "aa2"}, {Login: "aa3"}, {Login: "aa4"},
 		{Login: "aa5"}, {Login: "aa6"}, {Login: "aa7"}, {Login: "aa8"},
 	}
 	m.width = 80
-	m.height = 24 // tall enough that the dropdown-row cap (FIX B) doesn't kick in
+	m.height = 24 // tall enough that the dropdown-row cap doesn't kick in
 	m.filtering = true
 	m.filterInput.Focus()
-	m.filterInput.SetValue("@aa")
-	if got, want := m.omniHintRows(), lipgloss.Height(m.omniSuggestDropdown()); got != want {
-		t.Fatalf("omniHintRows with dropdown = %d, want %d", got, want)
-	}
-	if m.omniHintRows() <= 1 {
-		t.Fatalf("omniHintRows with a full dropdown = %d, want > 1", m.omniHintRows())
-	}
 
-	m.filterInput.SetValue("") // no @ partial: falls back to the static hint line
-	if got := m.omniHintRows(); got != 1 {
-		t.Fatalf("omniHintRows without a partial = %d, want 1", got)
-	}
-
-	m.mode = "issue"
-	if got := m.omniHintRows(); got != 0 {
-		t.Fatalf("omniHintRows on the issue board = %d, want 0", got)
-	}
-
-	// The filter bar is always reserved (1 row baseline, blurred or focused);
-	// the footer stays put either way. So focusing only costs the extra rows
-	// beyond that baseline — exactly omniHintRows().
-	m.mode = "pr"
-	m.filterInput.SetValue("@aa")
 	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
-	filtered := m.contentHeight(l)
-	m.filtering = false
-	base := m.contentHeight(l)
-	m.filtering = true
-	if base-filtered != m.omniHintRows() {
-		t.Fatalf("contentHeight delta = %d, want %d", base-filtered, m.omniHintRows())
+	m.filterInput.SetValue("")
+	if dd := m.omniSuggestDropdown(); dd != "" {
+		t.Fatalf("no @ partial must not open the dropdown, got %q", dd)
+	}
+	closed := m.contentHeight(l)
+
+	m.filterInput.SetValue("@aa")
+	dd := m.omniSuggestDropdown()
+	if lipgloss.Height(dd) <= 1 {
+		t.Fatalf("dropdown = %d rows, want a multi-row panel", lipgloss.Height(dd))
+	}
+	if got := m.contentHeight(l); got != closed {
+		t.Fatalf("opening the dropdown moved the list: contentHeight %d, want %d", got, closed)
+	}
+	if bottom := m.omniDropdownY() + lipgloss.Height(dd); bottom > m.height {
+		t.Fatalf("dropdown bottom row = %d, overflows height %d", bottom, m.height)
+	}
+	if w := lipgloss.Width(dd); w > m.width {
+		t.Fatalf("dropdown width = %d, overflows width %d", w, m.width)
+	}
+
+	// Short window: the panel shrinks to the rows left under its anchor rather
+	// than running off the bottom.
+	m.height = m.omniDropdownY() + 4
+	if h := lipgloss.Height(m.omniSuggestDropdown()); h > 4 {
+		t.Fatalf("dropdown = %d rows, want <= the 4 left below the anchor", h)
 	}
 }
 
 // TestContentHeightFilteringNoPanel guards that focusing the always-visible
-// filter bar costs exactly one extra row when the dropdown/hint is a single
-// line (omniHintRows()==1) — the footer is unaffected, so this is not a wash
-// against a reclaimed footer the way it was when filtering used to hide it.
+// filter bar costs exactly one extra row — the omni syntax hint — with the
+// footer unaffected, so this is not a wash against a reclaimed footer the way
+// it was when filtering used to hide it.
 func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m := newTestModelWithRows(t)
 	m.width = 80
@@ -1349,9 +1372,9 @@ func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m.mode = "pr"
 	m.filtering = true
 	m.filterInput.Focus()
-	m.filterInput.SetValue("") // no @ partial: omniHintRows() == 1
-	if got := m.omniHintRows(); got != 1 {
-		t.Fatalf("omniHintRows = %d, want 1", got)
+	m.filterInput.SetValue("")
+	if got := m.filterBarRows(); got != 2 {
+		t.Fatalf("filterBarRows while focused = %d, want 2 (input + hint)", got)
 	}
 
 	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}

@@ -191,25 +191,28 @@ func tabSegment(tabs []string, active, maxW int) string {
 
 // overlayTop composites panel horizontally centered over base, anchored to a
 // fixed row near the top so overlays of differing height don't jump vertically
-// as their content changes. Tall panels are pulled up only as far as needed to
-// stay on screen. Layer.Draw ignores its own x/y, so the positioning has to go
-// through a Compositor, which draws each layer at its absolute bounds.
+// as their content changes.
 func overlayTop(base, panel string, w, h int) string {
+	return overlayAt(base, panel, (w-lipgloss.Width(panel))/2, h/5, w, h)
+}
+
+// overlayAt composites panel over base at absolute (x, y), pulled back inside
+// the w × h frame only as far as needed to stay on screen. Layer.Draw ignores
+// its own x/y, so the positioning has to go through a Compositor, which draws
+// each layer at its absolute bounds.
+func overlayAt(base, panel string, x, y, w, h int) string {
 	pw, ph := lipgloss.Width(panel), lipgloss.Height(panel)
-	px, py := (w-pw)/2, h/5
-	if py+ph > h {
-		py = h - ph
+	if x+pw > w {
+		x = w - pw
 	}
-	if px < 0 {
-		px = 0
+	if y+ph > h {
+		y = h - ph
 	}
-	if py < 0 {
-		py = 0
-	}
+	x, y = max(0, x), max(0, y)
 	canvas := lipgloss.NewCanvas(w, h)
 	canvas.Compose(lipgloss.NewCompositor(
 		lipgloss.NewLayer(base),
-		lipgloss.NewLayer(panel).X(px).Y(py).Z(1),
+		lipgloss.NewLayer(panel).X(x).Y(y).Z(1),
 	))
 	return canvas.Render()
 }
