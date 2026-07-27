@@ -36,6 +36,9 @@ func Render(md string, width int) (string, error) {
 		r, err = glamour.NewTermRenderer(
 			glamour.WithStyles(activeStyle),
 			glamour.WithWordWrap(width),
+			// Table links otherwise defer to a footnote list, which reads
+			// Link.Format and so prints the label instead of the suppressed URL.
+			glamour.WithInlineTableLinks(true),
 		)
 		if err != nil {
 			return "", err
