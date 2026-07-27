@@ -366,3 +366,30 @@ func TestFailedUpdateBranchDoesNotStampCIRerun(t *testing.T) {
 		t.Error("a failed update-branch must not stamp ciRerun")
 	}
 }
+
+// TestDelayedRefreshMsgTriggersFetch is the behavior that matters: when the
+// scheduled tick lands, the board refetches.
+func TestDelayedRefreshMsgTriggersFetch(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m.refreshing = false
+
+	u, cmd := m.Update(delayedRefreshMsg{})
+	m = u.(Model)
+	if !m.refreshing {
+		t.Error("delayedRefreshMsg must start a refresh")
+	}
+	if cmd == nil {
+		t.Error("delayedRefreshMsg must return the fetch command")
+	}
+}
+
+// TestRerunsCIClassifiesActions pins which actions get the follow-up refetch and
+// the optimistic in-progress paint: the two that re-trigger CI, and nothing else.
+func TestRerunsCIClassifiesActions(t *testing.T) {
+	defaults := action.DefaultPRActions()
+	for key, want := range map[string]bool{"u": true, "r": true, "m": false, "A": false, "M": false, "L": false} {
+		if got := rerunsCI(defaults[key]); got != want {
+			t.Errorf("rerunsCI(%q) = %v, want %v", key, got, want)
+		}
+	}
+}

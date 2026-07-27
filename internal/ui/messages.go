@@ -80,6 +80,11 @@ type actionDoneMsg struct {
 // actionClearMsg wipes a settled action status after its dwell time.
 type actionClearMsg struct{}
 
+// delayedRefreshMsg is the second, later refetch scheduled after an action that
+// re-triggers CI: the immediate refetch races GitHub's queueing and returns the
+// pre-push rollup, so a follow-up is what actually brings the new runs in.
+type delayedRefreshMsg struct{}
+
 // checksPollMsg fires the live-checks poll beat; the loop runs only while some
 // shown PR has a running check.
 type checksPollMsg struct{}

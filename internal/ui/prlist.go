@@ -182,6 +182,16 @@ func (m *Model) SetRepo(repo string) { m.repo = repo }
 // trigger) self-corrects instead of showing a permanent phantom spinner.
 const ciRerunWindow = 2 * time.Minute
 
+// ciRerunRecheck is how long to wait before the follow-up refetch — long enough
+// for GitHub to have queued the re-triggered runs, well inside ciRerunWindow so
+// the optimistic state is replaced by real data rather than expiring into a
+// stale one.
+const ciRerunRecheck = 12 * time.Second
+
+func delayedRefreshCmd() tea.Cmd {
+	return tea.Tick(ciRerunRecheck, func(time.Time) tea.Msg { return delayedRefreshMsg{} })
+}
+
 // applyCIRerun repaints the checks of PRs that just had them re-triggered as
 // in-progress. GitHub keeps serving the pre-push rollup for several seconds
 // after update-branch, so without this the row shows a stale ✓ for a branch
@@ -1381,6 +1391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, n := range m.actionStatus.nums {
 				m.ciRerun[n] = exp
 			}
+			cmds = append(cmds, delayedRefreshCmd())
 		}
 		return m, tea.Batch(cmds...)
 	case actionClearMsg:
@@ -1388,6 +1399,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionStatus = nil
 		}
 		return m, nil
+	case delayedRefreshMsg:
+		return m, m.backgroundRefresh()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.repaintActive() // reflow whichever view owns the viewport to the new size
