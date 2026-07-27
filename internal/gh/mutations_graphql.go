@@ -48,6 +48,23 @@ func (s GraphSource) MarkReady(prID string) error {
 	return s.client.Mutate(context.Background(), &m, input, nil)
 }
 
+// ApprovePR submits a bare approving review, replacing `gh pr review --approve`.
+// GitHub rejects approving your own PR with an opaque 422, so callers pre-check
+// authorship (see nativeMutationFn) rather than letting that surface.
+func (s GraphSource) ApprovePR(prID string) error {
+	var m struct {
+		AddPullRequestReview struct {
+			PullRequestReview struct{ ID string }
+		} `graphql:"addPullRequestReview(input: $input)"`
+	}
+	event := githubv4.PullRequestReviewEventApprove
+	input := githubv4.AddPullRequestReviewInput{
+		PullRequestID: githubv4.ID(prID),
+		Event:         &event,
+	}
+	return s.client.Mutate(context.Background(), &m, input, nil)
+}
+
 // UpdateBranch merges the base branch into head, replacing `gh pr
 // update-branch`. expectedHeadOid is deliberately omitted (see
 // research/ready-updatebranch.md §3) — the operation is non-destructive either

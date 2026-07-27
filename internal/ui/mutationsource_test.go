@@ -15,9 +15,9 @@ import (
 // mutation seam: it records every call's PR node ID (and, for RequestReviews,
 // the full desired login set) instead of hitting GitHub.
 type fakeMutationSource struct {
-	mergeCalls, autoMergeCalls, markReadyCalls, updateBranchCalls []string
-	reviewCalls                                                   []reviewCall
-	err                                                           error // returned by every call, to test failure propagation
+	mergeCalls, autoMergeCalls, markReadyCalls, updateBranchCalls, approveCalls []string
+	reviewCalls                                                                 []reviewCall
+	err                                                                         error // returned by every call, to test failure propagation
 }
 
 type reviewCall struct {
@@ -42,6 +42,11 @@ func (f *fakeMutationSource) MarkReady(prID string) error {
 
 func (f *fakeMutationSource) UpdateBranch(prID string) error {
 	f.updateBranchCalls = append(f.updateBranchCalls, prID)
+	return f.err
+}
+
+func (f *fakeMutationSource) ApprovePR(prID string) error {
+	f.approveCalls = append(f.approveCalls, prID)
 	return f.err
 }
 
