@@ -90,3 +90,24 @@ func TestRenderSuppressesBadgeAndURLNoise(t *testing.T) {
 		t.Error("link lost its OSC 8 hyperlink; it is no longer clickable")
 	}
 }
+
+func TestRenderTableLinkHasNoFootnote(t *testing.T) {
+	const md = "| ref | note |\n|---|---|\n| [the schema](https://github.com/x/y/blob/main/a.sql) | check this |\n"
+	out, err := Render(md, 72)
+	if err != nil {
+		t.Fatal(err)
+	}
+	painted := ansi.Strip(out)
+	if strings.Contains(painted, "[1]") {
+		t.Errorf("table link left a footnote marker: %q", painted)
+	}
+	if !strings.Contains(painted, "the schema") {
+		t.Errorf("link label missing: %q", painted)
+	}
+	if !strings.Contains(painted, "check this") {
+		t.Errorf("table content missing: %q", painted)
+	}
+	if !strings.Contains(out, "\x1b]8;") {
+		t.Error("table link lost its OSC 8 hyperlink; it is no longer clickable")
+	}
+}
