@@ -20,8 +20,9 @@ const hideFormat = "{{if false}}{{.text}}{{end}}"
 //     review comment is a shields.io severity badge that cannot render here.
 //   - A link's href stops being painted, but its OSC 8 wrapper is untouched, so
 //     links stay clickable while a 100-character blob URL no longer wraps across
-//     four lines. Table links are unaffected: inside a table glamour sets
-//     LinkElement.SkipHref, so renderHrefPart never consults Link.Format.
+//     four lines. Links inside a table need Render's WithInlineTableLinks to go
+//     with this: their href is painted by a separate footnote path that reads
+//     Link.Format too, and would otherwise print the label as its own footnote.
 //
 // s is a copy, and Bold is replaced rather than written through, so the stock
 // package-level configs are left intact.
@@ -37,9 +38,9 @@ func terminalStyle(s ansi.StyleConfig) ansi.StyleConfig {
 	return s
 }
 
-// darkStyle/lightStyle are glamour's built-in chroma styles, minus the heading
-// markers. We deliberately do NOT post-process rendered output (no
-// pipe-stripping), so tables render intact.
+// darkStyle/lightStyle are glamour's built-in chroma styles, adapted by
+// terminalStyle. Every adaptation is style config: we deliberately do NOT
+// post-process rendered output (no pipe-stripping), so tables render intact.
 var (
 	darkStyle  = terminalStyle(styles.DarkStyleConfig)
 	lightStyle = terminalStyle(styles.LightStyleConfig)

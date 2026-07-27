@@ -36,10 +36,8 @@ func Render(md string, width int) (string, error) {
 		r, err = glamour.NewTermRenderer(
 			glamour.WithStyles(activeStyle),
 			glamour.WithWordWrap(width),
-			// Table links defer to footnotes by default. With Link.Format
-			// suppressed, the footnote prints the label instead of the URL,
-			// creating useless self-referential noise. Inline renders them
-			// cleanly without footnotes while keeping OSC 8 hyperlinks.
+			// Table links otherwise defer to a footnote list, which reads
+			// Link.Format and so prints the label instead of the suppressed URL.
 			glamour.WithInlineTableLinks(true),
 		)
 		if err != nil {
