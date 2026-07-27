@@ -523,7 +523,7 @@ func (m Model) expandedView() string {
 			}
 		}
 	}
-	head += m.statusBadge() // rerun feedback: the header badge isn't visible here otherwise
+	head += m.statusBadge(blockW - lipgloss.Width(head)) // rerun feedback: the header badge isn't visible here otherwise
 
 	contentBox := tabbedBox(m.vp.View(), l.ContentW, l.VPHeight+2, expandedTabs, m.expandedTab)
 

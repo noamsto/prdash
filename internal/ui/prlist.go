@@ -1936,7 +1936,7 @@ func (m Model) header() string {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
 	}
-	h += m.statusBadge()
+	h += m.statusBadge(m.width - lipgloss.Width(h))
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
@@ -1945,8 +1945,11 @@ func (m Model) header() string {
 
 // statusBadge renders the transient inline-action badge (spinner while running,
 // ✓/✗ once settled), or "" when idle. Shared by the list header and the
-// expanded view, which otherwise wouldn't surface a rerun's outcome.
-func (m Model) statusBadge() string {
+// expanded view, which otherwise wouldn't surface a rerun's outcome. avail is
+// the caller's remaining line budget; a failed single-target batch surfaces
+// the underlying error verbatim (runBulkNative), which can be an arbitrarily
+// long network/GraphQL message, so the fail text is clamped to fit.
+func (m Model) statusBadge(avail int) string {
 	s := m.actionStatus
 	if s == nil {
 		return ""
@@ -1956,7 +1959,9 @@ func (m Model) statusBadge() string {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		return "  " + runBadgeStyle.Render(spin+" "+s.run+"…")
 	case s.err != nil:
-		return "  " + failBadgeStyle.Render("✗ "+s.fail)
+		// 6 = the "  " prefix (2) + badgeBase's Padding(0, 1) (2) + "✗ " (2),
+		// all fixed cells around the truncated text within avail.
+		return "  " + failBadgeStyle.Render("✗ "+truncate(s.fail, max(0, avail-6)))
 	default:
 		return "  " + passBadgeStyle.Render("✓ "+s.ok)
 	}

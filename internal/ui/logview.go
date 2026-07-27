@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -425,7 +426,7 @@ func (m Model) logViewRender() string {
 	}
 	bw := m.expandedBoxWidth()
 	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
-	head += m.statusBadge()
+	head += m.statusBadge(bw - lipgloss.Width(head))
 	box := titledBox(m.vp.View(), bw, m.logBoxHeight(), m.logLabel)
 	parts := []string{head, box}
 	if showFooter(m.width, m.height) {

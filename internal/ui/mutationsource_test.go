@@ -314,6 +314,27 @@ func TestApproveBulkSkipsOnlyOwnPR(t *testing.T) {
 	}
 }
 
+// TestApproveSingleTargetSurfacesVerbatimError guards runBulkNative's n == 1
+// branch: a single-PR batch reports the underlying error's own message rather
+// than the opaque "1 of 1 failed" aggregate.
+func TestApproveSingleTargetSurfacesVerbatimError(t *testing.T) {
+	pr := gh.PR{Number: 31, ID: "pr31node", State: "OPEN"}
+	pr.Author.Login = "me"
+	m, fs := mutationModel(t, []gh.PR{pr})
+	m.viewerLogin = "me"
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+	if want := "can't approve your own PR #31"; done.fail != want {
+		t.Errorf("fail = %q, want %q", done.fail, want)
+	}
+	if len(fs.approveCalls) != 0 {
+		t.Errorf("approveCalls = %v, want none", fs.approveCalls)
+	}
+}
+
 func TestRequestReviewsSendsFullSetWithUnionFalse(t *testing.T) {
 	m, fs := mutationModel(t, []gh.PR{{Number: 5, ID: "pr5node", State: "OPEN"}})
 	picked := map[string]bool{"alice": true, "bob": true}
