@@ -187,8 +187,8 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 }
 
 // nativeMutationFn resolves the client-side pre-checks the research contracts
-// specify (merge/auto-merge: PR state + cached mergeable; mark-ready: IsDraft)
-// against live Model state on the calling (synchronous) goroutine, then
+// specify (merge/auto-merge: PR state + cached mergeable; mark-ready: IsDraft;
+// approve: PR state + self-approval) against live Model state on the calling
 // returns a closure that performs the actual network call. The closure only
 // closes over plain values (mutationSource, p.ID, a precomputed error) — never
 // m itself — so it's safe to run later from runBulkNative's async batch. ok is
@@ -201,7 +201,7 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bool) {
 	if p.ID == "" {
 		switch native {
-		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch":
+		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch", "approve":
 			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
 			return func() error { return err }, true
 		}
@@ -229,6 +229,18 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		return func() error { return src.MarkReady(p.ID) }, true
 	case "update-branch":
 		return func() error { return src.UpdateBranch(p.ID) }, true
+	case "approve":
+		if p.State != "OPEN" {
+			err := fmt.Errorf("PR #%d is not open", p.Number)
+			return func() error { return err }, true
+		}
+		// GitHub rejects self-approval with an opaque 422; caught here so a mixed
+		// Mine/Others bulk selection reports which PRs were skipped and why.
+		if m.viewerLogin != "" && p.Author.Login == m.viewerLogin {
+			err := fmt.Errorf("can't approve your own PR #%d", p.Number)
+			return func() error { return err }, true
+		}
+		return func() error { return src.ApprovePR(p.ID) }, true
 	}
 	return nil, false
 }

@@ -1968,7 +1968,8 @@ func (m Model) legendGroups() []legendGroup {
 		{"↵", "worktree"}, {"W", "bulk"}, {"y", "#"}, {"Y", "url"}, {"b", "branch"}, {"o", "open"},
 	}
 	if m.mode == "pr" {
-		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"}, keyHint{"M", "ready"})
+		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"},
+			keyHint{"M", "ready"}, keyHint{"L", "approve"})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
 

@@ -10,8 +10,8 @@ func DefaultPRActions() map[string]Action {
 			Confirm: true, Scope: "per-selected", Refresh: true,
 			Progress: "Merging", Past: "Merged", Fail: "Merge failed"},
 		"A": {Key: "A", Label: "Auto-merge (squash)",
-			Command:       Command{Native: "auto-merge-squash"},
-			Scope:         "per-selected", ConfirmOthers: true,
+			Command: Command{Native: "auto-merge-squash"},
+			Scope:   "per-selected", ConfirmOthers: true,
 			Progress: "Enabling auto-merge", Past: "Auto-merge on", Fail: "Auto-merge failed"},
 		"r": {Key: "r", Label: "Rerun checks",
 			Command: Command{Builtin: "rerun-failed"}, Scope: "single", Refresh: true,
@@ -31,9 +31,13 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Native: "update-branch"}, Scope: "per-selected", Refresh: true,
 			Progress: "Updating branch", Past: "Branch updated", Fail: "Update failed"},
 		"M": {Key: "M", Label: "Mark ready",
-			Command:       Command{Native: "mark-ready"}, Scope: "per-selected", Refresh: true,
+			Command: Command{Native: "mark-ready"}, Scope: "per-selected", Refresh: true,
 			ConfirmOthers: true,
 			Progress:      "Marking ready", Past: "Marked ready", Fail: "Mark-ready failed"},
+		"L": {Key: "L", Label: "Approve",
+			Command: Command{Native: "approve"}, Scope: "per-selected", Refresh: true,
+			Confirm:  true,
+			Progress: "Approving", Past: "Approved", Fail: "Approve failed"},
 	}
 }
 
