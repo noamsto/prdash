@@ -13,9 +13,9 @@ Replacing `internal/gh/actions_rest.go`'s four REST calls with
 `google/go-github` v89: `ListRepositoryWorkflowRuns`, `RerunFailedJobsByID`,
 `RerunJobByID`, and `GetWorkflowJobLogs`.
 
-This was not a paper exercise — it was implemented, tested, and built (commit
-`4c1a3eb`, reverted by `bdce4f8`). Everything below is measured, not estimated.
-If this is ever revisited, cherry-pick `4c1a3eb` rather than starting over.
+It was implemented, tested, and built in `4c1a3eb`, reverted by `bdce4f8`, so
+the numbers below are measured rather than estimated. If this is ever revisited,
+cherry-pick `4c1a3eb` rather than starting over.
 
 ## Why declined
 
@@ -54,8 +54,7 @@ the linker prunes little of the ~90% prdash never calls.
 
 That inverts the premise of #54, which assumed the hand-rolled surface carried
 ongoing burden. Owning *frozen* code is cheap; tracking a v89-and-climbing
-dependency is not. An issue titled "reduce maintenance" should not land on a
-change that adds recurring toil.
+dependency is not.
 
 The general point: a client library earns its keep when a project uses a lot of
 its surface — many endpoints, real pagination, rate limiting, retries. prdash
@@ -80,8 +79,6 @@ instead of a small local edit.
 - go-github adopts a stable module path (no more `/vNN` bumps).
 - Renovate or Dependabot lands in this repo *and* CI verifies the bump, making
   the migration cost near-zero rather than manual.
-- Binary size stops mattering less than code volume — currently it's the
-  opposite, and 77 lines is not much code volume.
 
 ## Verified API facts (so nobody re-derives them)
 
@@ -101,7 +98,7 @@ Confirmed against go-github v89.0.0 source, worth keeping even though unused:
 - `CheckResponse` accepts any 2xx (202 becomes `*AcceptedError`), which would
   have loosened the rerun calls' exact-201 check.
 
-## Side benefit
+## #53's token-safety guard is confirmed live
 
 `TestJobLogRedirectDropsAuthOnFollowup` was mutation-tested during this work:
 pointing the blob fetch at the oauth2 client made it fail with
