@@ -15,9 +15,9 @@ import (
 // mutation seam: it records every call's PR node ID (and, for RequestReviews,
 // the full desired login set) instead of hitting GitHub.
 type fakeMutationSource struct {
-	mergeCalls, autoMergeCalls, markReadyCalls, updateBranchCalls []string
-	reviewCalls                                                   []reviewCall
-	err                                                           error // returned by every call, to test failure propagation
+	mergeCalls, autoMergeCalls, markReadyCalls, updateBranchCalls, approveCalls []string
+	reviewCalls                                                                 []reviewCall
+	err                                                                         error // returned by every call, to test failure propagation
 }
 
 type reviewCall struct {
@@ -42,6 +42,11 @@ func (f *fakeMutationSource) MarkReady(prID string) error {
 
 func (f *fakeMutationSource) UpdateBranch(prID string) error {
 	f.updateBranchCalls = append(f.updateBranchCalls, prID)
+	return f.err
+}
+
+func (f *fakeMutationSource) ApprovePR(prID string) error {
+	f.approveCalls = append(f.approveCalls, prID)
 	return f.err
 }
 
@@ -213,6 +218,120 @@ func TestNativeMutationSkipsWhenNodeIDEmpty(t *testing.T) {
 	}
 	if len(fs.mergeCalls) != 0 {
 		t.Errorf("mergeCalls = %v, want none — the empty-id guard must short-circuit before firing", fs.mergeCalls)
+	}
+}
+
+func TestApproveRoutesToNativeSource(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 31, ID: "pr31node", State: "OPEN"}})
+	m.viewerLogin = "me"
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	if len(fs.approveCalls) != 1 || fs.approveCalls[0] != "pr31node" {
+		t.Errorf("approveCalls = %v, want [pr31node]", fs.approveCalls)
+	}
+}
+
+// TestApproveSkipsOwnPR guards the pre-check that keeps a mixed Mine/Others bulk
+// selection from half-failing on GitHub's opaque self-approval 422.
+func TestApproveSkipsOwnPR(t *testing.T) {
+	pr := gh.PR{Number: 31, ID: "pr31node", State: "OPEN"}
+	pr.Author.Login = "me"
+	m, fs := mutationModel(t, []gh.PR{pr})
+	m.viewerLogin = "me"
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (own PR)", msg)
+	}
+	if len(fs.approveCalls) != 0 {
+		t.Errorf("approveCalls = %v, want none — the self-approve guard must short-circuit", fs.approveCalls)
+	}
+}
+
+// TestApproveFiresWhenViewerUnknown documents the deliberate gap: with no
+// resolved viewer login there is nothing to compare against, so the mutation
+// fires and GitHub decides.
+func TestApproveFiresWhenViewerUnknown(t *testing.T) {
+	pr := gh.PR{Number: 31, ID: "pr31node", State: "OPEN"}
+	pr.Author.Login = "me"
+	m, fs := mutationModel(t, []gh.PR{pr}) // viewerLogin left ""
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	if len(fs.approveCalls) != 1 {
+		t.Errorf("approveCalls = %v, want one call", fs.approveCalls)
+	}
+}
+
+func TestApproveFailsWhenNotOpen(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 31, ID: "pr31node", State: "CLOSED"}})
+	m.viewerLogin = "me"
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (closed PR)", msg)
+	}
+	if len(fs.approveCalls) != 0 {
+		t.Errorf("approveCalls = %v, want none", fs.approveCalls)
+	}
+}
+
+func TestApproveSkipsWhenNodeIDEmpty(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 31, State: "OPEN"}}) // ID left unset
+	m.viewerLogin = "me"
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (empty node id)", msg)
+	}
+	if len(fs.approveCalls) != 0 {
+		t.Errorf("approveCalls = %v, want none", fs.approveCalls)
+	}
+}
+
+// TestApproveBulkSkipsOnlyOwnPR is the reason the guard exists: one aggregate
+// failure out of two, with the other PR actually approved.
+func TestApproveBulkSkipsOnlyOwnPR(t *testing.T) {
+	mine := gh.PR{Number: 31, ID: "pr31node", State: "OPEN"}
+	mine.Author.Login = "me"
+	theirs := gh.PR{Number: 32, ID: "pr32node", State: "OPEN"}
+	theirs.Author.Login = "you"
+	m, fs := mutationModel(t, []gh.PR{mine, theirs})
+	m.viewerLogin = "me"
+	for i := 0; i < m.section.Len(); i++ {
+		m.sel.toggle(i)
+	}
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a partially-failed actionDoneMsg", msg)
+	}
+	if done.fail != "1 of 2 failed" {
+		t.Errorf("fail = %q, want %q", done.fail, "1 of 2 failed")
+	}
+	if len(fs.approveCalls) != 1 || fs.approveCalls[0] != "pr32node" {
+		t.Errorf("approveCalls = %v, want only [pr32node]", fs.approveCalls)
+	}
+}
+
+// TestApproveSingleTargetSurfacesVerbatimError guards runBulkNative's n == 1
+// branch: a single-PR batch reports the underlying error's own message rather
+// than the opaque "1 of 1 failed" aggregate.
+func TestApproveSingleTargetSurfacesVerbatimError(t *testing.T) {
+	pr := gh.PR{Number: 31, ID: "pr31node", State: "OPEN"}
+	pr.Author.Login = "me"
+	m, fs := mutationModel(t, []gh.PR{pr})
+	m.viewerLogin = "me"
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+	if want := "can't approve your own PR #31"; done.fail != want {
+		t.Errorf("fail = %q, want %q", done.fail, want)
+	}
+	if len(fs.approveCalls) != 0 {
+		t.Errorf("approveCalls = %v, want none", fs.approveCalls)
 	}
 }
 

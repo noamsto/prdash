@@ -9,11 +9,11 @@ import (
 )
 
 // These tests mirror the Input construction inside MergePR, EnableAutoMerge,
-// and RequestReviews (mutations_graphql.go) to pin the destructive-path
-// constants — squash merge method, union:false — that s.client.Mutate gives
-// no fake seam to observe. A future edit changing either value in the real
-// method, without updating the mirror here, is the signal these tests exist
-// to surface.
+// ApprovePR, and RequestReviews (mutations_graphql.go) to pin the
+// destructive-path constants — squash merge method, APPROVE event, union:false —
+// that s.client.Mutate gives no fake seam to observe. A future edit changing any
+// of those values in the real method, without updating the mirror here, is the
+// signal these tests exist to surface.
 
 func TestMergePRInputUsesSquashMethod(t *testing.T) {
 	method := githubv4.PullRequestMergeMethodSquash
@@ -42,6 +42,24 @@ func TestEnableAutoMergeInputUsesSquashMethod(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"mergeMethod":"SQUASH"`) {
 		t.Errorf("EnablePullRequestAutoMergeInput JSON = %s, want mergeMethod:SQUASH", raw)
+	}
+}
+
+func TestAddPullRequestReviewInputUsesApproveEventWithNoBody(t *testing.T) {
+	event := githubv4.PullRequestReviewEventApprove
+	input := githubv4.AddPullRequestReviewInput{
+		PullRequestID: githubv4.ID("PR_test"),
+		Event:         &event,
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"event":"APPROVE"`) {
+		t.Errorf("AddPullRequestReviewInput JSON = %s, want event:APPROVE", raw)
+	}
+	if strings.Contains(string(raw), `"body"`) {
+		t.Errorf("AddPullRequestReviewInput JSON = %s, want no body — approve submits a bare review", raw)
 	}
 }
 

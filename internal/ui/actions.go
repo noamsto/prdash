@@ -187,8 +187,8 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 }
 
 // nativeMutationFn resolves the client-side pre-checks the research contracts
-// specify (merge/auto-merge: PR state + cached mergeable; mark-ready: IsDraft)
-// against live Model state on the calling (synchronous) goroutine, then
+// specify (merge/auto-merge: PR state + cached mergeable; mark-ready: IsDraft;
+// approve: PR state + self-approval) against live Model state on the calling
 // returns a closure that performs the actual network call. The closure only
 // closes over plain values (mutationSource, p.ID, a precomputed error) — never
 // m itself — so it's safe to run later from runBulkNative's async batch. ok is
@@ -201,7 +201,7 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bool) {
 	if p.ID == "" {
 		switch native {
-		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch":
+		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch", "approve":
 			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
 			return func() error { return err }, true
 		}
@@ -229,6 +229,19 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		return func() error { return src.MarkReady(p.ID) }, true
 	case "update-branch":
 		return func() error { return src.UpdateBranch(p.ID) }, true
+	case "approve":
+		if p.State != "OPEN" {
+			err := fmt.Errorf("PR #%d is not open", p.Number)
+			return func() error { return err }, true
+		}
+		// GitHub rejects self-approval with an opaque 422; caught here so the
+		// rest of a bulk selection still goes through instead of the whole
+		// batch failing on GitHub's free-text error.
+		if m.viewerLogin != "" && p.Author.Login == m.viewerLogin {
+			err := fmt.Errorf("can't approve your own PR #%d", p.Number)
+			return func() error { return err }, true
+		}
+		return func() error { return src.ApprovePR(p.ID) }, true
 	}
 	return nil, false
 }
@@ -257,6 +270,7 @@ type actionStat struct {
 	settled bool
 	err     error
 	refresh bool  // true when the action mutated the PR(s) → refetch on success
+	rerunCI bool  // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
 	nums    []int // PR numbers the action touched, for detail-freshness invalidation
 }
 
@@ -273,7 +287,13 @@ func statFor(a action.Action) *actionStat {
 	if fail == "" {
 		fail = a.Label
 	}
-	return &actionStat{run: run, ok: ok, fail: fail}
+	return &actionStat{run: run, ok: ok, fail: fail, rerunCI: rerunsCI(a)}
+}
+
+// rerunsCI reports whether an action causes GitHub to queue fresh check runs —
+// update-branch pushes a merge commit, rerun-failed re-dispatches the workflows.
+func rerunsCI(a action.Action) bool {
+	return a.Command.Native == "update-branch" || a.Command.Builtin == "rerun-failed"
 }
 
 // actionRunning reports whether an inline action is still in flight.
@@ -453,13 +473,20 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	m.sel.clear() // the batch op consumes the selection
 	return tea.Batch(func() tea.Msg {
 		var failed int
+		var lastErr error
 		for _, fn := range calls {
 			if err := fn(); err != nil {
 				failed++
+				lastErr = err
 			}
 		}
 		if failed == 0 {
 			return actionDoneMsg{}
+		}
+		if n == 1 {
+			// A single-target batch's error is worth showing verbatim — "N of M
+			// failed" is opaque when N and M are both 1.
+			return actionDoneMsg{err: lastErr, fail: lastErr.Error()}
 		}
 		return actionDoneMsg{
 			err:  fmt.Errorf("%d of %d failed", failed, n),

@@ -151,7 +151,7 @@ func (m *Model) enterExpanded() {
 	if v, ok := m.cursorVars(); ok {
 		if d, cached := m.detail[v.Number]; cached {
 			if ps, ok := m.section.(*PRSection); ok {
-				m.expandedTab = jumpTabIndex(triage.Compute(ps.prAt(m.cursor), d).JumpTab)
+				m.expandedTab = jumpTabIndex(triage.Compute(ps.prAt(m.cursor), d, m.viewerLogin).JumpTab)
 			}
 		}
 	}
@@ -380,7 +380,7 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 	}
 	native := m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
-		refresh: true, nums: []int{ps.prAt(m.cursor).Number}}
+		refresh: true, rerunCI: true, nums: []int{ps.prAt(m.cursor).Number}}
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: action.RerunCheck(native, job)}
 	}, m.startSpinner())
@@ -394,7 +394,7 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 	}
 	branch, native := v.HeadRefName, m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
-		refresh: true, nums: []int{v.Number}}
+		refresh: true, rerunCI: true, nums: []int{v.Number}}
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: action.RerunFailed(native, branch)}
 	}, m.startSpinner())
@@ -523,7 +523,7 @@ func (m Model) expandedView() string {
 			}
 		}
 	}
-	head += m.statusBadge() // rerun feedback: the header badge isn't visible here otherwise
+	head += m.statusBadge(blockW - lipgloss.Width(head)) // rerun feedback: the header badge isn't visible here otherwise
 
 	contentBox := tabbedBox(m.vp.View(), l.ContentW, l.VPHeight+2, expandedTabs, m.expandedTab)
 

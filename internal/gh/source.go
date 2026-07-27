@@ -47,7 +47,7 @@ type MembersSource interface {
 }
 
 // MutationSource performs the PR-mutating actions (merge, auto-merge,
-// mark-ready, update-branch, request-reviewers) via githubv4. Every
+// mark-ready, update-branch, approve, request-reviewers) via githubv4. Every
 // method takes the PR's GraphQL node ID (gh.PR.ID), not its number — mutation
 // inputs require it. RequestReviews takes the full desired reviewer login set
 // and always replaces (union:false); an empty set is the valid "remove all
@@ -57,6 +57,7 @@ type MutationSource interface {
 	EnableAutoMerge(prID string) error
 	MarkReady(prID string) error
 	UpdateBranch(prID string) error
+	ApprovePR(prID string) error
 	RequestReviews(prID string, logins []string) error
 }
 

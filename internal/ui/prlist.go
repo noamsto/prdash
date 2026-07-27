@@ -76,6 +76,7 @@ type Model struct {
 	sel               selection
 	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
 	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
+	ciRerun           map[int]time.Time         // PR number → stamp time when its checks-in-progress override was applied
 	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
 	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
 	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
@@ -133,6 +134,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		ciRerun: map[int]time.Time{},
 		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
@@ -174,7 +176,90 @@ func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
+// ciRerunWindow is how long a PR keeps its optimistic checks-in-progress state
+// after an update-branch or rerun. Long enough for GitHub to queue the new runs,
+// short enough that a PR whose workflows never re-fire (path filters, no push
+// trigger) self-corrects instead of showing a permanent phantom spinner.
+const ciRerunWindow = 2 * time.Minute
+
+// ciRerunRecheck is how long to wait before the follow-up refetch — long enough
+// for GitHub to have queued the re-triggered runs, well inside ciRerunWindow so
+// the optimistic state is replaced by real data rather than expiring into a
+// stale one.
+const ciRerunRecheck = 12 * time.Second
+
+func delayedRefreshCmd() tea.Cmd {
+	return tea.Tick(ciRerunRecheck, func(time.Time) tea.Msg { return delayedRefreshMsg{} })
+}
+
+// applyCIRerun repaints the checks of PRs that just had them re-triggered as
+// in-progress. GitHub keeps serving the pre-push rollup for several seconds
+// after update-branch, so without this the row shows a stale ✓ for a branch
+// whose checks are about to start over. Both board funnels (setPRs,
+// setSections) run PRs through it — whether freshly fetched or hydrated from
+// the on-disk cache — so rows, preview, expanded, triage and filter all read
+// one consistent CI state.
+//
+// You press r/u precisely when a check has failed, usually with a sibling
+// check still pending from before the rerun — so an entry only clears once a
+// check has demonstrably started AFTER the stamp (real new runs have
+// appeared) or the window expires. Clearing on any pending check, as before,
+// made the override no-op in exactly the case it exists for.
+func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
+	now := time.Now()
+	for n, stamp := range m.ciRerun {
+		if now.Sub(stamp) > ciRerunWindow {
+			delete(m.ciRerun, n) // PR left the board (or its own next call): sweep so the fast path below stays true
+		}
+	}
+	if len(m.ciRerun) == 0 {
+		return prs
+	}
+	out := make([]gh.PR, len(prs))
+	copy(out, prs)
+	for i, p := range out {
+		stamp, stamped := m.ciRerun[p.Number]
+		if !stamped {
+			continue
+		}
+		if hasCheckStartedAfter(p, stamp) {
+			delete(m.ciRerun, p.Number)
+			continue
+		}
+		// Copy before writing: these PR values come from the shared cache.
+		rollup := make([]gh.Check, len(p.StatusCheckRollup))
+		copy(rollup, p.StatusCheckRollup)
+		for j := range rollup {
+			rollup[j].State, rollup[j].Conclusion = "IN_PROGRESS", ""
+		}
+		out[i].StatusCheckRollup = rollup
+	}
+	return out
+}
+
+// hasCheckStartedAfter reports whether the rollup contains a check that began
+// after t, i.e. a genuinely new run rather than one already in flight before
+// the rerun fired. StatusContext entries leave StartedAt empty (only CheckRun
+// entries populate it) and are skipped, along with anything that fails to
+// parse as the RFC3339 gh.Check.StartedAt promises.
+func hasCheckStartedAfter(p gh.PR, t time.Time) bool {
+	for _, c := range p.Checks() {
+		if c.StartedAt == "" {
+			continue
+		}
+		started, err := time.Parse(time.RFC3339, c.StartedAt)
+		if err != nil {
+			continue
+		}
+		if started.After(t) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Model) setPRs(prs []gh.PR) {
+	prs = m.applyCIRerun(prs)
 	if s, ok := m.section.(*PRSection); ok {
 		// Outside the sections default, group by author even with a single
 		// author, so you always see whose PRs you're looking at.
@@ -220,6 +305,7 @@ func (m *Model) setSections(review, open []gh.PR, viewer string) {
 		}
 		all = append(all, p)
 	}
+	all = m.applyCIRerun(all)
 	if s, ok := m.section.(*PRSection); ok {
 		s.SetState(m.state)
 		s.SetCategorized(all, cats, []string{"Review requested", "Mine", "Others"})
@@ -1320,12 +1406,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.backgroundRefresh())
 		}
+		if msg.err == nil && m.actionStatus.rerunCI {
+			stamp := time.Now()
+			for _, n := range m.actionStatus.nums {
+				m.ciRerun[n] = stamp
+			}
+			cmds = append(cmds, delayedRefreshCmd())
+		}
 		return m, tea.Batch(cmds...)
 	case actionClearMsg:
 		if m.actionStatus != nil && m.actionStatus.settled {
 			m.actionStatus = nil
 		}
 		return m, nil
+	case delayedRefreshMsg:
+		return m, m.backgroundRefresh()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.repaintActive() // reflow whichever view owns the viewport to the new size
@@ -1853,7 +1948,7 @@ func (m Model) header() string {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
 	}
-	h += m.statusBadge()
+	h += m.statusBadge(m.width - lipgloss.Width(h))
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
@@ -1862,8 +1957,11 @@ func (m Model) header() string {
 
 // statusBadge renders the transient inline-action badge (spinner while running,
 // ✓/✗ once settled), or "" when idle. Shared by the list header and the
-// expanded view, which otherwise wouldn't surface a rerun's outcome.
-func (m Model) statusBadge() string {
+// expanded view, which otherwise wouldn't surface a rerun's outcome. avail is
+// the caller's remaining line budget; a failed single-target batch surfaces
+// the underlying error verbatim (runBulkNative), which can be an arbitrarily
+// long network/GraphQL message, so the fail text is clamped to fit.
+func (m Model) statusBadge(avail int) string {
 	s := m.actionStatus
 	if s == nil {
 		return ""
@@ -1873,7 +1971,9 @@ func (m Model) statusBadge() string {
 		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		return "  " + runBadgeStyle.Render(spin+" "+s.run+"…")
 	case s.err != nil:
-		return "  " + failBadgeStyle.Render("✗ "+s.fail)
+		// 6 = the "  " prefix (2) + badgeBase's Padding(0, 1) (2) + "✗ " (2),
+		// all fixed cells around the truncated text within avail.
+		return "  " + failBadgeStyle.Render("✗ "+truncate(s.fail, max(0, avail-6)))
 	default:
 		return "  " + passBadgeStyle.Render("✓ "+s.ok)
 	}
@@ -1928,7 +2028,7 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	if !cached {
 		return triage.Card{}, false
 	}
-	return triage.Compute(ps.prAt(m.cursor), d), true
+	return triage.Compute(ps.prAt(m.cursor), d, m.viewerLogin), true
 }
 
 // legendView is the ?-toggled glyph + key reference, as a centered modal. It
@@ -1980,7 +2080,8 @@ func (m Model) legendGroups() []legendGroup {
 		{"↵", "worktree"}, {"W", "bulk"}, {"y", "#"}, {"Y", "url"}, {"b", "branch"}, {"o", "open"},
 	}
 	if m.mode == "pr" {
-		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"}, keyHint{"M", "ready"})
+		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"},
+			keyHint{"M", "ready"}, keyHint{"L", "approve"})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
 
@@ -2042,7 +2143,7 @@ func (m Model) legendView() string {
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "W", "y", "Y", "b", "o"}
+var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 

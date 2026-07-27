@@ -355,6 +355,25 @@ func TestStatusTextLivesInHeaderNotKeybindingBar(t *testing.T) {
 	}
 }
 
+// TestHeaderClampsLongFailBadge guards against a long verbatim error (e.g. a
+// raw network/GraphQL failure surfaced by runBulkNative's single-target
+// branch) wrapping the header onto a second line.
+func TestHeaderClampsLongFailBadge(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 80, 40
+	m.actionStatus = &actionStat{
+		settled: true,
+		err:     errors.New("fail"),
+		fail:    `Post "https://api.github.com/graphql": dial tcp 140.82.121.6:443: connect: connection refused`,
+	}
+
+	head := m.header()
+	if w := lipgloss.Width(head); w > m.width {
+		t.Fatalf("header width = %d, want <= model width %d:\n%s", w, m.width, head)
+	}
+}
+
 func TestDraftsToggleHighlightedInBar(t *testing.T) {
 	mk := func(hide bool) string {
 		m := NewModel("/repo", "", nil)

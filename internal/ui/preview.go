@@ -331,9 +331,9 @@ func (m Model) renderOverview(w int) string {
 		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
 			blocks = append(blocks, section("description", body))
 		}
-		tc := triage.Preliminary(pr)
+		tc := triage.Preliminary(pr, m.viewerLogin)
 		if cached {
-			tc = triage.Compute(pr, d)
+			tc = triage.Compute(pr, d, m.viewerLogin)
 		}
 		if card := renderCard(tc, bw); card != "" {
 			blocks = append(blocks, section("blocker", card))
