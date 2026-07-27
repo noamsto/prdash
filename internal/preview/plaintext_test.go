@@ -38,6 +38,21 @@ func TestPlainTitle(t *testing.T) {
 			in:   "",
 			want: "",
 		},
+		{
+			name: "suggestion fence falls through to the suggested code",
+			in:   "```suggestion\nout := make([]T, 0, len(nodes))\n```",
+			want: "out := make([]T, 0, len(nodes))",
+		},
+		{
+			name: "language fence falls through to the code",
+			in:   "```go\nv := arr[0]\n```",
+			want: "v := arr[0]",
+		},
+		{
+			name: "prose before a fence still wins",
+			in:   "Consider preallocating:\n\n```go\nv := arr[0]\n```",
+			want: "Consider preallocating:",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

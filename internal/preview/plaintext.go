@@ -23,6 +23,12 @@ var (
 // through rather than yielding a blank row. Returns "" when no line survives.
 func PlainTitle(body string) string {
 	for _, ln := range strings.Split(body, "\n") {
+		// Skip markdown fence markers like ```suggestion or ```go; they distill to
+		// "suggestion" or "go" once backticks are stripped, which is misleading.
+		// Fall through to the content inside the fence instead.
+		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+			continue
+		}
 		s := mdImage.ReplaceAllString(ln, "")
 		s = mdLink.ReplaceAllString(s, "$1")
 		s = htmlTag.ReplaceAllString(s, "")
