@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
@@ -246,5 +248,121 @@ func TestConfirmQuestionBulkShowsCount(t *testing.T) {
 	q := m.confirmQuestion()
 	if !strings.Contains(q, "for 2 PRs") {
 		t.Fatalf("bulk wording should show the count: %q", q)
+	}
+}
+
+// TestUpdateBranchPaintsChecksInProgress covers the staleness this override
+// exists for: GitHub keeps serving the pre-push check rollup for seconds after
+// update-branch, which would otherwise show a green ✓ on a branch whose checks
+// are about to start over.
+func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+
+	got := m.applyCIRerun([]gh.PR{{
+		Number:            13,
+		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
+	}})
+	if got[0].CIState() != "pending" {
+		t.Errorf("CIState = %q, want pending", got[0].CIState())
+	}
+}
+
+func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
+	m, _ := mutationModel(t, nil)
+	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+
+	got := m.applyCIRerun([]gh.PR{{
+		Number:            99,
+		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
+	}})
+	if got[0].CIState() != "pass" {
+		t.Errorf("CIState = %q, want pass — PR 99 was never stamped", got[0].CIState())
+	}
+}
+
+// TestApplyCIRerunClearsWhenRealPendingArrives stops the override from
+// outliving its usefulness: once GitHub reports work in flight, the real rollup
+// is authoritative.
+func TestApplyCIRerunClearsWhenRealPendingArrives(t *testing.T) {
+	m, _ := mutationModel(t, nil)
+	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+
+	m.applyCIRerun([]gh.PR{{
+		Number:            13,
+		StatusCheckRollup: []gh.Check{{Name: "build", State: "IN_PROGRESS"}},
+	}})
+	if _, still := m.ciRerun[13]; still {
+		t.Error("ciRerun[13] survived a rollup that already reports pending")
+	}
+}
+
+// TestApplyCIRerunExpires bounds the lie: a PR whose workflows never re-fire
+// (path filters, no push trigger) self-corrects instead of spinning forever.
+func TestApplyCIRerunExpires(t *testing.T) {
+	m, _ := mutationModel(t, nil)
+	m.ciRerun[13] = time.Now().Add(-time.Second) // already past
+
+	got := m.applyCIRerun([]gh.PR{{
+		Number:            13,
+		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
+	}})
+	if got[0].CIState() != "pass" {
+		t.Errorf("CIState = %q, want pass — the override expired", got[0].CIState())
+	}
+	if _, still := m.ciRerun[13]; still {
+		t.Error("expired ciRerun entry was not pruned")
+	}
+}
+
+// TestApplyCIRerunDoesNotMutateInput guards the shared cache: fetched PR values
+// are handed out by the cache layer, so the override must copy the rollup rather
+// than write through the caller's backing array.
+func TestApplyCIRerunDoesNotMutateInput(t *testing.T) {
+	m, _ := mutationModel(t, nil)
+	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+
+	in := []gh.PR{{Number: 13, StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}}}}
+	m.applyCIRerun(in)
+	if in[0].StatusCheckRollup[0].Conclusion != "SUCCESS" {
+		t.Error("applyCIRerun wrote through to the caller's rollup")
+	}
+}
+
+// TestUpdateBranchStampsCIRerun wires the flag end-to-end: a settled
+// update-branch marks its PRs, a merge does not.
+func TestUpdateBranchStampsCIRerun(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m.actionStatus = statFor(action.DefaultPRActions()["u"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	if _, ok := m.ciRerun[13]; !ok {
+		t.Error("a successful update-branch must stamp ciRerun")
+	}
+}
+
+func TestMergeDoesNotStampCIRerun(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m.actionStatus = statFor(action.DefaultPRActions()["m"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	if _, ok := m.ciRerun[13]; ok {
+		t.Error("merge does not re-trigger checks and must not stamp ciRerun")
+	}
+}
+
+func TestFailedUpdateBranchDoesNotStampCIRerun(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m.actionStatus = statFor(action.DefaultPRActions()["u"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{err: errors.New("boom")})
+	m = u.(Model)
+	if _, ok := m.ciRerun[13]; ok {
+		t.Error("a failed update-branch must not stamp ciRerun")
 	}
 }

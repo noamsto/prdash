@@ -269,6 +269,7 @@ type actionStat struct {
 	settled bool
 	err     error
 	refresh bool  // true when the action mutated the PR(s) → refetch on success
+	rerunCI bool  // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
 	nums    []int // PR numbers the action touched, for detail-freshness invalidation
 }
 
@@ -285,7 +286,13 @@ func statFor(a action.Action) *actionStat {
 	if fail == "" {
 		fail = a.Label
 	}
-	return &actionStat{run: run, ok: ok, fail: fail}
+	return &actionStat{run: run, ok: ok, fail: fail, rerunCI: rerunsCI(a)}
+}
+
+// rerunsCI reports whether an action causes GitHub to queue fresh check runs —
+// update-branch pushes a merge commit, rerun-failed re-dispatches the workflows.
+func rerunsCI(a action.Action) bool {
+	return a.Command.Native == "update-branch" || a.Command.Builtin == "rerun-failed"
 }
 
 // actionRunning reports whether an inline action is still in flight.

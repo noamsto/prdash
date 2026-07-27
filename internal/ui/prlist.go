@@ -76,6 +76,7 @@ type Model struct {
 	sel               selection
 	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
 	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
+	ciRerun           map[int]time.Time         // PR number → expiry of its optimistic checks-in-progress state
 	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
 	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
 	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
@@ -133,6 +134,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		ciRerun: map[int]time.Time{},
 		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
@@ -174,7 +176,60 @@ func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
+// ciRerunWindow is how long a PR keeps its optimistic checks-in-progress state
+// after an update-branch or rerun. Long enough for GitHub to queue the new runs,
+// short enough that a PR whose workflows never re-fire (path filters, no push
+// trigger) self-corrects instead of showing a permanent phantom spinner.
+const ciRerunWindow = 2 * time.Minute
+
+// applyCIRerun repaints the checks of PRs that just had them re-triggered as
+// in-progress. GitHub keeps serving the pre-push rollup for several seconds
+// after update-branch, so without this the row shows a stale ✓ for a branch
+// whose checks are about to start over. Both board funnels (setPRs,
+// setSections) run fetched PRs through it, so rows, preview, expanded, triage
+// and filter all read one consistent CI state.
+//
+// Entries clear as soon as the real rollup reports work in flight, or when the
+// window expires — the override never outlives evidence.
+func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
+	if len(m.ciRerun) == 0 {
+		return prs
+	}
+	now := time.Now()
+	out := make([]gh.PR, len(prs))
+	copy(out, prs)
+	for i, p := range out {
+		exp, stamped := m.ciRerun[p.Number]
+		if !stamped {
+			continue
+		}
+		if now.After(exp) || hasPendingCheck(p) {
+			delete(m.ciRerun, p.Number)
+			continue
+		}
+		// Copy before writing: these PR values come from the shared cache.
+		rollup := make([]gh.Check, len(p.StatusCheckRollup))
+		copy(rollup, p.StatusCheckRollup)
+		for j := range rollup {
+			rollup[j].State, rollup[j].Conclusion = "IN_PROGRESS", ""
+		}
+		out[i].StatusCheckRollup = rollup
+	}
+	return out
+}
+
+// hasPendingCheck reports whether the rollup already shows work in flight.
+func hasPendingCheck(p gh.PR) bool {
+	for _, c := range p.Checks() {
+		if c.Result() == "pending" {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Model) setPRs(prs []gh.PR) {
+	prs = m.applyCIRerun(prs)
 	if s, ok := m.section.(*PRSection); ok {
 		// Outside the sections default, group by author even with a single
 		// author, so you always see whose PRs you're looking at.
@@ -220,6 +275,7 @@ func (m *Model) setSections(review, open []gh.PR, viewer string) {
 		}
 		all = append(all, p)
 	}
+	all = m.applyCIRerun(all)
 	if s, ok := m.section.(*PRSection); ok {
 		s.SetState(m.state)
 		s.SetCategorized(all, cats, []string{"Review requested", "Mine", "Others"})
@@ -1319,6 +1375,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(m.fresh, n) // force the detail/summary to revalidate
 			}
 			cmds = append(cmds, m.backgroundRefresh())
+		}
+		if msg.err == nil && m.actionStatus.rerunCI {
+			exp := time.Now().Add(ciRerunWindow)
+			for _, n := range m.actionStatus.nums {
+				m.ciRerun[n] = exp
+			}
 		}
 		return m, tea.Batch(cmds...)
 	case actionClearMsg:
