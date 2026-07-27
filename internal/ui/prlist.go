@@ -1916,7 +1916,7 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	if !cached {
 		return triage.Card{}, false
 	}
-	return triage.Compute(ps.prAt(m.cursor), d), true
+	return triage.Compute(ps.prAt(m.cursor), d, m.viewerLogin), true
 }
 
 // legendView is the ?-toggled glyph + key reference, as a centered modal. It

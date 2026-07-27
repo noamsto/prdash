@@ -151,7 +151,7 @@ func (m *Model) enterExpanded() {
 	if v, ok := m.cursorVars(); ok {
 		if d, cached := m.detail[v.Number]; cached {
 			if ps, ok := m.section.(*PRSection); ok {
-				m.expandedTab = jumpTabIndex(triage.Compute(ps.prAt(m.cursor), d).JumpTab)
+				m.expandedTab = jumpTabIndex(triage.Compute(ps.prAt(m.cursor), d, m.viewerLogin).JumpTab)
 			}
 		}
 	}

@@ -227,7 +227,7 @@ func TestEnterExpandedDeepLinks(t *testing.T) {
 		t.Fatalf("deep-link to Checks tab expected (%d), got %d", tabChecks, m.expandedTab)
 	}
 	// sanity: the triage card for this PR really is checks-failing
-	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}).JumpTab != "checks" {
+	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}, "").JumpTab != "checks" {
 		t.Fatal("precondition: expected checks JumpTab")
 	}
 }

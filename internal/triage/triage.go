@@ -38,19 +38,21 @@ type Card struct {
 
 // Compute returns the highest-priority triage card for pr given its detail.
 // Merge-state comes from detail (reliable per-PR); checks come from the PR rollup.
-func Compute(pr gh.PR, d gh.PRDetail) Card {
+// viewer is the authenticated user's login ("" when unresolved) — it gates the
+// approve suggestion, which GitHub forbids on your own PR.
+func Compute(pr gh.PR, d gh.PRDetail, viewer string) Card {
 	mss := d.MergeStateStatus
 	failing := checksByState(pr, "fail")
 	pending := checksByState(pr, "pending")
 
-	c := computeCard(pr, d, mss, failing, pending)
+	c := computeCard(pr, d, mss, failing, pending, viewer)
 	c.AutoMerge = pr.AutoMergeEnabled()
 	return c
 }
 
 // computeCard is Compute's original branch logic, unchanged, extracted so
 // Compute can stamp AutoMerge onto whichever branch fires.
-func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string) Card {
+func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string, viewer string) Card {
 	switch {
 	case pr.IsDraft || mss == "DRAFT":
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
@@ -73,8 +75,7 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string)
 		return Card{Kind: KindBlocked, Headline: "Blocked by branch protection",
 			JumpTab: "conversation"}
 	case pr.ReviewDecision == "REVIEW_REQUIRED":
-		return Card{Kind: KindAwaitingReview, Headline: awaitingHeadline(d),
-			JumpTab: "reviews"}
+		return awaitingReviewCard(awaitingHeadline(d), pr.Author.Login, viewer)
 	case len(pending) > 0 || mss == "UNSTABLE":
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
 			Running: pending, JumpTab: "checks"}
@@ -91,13 +92,13 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string)
 // Preliminary builds a best-effort card from list-only fields (no merge-state),
 // so the quick view can show something the instant the cursor lands — before the
 // per-PR detail fetch returns. Compute supersedes it once detail is cached.
-func Preliminary(pr gh.PR) Card {
-	c := preliminaryCard(pr)
+func Preliminary(pr gh.PR, viewer string) Card {
+	c := preliminaryCard(pr, viewer)
 	c.AutoMerge = pr.AutoMergeEnabled()
 	return c
 }
 
-func preliminaryCard(pr gh.PR) Card {
+func preliminaryCard(pr gh.PR, viewer string) Card {
 	failing := checksByState(pr, "fail")
 	pending := checksByState(pr, "pending")
 	switch {
@@ -113,7 +114,7 @@ func preliminaryCard(pr gh.PR) Card {
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
 			Running: pending, JumpTab: "checks"}
 	case pr.ReviewDecision == "REVIEW_REQUIRED":
-		return Card{Kind: KindAwaitingReview, Headline: "Awaiting review", JumpTab: "reviews"}
+		return awaitingReviewCard("Awaiting review", pr.Author.Login, viewer)
 	default:
 		return Card{Kind: KindFallback, Headline: ""}
 	}
@@ -170,6 +171,17 @@ func awaitingHeadline(d gh.PRDetail) string {
 		return "Waiting on @" + d.ReviewRequests[0].Login
 	}
 	return "Awaiting review"
+}
+
+// awaitingReviewCard offers the one-key approve only on someone else's PR —
+// GitHub rejects self-approval, and an unresolved viewer ("") can't be
+// distinguished from yourself, so it stays informational.
+func awaitingReviewCard(headline, author, viewer string) Card {
+	c := Card{Kind: KindAwaitingReview, Headline: headline, JumpTab: "reviews"}
+	if viewer != "" && author != viewer {
+		c.ActionKey, c.ActionLabel = "L", "approve"
+	}
+	return c
 }
 
 // changesRequestedHeadline names who requested changes, from the latest review
