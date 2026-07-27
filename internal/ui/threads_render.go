@@ -135,8 +135,8 @@ func indentBlock(s, pad string) string {
 }
 
 // renderCommentBody renders a comment body as nested markdown, falling back to
-// the distilled one-liner if glamour fails — the same precedent as
-// renderDiscussionItem, which falls back to raw markdown rather than nothing.
+// the distilled one-line PlainTitle if glamour fails — mirroring
+// renderDiscussionItem, which likewise degrades rather than dropping the body.
 func renderCommentBody(body string, w int, pad string) string {
 	out, err := preview.Render(body, w-lipgloss.Width(pad))
 	if err != nil {
