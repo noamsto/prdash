@@ -257,7 +257,7 @@ func TestConfirmQuestionBulkShowsCount(t *testing.T) {
 // are about to start over.
 func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
-	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+	m.ciRerun[13] = time.Now()
 
 	got := m.applyCIRerun([]gh.PR{{
 		Number:            13,
@@ -270,7 +270,7 @@ func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
 
 func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+	m.ciRerun[13] = time.Now()
 
 	got := m.applyCIRerun([]gh.PR{{
 		Number:            99,
@@ -282,18 +282,45 @@ func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
 }
 
 // TestApplyCIRerunClearsWhenRealPendingArrives stops the override from
-// outliving its usefulness: once GitHub reports work in flight, the real rollup
-// is authoritative.
+// outliving its usefulness: once a check has genuinely started after the
+// stamp, the real rollup is authoritative.
 func TestApplyCIRerunClearsWhenRealPendingArrives(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+	stamp := time.Now()
+	m.ciRerun[13] = stamp
 
 	m.applyCIRerun([]gh.PR{{
-		Number:            13,
-		StatusCheckRollup: []gh.Check{{Name: "build", State: "IN_PROGRESS"}},
+		Number: 13,
+		StatusCheckRollup: []gh.Check{{
+			Name: "build", State: "IN_PROGRESS", StartedAt: stamp.Add(time.Second).Format(time.RFC3339),
+		}},
 	}})
 	if _, still := m.ciRerun[13]; still {
-		t.Error("ciRerun[13] survived a rollup that already reports pending")
+		t.Error("ciRerun[13] survived a check that started after the stamp")
+	}
+}
+
+// TestApplyCIRerunKeepsPreExistingPending is the regression guard for the
+// common trigger: you press r/u because a check has already failed, usually
+// with a sibling still pending from BEFORE the rerun fired. That pre-existing
+// pending check must not clear the override, or the feature no-ops in exactly
+// the case it exists for.
+func TestApplyCIRerunKeepsPreExistingPending(t *testing.T) {
+	m, _ := mutationModel(t, nil)
+	stamp := time.Now()
+	m.ciRerun[13] = stamp
+
+	got := m.applyCIRerun([]gh.PR{{
+		Number: 13,
+		StatusCheckRollup: []gh.Check{{
+			Name: "build", State: "IN_PROGRESS", StartedAt: stamp.Add(-time.Minute).Format(time.RFC3339),
+		}},
+	}})
+	if _, still := m.ciRerun[13]; !still {
+		t.Error("ciRerun[13] cleared on a check that started before the stamp")
+	}
+	if got[0].CIState() != "pending" {
+		t.Errorf("CIState = %q, want pending — the override should still apply", got[0].CIState())
 	}
 }
 
@@ -301,7 +328,7 @@ func TestApplyCIRerunClearsWhenRealPendingArrives(t *testing.T) {
 // (path filters, no push trigger) self-corrects instead of spinning forever.
 func TestApplyCIRerunExpires(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now().Add(-time.Second) // already past
+	m.ciRerun[13] = time.Now().Add(-3 * time.Minute) // older than ciRerunWindow
 
 	got := m.applyCIRerun([]gh.PR{{
 		Number:            13,
@@ -320,7 +347,7 @@ func TestApplyCIRerunExpires(t *testing.T) {
 // than write through the caller's backing array.
 func TestApplyCIRerunDoesNotMutateInput(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now().Add(ciRerunWindow)
+	m.ciRerun[13] = time.Now()
 
 	in := []gh.PR{{Number: 13, StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}}}}
 	m.applyCIRerun(in)
@@ -391,5 +418,35 @@ func TestRerunsCIClassifiesActions(t *testing.T) {
 		if got := rerunsCI(defaults[key]); got != want {
 			t.Errorf("rerunsCI(%q) = %v, want %v", key, got, want)
 		}
+	}
+}
+
+// TestStartBulkPreservesRerunCI drives update-branch through the real path —
+// startBulk → runBulk → runBulkNative → statForBulk — rather than hand-assigning
+// statFor as the other rerunCI tests do, so the bulk constructor itself is covered.
+func TestStartBulkPreservesRerunCI(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	driveBulk(t, m.startBulk(action.DefaultPRActions()["u"]))
+	if m.actionStatus == nil || !m.actionStatus.rerunCI {
+		t.Errorf("actionStatus = %+v, want rerunCI = true for update-branch", m.actionStatus)
+	}
+}
+
+// TestApproveActionContract pins the "L" binding: it must always confirm (own
+// selection can't skip GitHub's opaque self-approval 422), name the author when
+// approving someone else's PR, act per-selection, and refetch on success.
+func TestApproveActionContract(t *testing.T) {
+	a := action.DefaultPRActions()["L"]
+	if !a.Confirm {
+		t.Error("approve (L) must always confirm")
+	}
+	if !a.ConfirmOthers {
+		t.Error("approve (L) must name the author when confirming")
+	}
+	if a.Scope != "per-selected" {
+		t.Errorf("approve (L) scope = %q, want per-selected", a.Scope)
+	}
+	if !a.Refresh {
+		t.Error("approve (L) must refresh on success")
 	}
 }

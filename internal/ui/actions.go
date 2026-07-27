@@ -234,8 +234,9 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 			err := fmt.Errorf("PR #%d is not open", p.Number)
 			return func() error { return err }, true
 		}
-		// GitHub rejects self-approval with an opaque 422; caught here so a mixed
-		// Mine/Others bulk selection reports which PRs were skipped and why.
+		// GitHub rejects self-approval with an opaque 422; caught here so the
+		// rest of a bulk selection still goes through instead of the whole
+		// batch failing on GitHub's free-text error.
 		if m.viewerLogin != "" && p.Author.Login == m.viewerLogin {
 			err := fmt.Errorf("can't approve your own PR #%d", p.Number)
 			return func() error { return err }, true
@@ -472,13 +473,20 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	m.sel.clear() // the batch op consumes the selection
 	return tea.Batch(func() tea.Msg {
 		var failed int
+		var lastErr error
 		for _, fn := range calls {
 			if err := fn(); err != nil {
 				failed++
+				lastErr = err
 			}
 		}
 		if failed == 0 {
 			return actionDoneMsg{}
+		}
+		if n == 1 {
+			// A single-target batch's error is worth showing verbatim — "N of M
+			// failed" is opaque when N and M are both 1.
+			return actionDoneMsg{err: lastErr, fail: lastErr.Error()}
 		}
 		return actionDoneMsg{
 			err:  fmt.Errorf("%d of %d failed", failed, n),

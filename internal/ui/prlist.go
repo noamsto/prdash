@@ -76,7 +76,7 @@ type Model struct {
 	sel               selection
 	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
 	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
-	ciRerun           map[int]time.Time         // PR number → expiry of its optimistic checks-in-progress state
+	ciRerun           map[int]time.Time         // PR number → stamp time when its checks-in-progress override was applied
 	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
 	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
 	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
@@ -196,24 +196,33 @@ func delayedRefreshCmd() tea.Cmd {
 // in-progress. GitHub keeps serving the pre-push rollup for several seconds
 // after update-branch, so without this the row shows a stale ✓ for a branch
 // whose checks are about to start over. Both board funnels (setPRs,
-// setSections) run fetched PRs through it, so rows, preview, expanded, triage
-// and filter all read one consistent CI state.
+// setSections) run PRs through it — whether freshly fetched or hydrated from
+// the on-disk cache — so rows, preview, expanded, triage and filter all read
+// one consistent CI state.
 //
-// Entries clear as soon as the real rollup reports work in flight, or when the
-// window expires — the override never outlives evidence.
+// You press r/u precisely when a check has failed, usually with a sibling
+// check still pending from before the rerun — so an entry only clears once a
+// check has demonstrably started AFTER the stamp (real new runs have
+// appeared) or the window expires. Clearing on any pending check, as before,
+// made the override no-op in exactly the case it exists for.
 func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
+	now := time.Now()
+	for n, stamp := range m.ciRerun {
+		if now.Sub(stamp) > ciRerunWindow {
+			delete(m.ciRerun, n) // PR left the board (or its own next call): sweep so the fast path below stays true
+		}
+	}
 	if len(m.ciRerun) == 0 {
 		return prs
 	}
-	now := time.Now()
 	out := make([]gh.PR, len(prs))
 	copy(out, prs)
 	for i, p := range out {
-		exp, stamped := m.ciRerun[p.Number]
+		stamp, stamped := m.ciRerun[p.Number]
 		if !stamped {
 			continue
 		}
-		if now.After(exp) || hasPendingCheck(p) {
+		if hasCheckStartedAfter(p, stamp) {
 			delete(m.ciRerun, p.Number)
 			continue
 		}
@@ -228,10 +237,21 @@ func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
 	return out
 }
 
-// hasPendingCheck reports whether the rollup already shows work in flight.
-func hasPendingCheck(p gh.PR) bool {
+// hasCheckStartedAfter reports whether the rollup contains a check that began
+// after t, i.e. a genuinely new run rather than one already in flight before
+// the rerun fired. StatusContext entries leave StartedAt empty (only CheckRun
+// entries populate it) and are skipped, along with anything that fails to
+// parse as the RFC3339 gh.Check.StartedAt promises.
+func hasCheckStartedAfter(p gh.PR, t time.Time) bool {
 	for _, c := range p.Checks() {
-		if c.Result() == "pending" {
+		if c.StartedAt == "" {
+			continue
+		}
+		started, err := time.Parse(time.RFC3339, c.StartedAt)
+		if err != nil {
+			continue
+		}
+		if started.After(t) {
 			return true
 		}
 	}
@@ -1387,9 +1407,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.backgroundRefresh())
 		}
 		if msg.err == nil && m.actionStatus.rerunCI {
-			exp := time.Now().Add(ciRerunWindow)
+			stamp := time.Now()
 			for _, n := range m.actionStatus.nums {
-				m.ciRerun[n] = exp
+				m.ciRerun[n] = stamp
 			}
 			cmds = append(cmds, delayedRefreshCmd())
 		}
@@ -2106,7 +2126,7 @@ func (m Model) legendView() string {
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "W", "y", "Y", "b", "o"}
+var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o"}
 
 type keyHint struct{ key, label string }
 

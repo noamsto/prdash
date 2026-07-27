@@ -36,7 +36,7 @@ func DefaultPRActions() map[string]Action {
 			Progress:      "Marking ready", Past: "Marked ready", Fail: "Mark-ready failed"},
 		"L": {Key: "L", Label: "Approve",
 			Command: Command{Native: "approve"}, Scope: "per-selected", Refresh: true,
-			Confirm:  true,
+			Confirm: true, ConfirmOthers: true,
 			Progress: "Approving", Past: "Approved", Fail: "Approve failed"},
 	}
 }

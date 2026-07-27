@@ -380,7 +380,7 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 	}
 	native := m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
-		refresh: true, nums: []int{ps.prAt(m.cursor).Number}}
+		refresh: true, rerunCI: true, nums: []int{ps.prAt(m.cursor).Number}}
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: action.RerunCheck(native, job)}
 	}, m.startSpinner())
@@ -394,7 +394,7 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 	}
 	branch, native := v.HeadRefName, m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
-		refresh: true, nums: []int{v.Number}}
+		refresh: true, rerunCI: true, nums: []int{v.Number}}
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: action.RerunFailed(native, branch)}
 	}, m.startSpinner())
