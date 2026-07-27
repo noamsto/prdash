@@ -1361,6 +1361,62 @@ func TestOmniDropdownFloatsOverList(t *testing.T) {
 	}
 }
 
+// TestFilterBarShowsCommittedQuery guards that a filter surviving the commit is
+// visible: enter blurs the input but keeps the query applied, so the bar has to
+// paint it — otherwise a filtered board is indistinguishable from a full one.
+func TestFilterBarShowsCommittedQuery(t *testing.T) {
+	m := newTestModelWithRows(t)
+	stubBackends(&m)
+	m.width, m.height = 80, 24
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("flaky")
+	m.applyFilter()
+	u, _ := m.Update(keyMsg("enter"))
+	m = u.(Model)
+
+	if m.filtering {
+		t.Fatal("enter should have committed")
+	}
+	bar := ansi.Strip(m.filterBar())
+	if !strings.Contains(bar, "flaky") {
+		t.Fatalf("blurred filter bar = %q, want the committed query in it", bar)
+	}
+	if !strings.Contains(bar, "esc") {
+		t.Fatalf("blurred filter bar = %q, want the key that clears it named", bar)
+	}
+	if got := lipgloss.Width(bar); got > m.width {
+		t.Fatalf("filter bar = %d cells, overflows width %d", got, m.width)
+	}
+	if got := m.filterBarRows(); got != 1 {
+		t.Fatalf("committed filter bar = %d rows, want 1", got)
+	}
+
+	// esc clears it, and the bar falls back to the prompt hint.
+	u, _ = m.Update(keyMsg("esc"))
+	m = u.(Model)
+	if bar := ansi.Strip(m.filterBar()); strings.Contains(bar, "flaky") {
+		t.Fatalf("after esc the bar still shows the query: %q", bar)
+	}
+}
+
+// TestStatusBarOmitsRetiredFilterKey guards that the footer doesn't advertise a
+// dead key: f cycles presets on the issue board and does nothing on the PR one.
+func TestStatusBarOmitsRetiredFilterKey(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width, m.height = 130, 40
+	m.renderList()
+	if bar := ansi.Strip(m.statusBar()); strings.Contains(bar, "f:") {
+		t.Fatalf("PR board footer advertises f, which is retired there: %q", bar)
+	}
+
+	m.mode = "issue"
+	m.section = NewIssueSection(m.filter)
+	if bar := ansi.Strip(m.statusBar()); !strings.Contains(bar, "f:preset") {
+		t.Fatalf("issue board footer = %q, want f labelled as the preset cycle", bar)
+	}
+}
+
 // TestContentHeightFilteringNoPanel guards that focusing the always-visible
 // filter bar costs exactly one extra row — the omni syntax hint — with the
 // footer unaffected, so this is not a wash against a reclaimed footer the way

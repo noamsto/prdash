@@ -231,10 +231,12 @@ Together: the freshest server rows for the *current* qualifiers, filtered by the
 
 When the cursor sits immediately after an `@` word boundary, show an inline completion
 list from `m.members` (already fetched/cached; `fetchMembersCmd` on first need), fuzzy-
-narrowed by the partial login. `tab`/`enter`-on-suggestion completes the token to
-`@<login>` (which `parseOmni` maps to `involves:<login>`). This reuses the picker's
-candidate set, not its modal UI — it renders as a dropdown under the input bar and does
-not capture the keyboard beyond `tab`.
+narrowed by the partial login. `tab` completes the token to `@<login>` (which
+`parseOmni` maps to `involves:<login>`); `enter` always commits the filter instead —
+gating the commit on "are suggestions live?" trapped the user in omni mode, since a
+completed `@alice` still fuzzy-matches itself. This reuses the picker's candidate set,
+not its modal UI — it floats as a panel under the input bar (composited over the board,
+so it doesn't displace the list) and does not capture the keyboard beyond `tab`.
 
 ### 3. Render switch — flat when bare text is present
 

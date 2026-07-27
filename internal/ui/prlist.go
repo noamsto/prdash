@@ -522,7 +522,12 @@ func (m Model) omniSuggestDropdown() string {
 		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-frame-2))
 		inner = max(inner, lipgloss.Width(lines[i]))
 	}
-	return titledBox(strings.Join(lines, "\n"), min(inner+frame, max(4, m.width)), n+frame, "@mention")
+	// The title carries the completion key: it's the only place tab is named, and
+	// it's on screen exactly when tab does something. titledBox reserves 4 cells
+	// around the label, so widen for it rather than let it truncate.
+	title := "tab completes"
+	w := min(max(inner+frame, lipgloss.Width(title)+4), max(4, m.width))
+	return titledBox(strings.Join(lines, "\n"), w, n+frame, title)
 }
 
 // omniDropdownY is the row the @-mention panel floats at: directly under the
@@ -1676,9 +1681,10 @@ func (m Model) render() string {
 	return board
 }
 
-// filterBar is the always-visible search row. When blurred it shows the prompt
-// as a hint; when focused it shows the live query plus the omni syntax hint. The
-// @-suggestion panel is not part of the bar — it floats over the list.
+// filterBar is the always-visible search row. When blurred it shows the query
+// still applied, or the prompt as a hint when there is none; when focused it
+// shows the live query plus the omni syntax hint. The @-suggestion panel is not
+// part of the bar — it floats over the list.
 func (m Model) filterBar() string {
 	if m.filtering {
 		bar := m.filterInput.View()
@@ -1689,6 +1695,18 @@ func (m Model) filterBar() string {
 			return bar + "\n" // the floating @-panel lands on this row; leave it clear
 		}
 		return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+	}
+	// Blurred but still filtered: paint the query, so a filtered board can't read
+	// as an unfiltered one, and name the key that drops it. Styles go on after
+	// truncate — it walks runes and would slice an escape sequence.
+	if q := m.filterInput.Value(); q != "" {
+		drop := "  esc clears"
+		if 1+lipgloss.Width(q)+lipgloss.Width(drop) > m.width {
+			drop = "" // too narrow for both: the query itself is what matters
+		}
+		return dimStyle.Render("/") +
+			accentStyle.Render(truncate(q, max(1, m.width-1-lipgloss.Width(drop)))) +
+			dimStyle.Render(drop)
 	}
 	// Blurred: show the prompt + placeholder as a dim hint so the bar is always present.
 	return dimStyle.Render(truncate("/ filter (@user, is:, text)", max(1, m.width)))
@@ -2213,9 +2231,10 @@ func (m Model) statusBar() string {
 			parts = append(parts, hint("p", "all comments")) // only unfolds the side preview's timeline
 		}
 	}
-	parts = append(parts,
-		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
-	)
+	if m.mode == "issue" {
+		parts = append(parts, hint("f", "preset")) // f cycles issue presets; it's retired on the PR board
+	}
+	parts = append(parts, hint("/", "find"), hint("space", "select"))
 	if m.mode == "pr" {
 		drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
 		if m.hideDrafts {
