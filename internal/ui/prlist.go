@@ -500,38 +500,38 @@ func (m *Model) completeOmniAt(login string) {
 // at once; the fuzzy partial narrows the set to reach the rest.
 const omniSuggestDropdownRows = 6
 
-// omniSuggestDropdown renders the @-mention candidate list under the omni bar,
-// highlighting m.omniSuggestCursor; "" when no suggestions are active.
+// omniSuggestDropdown renders the @-mention candidate list as a panel,
+// highlighting m.omniSuggestCursor; "" when no suggestions are active. render()
+// composites it over the board, so it displaces no rows.
 func (m Model) omniSuggestDropdown() string {
 	sug := m.omniSuggestions()
 	if len(sug) == 0 {
 		return ""
 	}
-	n := min(len(sug), omniSuggestDropdownRows, max(1, m.height-4))
+	frame := 2 // the box's own edges, on both axes
+	fit := max(1, m.height-m.omniDropdownY()-frame)
+	n := min(len(sug), omniSuggestDropdownRows, fit)
 	lines := make([]string, n)
+	inner := 0
 	for i, u := range sug[:n] {
 		cur := "  "
 		if i == m.omniSuggestCursor {
 			cur = accentStyle.Render("▸ ")
 		}
-		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-2))
+		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-frame-2))
+		inner = max(inner, lipgloss.Width(lines[i]))
 	}
-	return strings.Join(lines, "\n")
+	// The title is the only place tab is named, so keep it whole: titledBox
+	// reserves 4 cells around the label.
+	title := "tab completes"
+	w := min(max(inner+frame, lipgloss.Width(title)+4), max(4, m.width))
+	return titledBox(strings.Join(lines, "\n"), w, n+frame, title)
 }
 
-// omniHintRows is the height of the dropdown-or-hint block filterBar() draws
-// under the filter input while filtering, so contentHeight can reserve it.
-func (m Model) omniHintRows() int {
-	if !m.filtering {
-		return 0
-	}
-	if dd := m.omniSuggestDropdown(); dd != "" {
-		return lipgloss.Height(dd)
-	}
-	if m.mode == "pr" {
-		return 1 // the "@user · is: · text" hint line
-	}
-	return 0
+// omniDropdownY is the row the @-mention panel floats at: directly under the
+// omni input line it completes.
+func (m Model) omniDropdownY() int {
+	return lipgloss.Height(m.header()) + 1
 }
 
 // prKey scopes the cached PR list by repo — the shared cache file holds every
@@ -1376,12 +1376,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil // no suggestion active: tab is unbound in omni mode
 			case "enter":
-				if sug := m.omniSuggestions(); len(sug) > 0 {
-					m.completeOmniAt(sug[m.omniSuggestCursor].Login)
-					m.omniSuggestCursor = 0
-					m.applyFilter()
-					return m, m.omniServerCmd()
-				}
+				// Always commits, dropdown or not: a completed @login still matches
+				// itself, so accepting a suggestion here would trap the user.
 				m.filtering = false
 				m.filterInput.Blur()
 				if m.omniServer != "" {
@@ -1666,6 +1662,9 @@ func (m Model) render() string {
 	}
 	// Overlays float over the live board so the layout stays put behind them.
 	board := m.board()
+	if dd := m.omniSuggestDropdown(); dd != "" {
+		return overlayAt(board, dd, 0, m.omniDropdownY(), m.width, m.height)
+	}
 	switch {
 	case m.pending != nil:
 		return overlayTop(board, m.confirmPanel(), m.width, m.height)
@@ -1679,28 +1678,41 @@ func (m Model) render() string {
 	return board
 }
 
-// filterBar is the always-visible search row. When blurred it shows the prompt
-// as a hint; when focused it shows the live query plus any @-suggestion dropdown.
+// filterBar is the always-visible search row. When blurred it shows the query
+// still applied, or the prompt as a hint when there is none; when focused it
+// shows the live query plus the omni syntax hint. The @-suggestion panel is not
+// part of the bar — it floats over the list.
 func (m Model) filterBar() string {
 	if m.filtering {
 		bar := m.filterInput.View()
-		if dd := m.omniSuggestDropdown(); dd != "" {
-			return bar + "\n" + dd
+		if m.mode != "pr" {
+			return bar
 		}
-		if m.mode == "pr" {
-			return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+		if m.omniSuggestDropdown() != "" {
+			return bar + "\n" // the floating @-panel lands on this row; leave it clear
 		}
-		return bar
+		return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+	}
+	// Blurred but still filtered: paint the query so the board can't read as an
+	// unfiltered one. Styles go on after truncate — it walks runes and would slice
+	// an escape sequence.
+	if q := m.filterInput.Value(); q != "" {
+		drop := "  esc clears"
+		if 1+lipgloss.Width(q)+lipgloss.Width(drop) > m.width {
+			drop = "" // too narrow for both: the query itself is what matters
+		}
+		return dimStyle.Render("/") +
+			accentStyle.Render(truncate(q, max(1, m.width-1-lipgloss.Width(drop)))) +
+			dimStyle.Render(drop)
 	}
 	// Blurred: show the prompt + placeholder as a dim hint so the bar is always present.
 	return dimStyle.Render(truncate("/ filter (@user, is:, text)", max(1, m.width)))
 }
 
-// filterBarRows is the row-height of filterBar() in its current state — 1 row
-// blurred, or 1 (the input line) plus the suggestion dropdown/hint block while
-// focused — so contentHeight can reserve exactly what's rendered.
+// filterBarRows is the row-height of filterBar() in its current state, measured
+// off the render so contentHeight can't drift from it.
 func (m Model) filterBarRows() int {
-	return 1 + m.omniHintRows()
+	return lipgloss.Height(m.filterBar())
 }
 
 // board renders the full PR board — the base layer under any overlay. The
@@ -2215,9 +2227,10 @@ func (m Model) statusBar() string {
 			parts = append(parts, hint("p", "all comments")) // only unfolds the side preview's timeline
 		}
 	}
-	parts = append(parts,
-		hint("f", "filter"), hint("/", "find"), hint("space", "select"),
-	)
+	if m.mode == "issue" {
+		parts = append(parts, hint("f", "preset")) // f cycles issue presets; it's retired on the PR board
+	}
+	parts = append(parts, hint("/", "find"), hint("space", "select"))
 	if m.mode == "pr" {
 		drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
 		if m.hideDrafts {
