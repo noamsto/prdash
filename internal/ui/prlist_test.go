@@ -1212,8 +1212,7 @@ func TestOmniAutocomplete(t *testing.T) {
 
 // TestOmniEnterCommitsOverSuggestions guards that an open @-dropdown never
 // swallows enter: a completed "@alice" still fuzzy-matches itself, so gating the
-// commit on "are there suggestions?" left enter re-completing the same token
-// forever.
+// commit on "are there suggestions?" re-completed the same token forever.
 func TestOmniEnterCommitsOverSuggestions(t *testing.T) {
 	m := newTestModelWithRows(t)
 	stubBackends(&m)

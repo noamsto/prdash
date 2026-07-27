@@ -500,10 +500,9 @@ func (m *Model) completeOmniAt(login string) {
 // at once; the fuzzy partial narrows the set to reach the rest.
 const omniSuggestDropdownRows = 6
 
-// omniSuggestDropdown renders the @-mention candidate list as a floating panel,
-// highlighting m.omniSuggestCursor; "" when no suggestions are active. It is
-// composited over the board by render() rather than joined into filterBar, so
-// opening it doesn't shove the list down.
+// omniSuggestDropdown renders the @-mention candidate list as a panel,
+// highlighting m.omniSuggestCursor; "" when no suggestions are active. render()
+// composites it over the board, so it displaces no rows.
 func (m Model) omniSuggestDropdown() string {
 	sug := m.omniSuggestions()
 	if len(sug) == 0 {
@@ -522,16 +521,15 @@ func (m Model) omniSuggestDropdown() string {
 		lines[i] = cur + truncate("@"+u.Login, max(1, m.width-frame-2))
 		inner = max(inner, lipgloss.Width(lines[i]))
 	}
-	// The title carries the completion key: it's the only place tab is named, and
-	// it's on screen exactly when tab does something. titledBox reserves 4 cells
-	// around the label, so widen for it rather than let it truncate.
+	// The title is the only place tab is named, so keep it whole: titledBox
+	// reserves 4 cells around the label.
 	title := "tab completes"
 	w := min(max(inner+frame, lipgloss.Width(title)+4), max(4, m.width))
 	return titledBox(strings.Join(lines, "\n"), w, n+frame, title)
 }
 
 // omniDropdownY is the row the @-mention panel floats at: directly under the
-// omni input line, so it reads as hanging off the input it completes.
+// omni input line it completes.
 func (m Model) omniDropdownY() int {
 	return lipgloss.Height(m.header()) + 1
 }
@@ -1378,9 +1376,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil // no suggestion active: tab is unbound in omni mode
 			case "enter":
-				// Commits unconditionally — an open @-dropdown must not swallow it
-				// (a completed `@login` still matches itself, so gating on
-				// suggestions trapped the user in omni mode). `tab` completes.
+				// Always commits, dropdown or not: a completed @login still matches
+				// itself, so accepting a suggestion here would trap the user.
 				m.filtering = false
 				m.filterInput.Blur()
 				if m.omniServer != "" {
@@ -1696,9 +1693,9 @@ func (m Model) filterBar() string {
 		}
 		return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
 	}
-	// Blurred but still filtered: paint the query, so a filtered board can't read
-	// as an unfiltered one, and name the key that drops it. Styles go on after
-	// truncate — it walks runes and would slice an escape sequence.
+	// Blurred but still filtered: paint the query so the board can't read as an
+	// unfiltered one. Styles go on after truncate — it walks runes and would slice
+	// an escape sequence.
 	if q := m.filterInput.Value(); q != "" {
 		drop := "  esc clears"
 		if 1+lipgloss.Width(q)+lipgloss.Width(drop) > m.width {
@@ -1713,8 +1710,7 @@ func (m Model) filterBar() string {
 }
 
 // filterBarRows is the row-height of filterBar() in its current state, measured
-// off what it actually renders so contentHeight reserves exactly that and the
-// two can't drift.
+// off the render so contentHeight can't drift from it.
 func (m Model) filterBarRows() int {
 	return lipgloss.Height(m.filterBar())
 }
