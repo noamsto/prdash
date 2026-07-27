@@ -39,7 +39,7 @@ func issueDetailKey(repo string, number int) string {
 
 // threadsSchemaVer is bumped whenever the review-threads GraphQL query's field
 // set changes, so a stale-shaped cached response is a clean miss.
-const threadsSchemaVer = "v1"
+const threadsSchemaVer = "v2"
 
 // threadsKey scopes cached review threads by repo so #7 in one repo can't
 // paint #7 in another.
