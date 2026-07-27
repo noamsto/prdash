@@ -99,7 +99,7 @@ func TestRenderFileThreadsHidesResolvedBodies(t *testing.T) {
 		{Path: "a.go", Line: 10, IsResolved: false, Comments: []gh.ThreadComment{{Author: "alice", Body: "fix this"}}},
 		{Path: "a.go", Line: 20, IsResolved: true, Comments: []gh.ThreadComment{{Author: "bob", Body: "old nit"}}},
 	}}
-	out := renderFileThreads(g, 80, false)
+	out := ansi.Strip(renderFileThreads(g, 80, false))
 	if !strings.Contains(out, "fix this") {
 		t.Fatalf("unresolved body must show:\n%s", out)
 	}
@@ -144,7 +144,7 @@ func TestRenderFileThreadsRendersReplies(t *testing.T) {
 			{Author: "alice", Body: "lgtm now"},
 		}},
 	}}
-	out := renderFileThreads(g, 80, false)
+	out := ansi.Strip(renderFileThreads(g, 80, false))
 	if !strings.Contains(out, "fix this") {
 		t.Fatalf("head comment body must show:\n%s", out)
 	}

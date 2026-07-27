@@ -74,14 +74,73 @@ func renderFileThreads(g preview.FileThreads, w int, showResolved bool) string {
 		fixed := lipgloss.Width(indent) + lipgloss.Width(label) + lipgloss.Width(sep1) + lipgloss.Width(sep2) + lipgloss.Width(dot)
 		author := truncate(head.Author, max(0, w-fixed))
 		b.WriteString(indent + label + sep1 + authorStyle(author).Render(author) + sep2 + dot + "\n")
-		b.WriteString("      " + dimStyle.Render(truncate(preview.PlainTitle(head.Body), w-6)) + "\n")
+		b.WriteString(renderDiffHunk(head.DiffHunk, w))
+		b.WriteString(renderCommentBody(head.Body, w, "      "))
 		for _, reply := range t.Comments[1:] {
 			b.WriteString("      " + sepStyle.Render("└ ") + authorStyle(reply.Author).Render(reply.Author) + "\n")
-			b.WriteString("        " + dimStyle.Render(truncate(preview.PlainTitle(reply.Body), w-8)) + "\n")
+			b.WriteString(renderCommentBody(reply.Body, w, "        "))
 		}
 	}
 	if resolved > 0 {
 		b.WriteString("    " + dimStyle.Render(fmt.Sprintf("▸ %d resolved", resolved)) + "\n")
 	}
 	return b.String()
+}
+
+// hunkTailLines bounds how much of a diffHunk we paint. GitHub returns the full
+// leading context, but only the lines nearest the comment locate it, and an
+// unbounded hunk would push the body it belongs to off screen.
+const hunkTailLines = 6
+
+// renderDiffHunk paints a comment's diffHunk as a gutter-prefixed block. The @@
+// header is dropped — the L<line> label above already says where we are — and
+// only the last hunkTailLines lines are kept. Returns "" for an empty hunk so
+// callers draw no gutter at all.
+func renderDiffHunk(hunk string, w int) string {
+	if hunk == "" {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(hunk, "\n"), "\n")
+	if len(lines) > 0 && strings.HasPrefix(lines[0], "@@") {
+		lines = lines[1:]
+	}
+	if len(lines) > hunkTailLines {
+		lines = lines[len(lines)-hunkTailLines:]
+	}
+	var b strings.Builder
+	for _, ln := range lines {
+		st := dimStyle
+		switch {
+		case strings.HasPrefix(ln, "+"):
+			st = passStyle
+		case strings.HasPrefix(ln, "-"):
+			st = failStyle
+		}
+		b.WriteString("      " + sepStyle.Render("│ ") + st.Render(truncate(ln, w-8)) + "\n")
+	}
+	return b.String()
+}
+
+// indentBlock prefixes every non-blank line with pad. Prefixing is safe on
+// already-styled text (unlike slicing, which can cut an ANSI escape), so this
+// nests glamour output under its thread without re-wrapping it.
+func indentBlock(s, pad string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) != "" {
+			lines[i] = pad + ln
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderCommentBody renders a comment body as nested markdown, falling back to
+// the distilled one-liner if glamour fails — the same precedent as
+// renderDiscussionItem, which falls back to raw markdown rather than nothing.
+func renderCommentBody(body string, w int, pad string) string {
+	out, err := preview.Render(body, w-lipgloss.Width(pad))
+	if err != nil {
+		return pad + dimStyle.Render(truncate(preview.PlainTitle(body), w-lipgloss.Width(pad))) + "\n"
+	}
+	return indentBlock(out, pad) + "\n"
 }
