@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
 )
@@ -48,3 +50,50 @@ func TestRenderFileThreadsDistillsMarkdown(t *testing.T) {
 		t.Errorf("finding title missing: %q", out)
 	}
 }
+
+const twoParaBody = "First paragraph explaining the finding in enough words to wrap.\n\nSecond paragraph with the suggested fix."
+
+func TestRenderFileThreadsShowsHunkAndFullBody(t *testing.T) {
+	g := preview.FileThreads{
+		Path: "internal/gh/threads.go",
+		Threads: []gh.ReviewThread{{
+			Path: "internal/gh/threads.go",
+			Line: 42,
+			Comments: []gh.ThreadComment{{
+				Author:   "alice",
+				Body:     twoParaBody,
+				DiffHunk: "@@ -39,6 +39,9 @@ func f() {\n \tnodes := env.Data\n-\tout := make([]T, 0)\n+\tout := make([]T, 0, len(nodes))",
+			}},
+		}},
+	}
+	out := ansi.Strip(renderFileThreads(g, 100, false))
+
+	if !strings.Contains(out, "out := make([]T, 0, len(nodes))") {
+		t.Errorf("hunk's added line missing: %q", out)
+	}
+	if strings.Contains(out, "@@ -39,6 +39,9 @@") {
+		t.Errorf("hunk header should be dropped (the L42 label already locates it): %q", out)
+	}
+	if !strings.Contains(out, "Second paragraph with the suggested fix.") {
+		t.Errorf("body truncated to its first paragraph: %q", out)
+	}
+}
+
+func TestRenderFileThreadsWithoutHunk(t *testing.T) {
+	g := preview.FileThreads{
+		Path: "internal/gh/threads.go",
+		Threads: []gh.ReviewThread{{
+			Path:     "internal/gh/threads.go",
+			Line:     42,
+			Comments: []gh.ThreadComment{{Author: "alice", Body: "no hunk here"}},
+		}},
+	}
+	out := renderFileThreads(g, 100, false)
+	if strings.Contains(out, "│") {
+		t.Errorf("empty DiffHunk must not draw a gutter: %q", out)
+	}
+	if !strings.Contains(ansi.Strip(out), "no hunk here") {
+		t.Errorf("body missing: %q", out)
+	}
+}
+

@@ -14,6 +14,7 @@
                   {
                     "author": { "login": "alice" },
                     "body": "Nit: could this be a named constant?",
+                    "diffHunk": "@@ -39,6 +39,9 @@ func ParseReviewThreads(b []byte) {\n \tnodes := env.Data.Repository\n-\tout := make([]ReviewThread, 0)\n+\tout := make([]ReviewThread, 0, len(nodes))",
                     "createdAt": "2026-07-10T14:03:00Z"
                   },
                   {

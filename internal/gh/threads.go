@@ -8,6 +8,7 @@ import (
 type ThreadComment struct {
 	Author    string
 	Body      string
+	DiffHunk  string
 	CreatedAt time.Time
 }
 
@@ -18,7 +19,7 @@ type ReviewThread struct {
 	Comments   []ThreadComment
 }
 
-const reviewThreadsQuery = `query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{isResolved path line originalLine comments(first:100){nodes{author{login} body createdAt}}}}}}}`
+const reviewThreadsQuery = `query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{isResolved path line originalLine comments(first:100){nodes{author{login} body diffHunk createdAt}}}}}}}`
 
 func ParseReviewThreads(b []byte) ([]ReviewThread, error) {
 	var env struct {
@@ -37,6 +38,7 @@ func ParseReviewThreads(b []byte) ([]ReviewThread, error) {
 										Login string `json:"login"`
 									} `json:"author"`
 									Body      string    `json:"body"`
+									DiffHunk  string    `json:"diffHunk"`
 									CreatedAt time.Time `json:"createdAt"`
 								} `json:"nodes"`
 							} `json:"comments"`
@@ -60,7 +62,7 @@ func ParseReviewThreads(b []byte) ([]ReviewThread, error) {
 		}
 		cs := make([]ThreadComment, 0, len(n.Comments.Nodes))
 		for _, c := range n.Comments.Nodes {
-			cs = append(cs, ThreadComment{Author: c.Author.Login, Body: c.Body, CreatedAt: c.CreatedAt})
+			cs = append(cs, ThreadComment{Author: c.Author.Login, Body: c.Body, DiffHunk: c.DiffHunk, CreatedAt: c.CreatedAt})
 		}
 		out = append(out, ReviewThread{Path: n.Path, Line: line, IsResolved: n.IsResolved, Comments: cs})
 	}
