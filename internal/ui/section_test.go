@@ -14,7 +14,7 @@ import (
 
 func TestReviewDot(t *testing.T) {
 	cases := map[string]string{
-		"APPROVED":          "✓",
+		"APPROVED":          reviewApprovedGlyph,
 		"CHANGES_REQUESTED": "✗",
 		"REVIEW_REQUIRED":   "●",
 		"":                  "·",
@@ -236,6 +236,25 @@ func TestPRRowOmitsInlineAuthor(t *testing.T) {
 	s.SetPRs([]gh.PR{p})
 	if row := s.RenderRow(0, RowOpts{Width: 80}); strings.Contains(row, "alice") {
 		t.Fatalf("PR row must not render the author inline (it lives in the header): %q", row)
+	}
+}
+
+func TestPRRowTwoLineShowsAuthorOnLine2(t *testing.T) {
+	p := gh.PR{Number: 1, Title: "do the thing"}
+	p.Author.Login = "alice"
+	p.HeadRefName = "feat/x"
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{p})
+	row := s.RenderRow(0, RowOpts{Width: 100, NumWidth: columnWidths(s), TwoLine: true})
+	lines := strings.Split(row, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("two-line PR row expected 2 lines, got %d: %q", len(lines), row)
+	}
+	if strings.Contains(ansi.Strip(lines[0]), "alice") {
+		t.Errorf("author must not appear on line 1: %q", ansi.Strip(lines[0]))
+	}
+	if !strings.Contains(ansi.Strip(lines[1]), "alice") {
+		t.Errorf("author must lead line 2: %q", ansi.Strip(lines[1]))
 	}
 }
 
@@ -557,5 +576,74 @@ func TestRenderChipsNeverExceedsMaxW(t *testing.T) {
 		if got := lipgloss.Width(renderChips(labels, maxW)); got > maxW {
 			t.Errorf("renderChips width %d exceeds maxW %d", got, maxW)
 		}
+	}
+}
+
+// TestRowColumnsAlignAcrossStates pins the column grid: the #number and the
+// two-line row's second line must start at the same cell column for every
+// combination of conflict flag, focus, and review decision. A glyph whose
+// rendered width disagrees with lipgloss (U+26A0, with or without a VS15
+// selector, is the classic offender) shifts one variant and fails here.
+func TestRowColumnsAlignAcrossStates(t *testing.T) {
+	cell := func(s, sub string) int {
+		b := strings.Index(s, sub)
+		if b < 0 {
+			t.Fatalf("%q not found in %q", sub, s)
+		}
+		return lipgloss.Width(s[:b])
+	}
+	want := -1
+	for _, rev := range []string{"APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""} {
+		for _, flag := range []string{"", failStyle.Render(warnGlyph)} {
+			for _, focused := range []bool{false, true} {
+				p := gh.PR{Number: 2959, Title: "t", State: "OPEN", HeadRefName: "br", ReviewDecision: rev}
+				p.Author.Login = "alice"
+				p.Labels = []gh.Label{{Name: "lbl", Color: "e08a2b"}}
+				s := NewPRSection("")
+				s.SetPRs([]gh.PR{p})
+				row := s.RenderRow(0, RowOpts{Width: 90, NumWidth: 5, TwoLine: true, Flag: flag, Focused: focused})
+				lines := strings.Split(ansi.Strip(row), "\n")
+				if len(lines) != 2 {
+					t.Fatalf("rev=%q flag=%v focused=%v: want 2 lines, got %d", rev, flag != "", focused, len(lines))
+				}
+				numCol := cell(lines[0], "#2959")
+				l2Col := lipgloss.Width(lines[1][:len(lines[1])-len(strings.TrimLeft(lines[1], " "))])
+				if numCol != l2Col {
+					t.Errorf("rev=%q flag=%v focused=%v: #number at col %d but line 2 at col %d",
+						rev, flag != "", focused, numCol, l2Col)
+				}
+				if want == -1 {
+					want = numCol
+				} else if numCol != want {
+					t.Errorf("rev=%q flag=%v focused=%v: #number at col %d, want %d (column grid drifted)",
+						rev, flag != "", focused, numCol, want)
+				}
+			}
+		}
+	}
+}
+
+// TestGutterSurvivesZeroWidthMarker: a marker that is a non-empty string but
+// renders zero-width (a styled empty glyph const — how autoMergeGlyphRune once
+// shipped) must still occupy its cell. Otherwise that row's #number, and the
+// two-line row's second line, drift one cell out of the column grid.
+func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
+	numCol := func(row string) int {
+		line := strings.Split(ansi.Strip(row), "\n")[0]
+		b := strings.Index(line, "#7")
+		if b < 0 {
+			t.Fatalf("#7 not found in %q", line)
+		}
+		return lipgloss.Width(line[:b])
+	}
+	base := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d",
+		ciGlyph("pass"), reviewDot(""), "", "", nil)
+	styledEmpty := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d",
+		ciGlyph("pass"), reviewDot(""), mergedStyle.Render(""), "", nil)
+	if lipgloss.Width(mergedStyle.Render("")) != 0 {
+		t.Skip("styled empty string is not zero-width in this lipgloss build")
+	}
+	if got, want := numCol(styledEmpty), numCol(base); got != want {
+		t.Errorf("zero-width auto marker collapsed the gutter: #number at col %d, want %d", got, want)
 	}
 }

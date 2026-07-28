@@ -45,6 +45,7 @@ type Model struct {
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
 	cursorRows        int // display height of the cursor row (2 in two-line mode)
+	cursorTop         int // topmost line to keep visible for the cursor (its group header, if any)
 	previewOffset     int // alt+j/k scroll position within the side preview
 	width             int
 	height            int
@@ -218,12 +219,14 @@ func (m *Model) renderList() {
 	var b strings.Builder
 	line, prevGroup := 0, ""
 	for i := 0; i < m.section.Len(); i++ {
+		headerLine := -1 // this row's group header line, when it opens a new group
 		if grouped {
 			if g := ps.groupLabel(i); g != prevGroup {
 				if prevGroup != "" { // blank line between groups, not above the first
 					b.WriteString("\n")
 					line++
 				}
+				headerLine = line
 				b.WriteString(groupHeader(g, innerW) + "\n")
 				line++
 				prevGroup = g
@@ -241,6 +244,12 @@ func (m *Model) renderList() {
 		if i == m.cursor {
 			m.cursorLine = line
 			m.cursorRows = rowH
+			// Reveal the group header sitting directly above the cursor row when it
+			// leads a group, so scrolling up to it doesn't clip the header.
+			m.cursorTop = line
+			if headerLine >= 0 {
+				m.cursorTop = headerLine
+			}
 		}
 		b.WriteString(row)
 		b.WriteString("\n")
@@ -250,6 +259,7 @@ func (m *Model) renderList() {
 	if m.section.Len() == 0 {
 		m.cursorLine = 0
 		m.cursorRows = 1
+		m.cursorTop = 0
 		hint := "Loading…"
 		switch {
 		case m.emptyNotice != "":
@@ -272,12 +282,12 @@ func (m *Model) renderList() {
 // scrollToCursor nudges the viewport offset only when the cursor row (at its
 // display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
-	top := m.cursorLine
 	rows := m.cursorRows
 	if rows < 1 {
 		rows = 1
 	}
-	bottom := top + rows - 1
+	top := m.cursorTop // reveal the group header above the row, when it has one
+	bottom := m.cursorLine + rows - 1
 	off := m.vp.YOffset()
 	switch {
 	case top < off:

@@ -129,16 +129,16 @@ func TestFlagGlyph(t *testing.T) {
 	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, false) != "" {
 		t.Fatal("uncached detail must render no flag")
 	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "DIRTY"}, true), "⚠") {
+	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "DIRTY"}, true), warnGlyph) {
 		t.Fatal("DIRTY should show the conflict flag")
 	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "BEHIND"}, true), "⚠") {
+	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "BEHIND"}, true), warnGlyph) {
 		t.Fatal("BEHIND should show the behind flag")
 	}
 	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, true) != "" {
 		t.Fatal("CLEAN should show no flag")
 	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{Mergeable: "CONFLICTING"}, true), "⚠") {
+	if !strings.Contains(flagGlyph(gh.PRDetail{Mergeable: "CONFLICTING"}, true), warnGlyph) {
 		t.Fatal("CONFLICTING should show the conflict flag")
 	}
 }
