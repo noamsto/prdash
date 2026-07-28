@@ -364,9 +364,6 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if lipgloss.Width(review) == 0 {
 		review = dimStyle.Render("·")
 	}
-	// Every gutter marker occupies exactly one cell. Width, not emptiness, is the
-	// test: a styled-but-glyphless marker is a non-empty string that renders
-	// zero-width, which would silently collapse the column grid for that row.
 	flag, auto := oneCell(o.Flag), oneCell(auto)
 	numCell := num
 	if o.NumWidth > 0 {
