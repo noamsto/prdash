@@ -266,7 +266,7 @@ func TestJobLogRecordsAuthHopNotBlob(t *testing.T) {
 func TestRateStoreConcurrentAccess(t *testing.T) {
 	st := newRateStore()
 	var wg sync.WaitGroup
-	for i := range 20 {
+	for range 20 {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
@@ -280,7 +280,6 @@ func TestRateStoreConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, _ = st.tightest()
-			_ = i
 		}()
 	}
 	wg.Wait()

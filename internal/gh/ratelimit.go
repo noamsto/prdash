@@ -44,9 +44,6 @@ func newRateStore() *rateStore { return &rateStore{by: map[string]RateSnapshot{}
 // JobLog's unauthenticated blob-storage hop from clobbering the core bucket with
 // a reading it never made, without having to exclude it by host.
 func (s *rateStore) record(h http.Header, path string) {
-	if s == nil {
-		return
-	}
 	limit, errLimit := strconv.Atoi(h.Get("X-RateLimit-Limit"))
 	remaining, errRemaining := strconv.Atoi(h.Get("X-RateLimit-Remaining"))
 	reset, errReset := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64)
@@ -92,9 +89,9 @@ func (s *rateStore) tightest() (RateSnapshot, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	best, ok := s.by["graphql"], false
-	if best.Limit > 0 {
-		ok = true
+	best, ok := RateSnapshot{}, false
+	if g := s.by["graphql"]; g.Limit > 0 {
+		best, ok = g, true
 	}
 	for res, snap := range s.by {
 		if res == "graphql" || snap.Limit <= 0 {
@@ -107,7 +104,6 @@ func (s *rateStore) tightest() (RateSnapshot, bool) {
 	return best, ok
 }
 
-// rateTransport records the rate headers of every response passing through it.
 type rateTransport struct {
 	next  http.RoundTripper
 	store *rateStore
