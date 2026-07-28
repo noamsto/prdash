@@ -276,8 +276,9 @@ const (
 	branchGlyph = "\uF418" // nerd: nf-oct-git_branch
 )
 
-// reviewApprovedGlyph marks an approved review — a check-in-circle, distinct from
-// the plain ✓ the CI-pass column uses. Swap if your Nerd Font maps it elsewhere.
+// reviewApprovedGlyph marks an approved review. A badge, not a ✓: the CI column
+// sits right beside it and already uses the plain check, so a second one read as
+// a duplicate instead of a second signal.
 const reviewApprovedGlyph = "\uF461" // nerd: nf-oct-verified
 
 // Rounded chip end-caps: Powerline half-circles drawn in the chip's own color on
