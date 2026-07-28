@@ -98,10 +98,15 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		status, age = closedMark(), ageString(p.ClosedAt)
 	}
 	auto := autoMergeGlyph(p.AutoMergeEnabled())
-	// Author is dropped from the row: it's redundant in a single-author (flat)
-	// view and hoisted into the group header when grouped.
+	// A PR's author only appears on line 2 (two-line mode); it stays off the dense
+	// single-line row, and off author-grouped boards where the header carries it.
+	byAuthor := s.grouped && len(s.catOrder) == 0
+	author := ""
+	if o.TwoLine && !byAuthor {
+		author = p.Author.Login
+	}
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		"", age, status, reviewDot(p.ReviewDecision), auto, p.HeadRefName, p.Labels)
+		author, age, status, reviewDot(p.ReviewDecision), auto, p.HeadRefName, p.Labels)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -324,6 +329,16 @@ func labelSlice(ls []gh.Label) []string {
 }
 func joinSpace(s []string) string { return strings.Join(s, " ") }
 
+// oneCell renders s as exactly one display cell, substituting a space when it has
+// none. Guards the row's column grid against markers that are non-empty strings
+// but zero-width on screen — a styled empty glyph const is the classic case.
+func oneCell(s string) string {
+	if lipgloss.Width(s) == 0 {
+		return " "
+	}
+	return s
+}
+
 // renderItemRow renders a single-line or two-line row.
 //
 // Single-line (default): ‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
@@ -343,25 +358,29 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if o.Selected {
 		mark = selMarkStyle.Render("●")
 	}
-	flag := o.Flag
-	if flag == "" {
-		flag = " "
-	}
-	if ci == "" {
+	if lipgloss.Width(ci) == 0 {
 		ci = dimStyle.Render("·")
 	}
-	if review == "" {
+	if lipgloss.Width(review) == 0 {
 		review = dimStyle.Render("·")
 	}
-	if auto == "" {
-		auto = " "
-	}
+	// Every gutter marker occupies exactly one cell. Width, not emptiness, is the
+	// test: a styled-but-glyphless marker is a non-empty string that renders
+	// zero-width, which would silently collapse the column grid for that row.
+	flag, auto := oneCell(o.Flag), oneCell(auto)
 	numCell := num
 	if o.NumWidth > 0 {
 		numCell = padNum(num, o.NumWidth)
 	}
-	left := bar + mark + " " + ci + " " + review + " " + auto + " " + flag + " " + numStyle.Render(numCell) + " "
-	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
+	// No separator after mark: it is blank on all but multi-selected rows, so it
+	// already reads as spacing — and dropping it pulls every row one cell left.
+	gutter := bar + mark + ci + " " + review + " " + auto + " " + flag + " "
+	left := gutter + numStyle.Render(numCell) + " "
+	// Two-line rows lead line 2 with the author; single-line keeps it beside age.
+	right := dimStyle.Render(fmt.Sprintf("  %3s", age))
+	if !o.TwoLine {
+		right = authorStyle(author).Render(author) + right
+	}
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
 	// The title owns the whole flexible middle; chips live on line 2, not here.
@@ -395,39 +414,50 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	line1 := left + titleTxt + strings.Repeat(" ", gap) + right
 
 	// Single-line mode, or a row with nothing to show below, stays one dense line.
-	if !o.TwoLine || (len(labels) == 0 && sub == "") {
+	if !o.TwoLine || (author == "" && len(labels) == 0 && sub == "") {
 		if o.Focused {
 			line1 = rowBgWrap(line1, theme.RowBg)
 		}
 		return line1
 	}
 
-	// Two-line mode: label pills at full width + a dim secondary (head branch),
-	// indented under the title.
-	indent := leftW
+	// Two-line mode: author, label chips, and the dim head branch on their own
+	// line, indented under line 1's #number. Author and branch are bounded (and
+	// glyph-prefixed) so chips get the remaining width.
+	indent := lipgloss.Width(gutter)
 	avail := w - indent
+	authorTxt := ""
+	if author != "" {
+		authorTxt = authorStyle(author).Render(authorGlyph + " " + truncate(author, max(0, avail/3)))
+	}
 	subTxt := ""
 	if sub != "" {
-		subTxt = dimStyle.Render(truncate(sub, max(0, avail/2)))
+		subTxt = dimStyle.Render(branchGlyph + " " + truncate(sub, max(0, avail/3)))
 	}
-	subW := lipgloss.Width(subTxt)
-	sepW := 0
-	if subW > 0 {
-		sepW = 2
-	}
+	authorW, subW := lipgloss.Width(authorTxt), lipgloss.Width(subTxt)
+	// Plain two-space gaps between segments (author / chips / branch); the glyphs
+	// and bracketed chips carry the structure, so no separator glyph is needed.
+	const sep, sepW = "  ", 2
 	chips := ""
-	if budget := avail - subW - sepW; budget >= 3 {
+	if budget := avail - authorW - subW - sepW*2; budget >= 3 {
 		chips = renderChips(labels, budget)
 	}
-	chipW := lipgloss.Width(chips)
-	if chipW == 0 {
-		sepW = 0 // no chips → drop the chip/sub separator
+	parts := make([]string, 0, 3)
+	if authorW > 0 {
+		parts = append(parts, authorTxt)
 	}
-	pad := w - indent - chipW - sepW - subW
+	if chips != "" {
+		parts = append(parts, chips)
+	}
+	if subW > 0 {
+		parts = append(parts, subTxt)
+	}
+	body := strings.Join(parts, sep)
+	pad := avail - lipgloss.Width(body)
 	if pad < 0 {
 		pad = 0
 	}
-	line2 := strings.Repeat(" ", indent) + chips + strings.Repeat(" ", sepW) + subTxt + strings.Repeat(" ", pad)
+	line2 := strings.Repeat(" ", indent) + body + strings.Repeat(" ", pad)
 	if o.Focused {
 		line1 = rowBgWrap(line1, theme.RowBg)
 		line2 = rowBgWrap(line2, theme.RowBg)
@@ -560,11 +590,13 @@ func renderChips(labels []gh.Label, maxW int) string {
 	return b.String()
 }
 
-// reviewDot is the single-rune review-decision glyph for the dense board row.
+// reviewDot is the single-glyph review-decision marker for the dense board row.
+// Approved uses reviewApprovedGlyph (not ✓) so it reads distinctly from the CI
+// pass mark in the adjacent column.
 func reviewDot(decision string) string {
 	switch decision {
 	case "APPROVED":
-		return passStyle.Render("✓")
+		return passStyle.Render(reviewApprovedGlyph)
 	case "CHANGES_REQUESTED":
 		return failStyle.Render("✗")
 	case "REVIEW_REQUIRED":
