@@ -2,6 +2,7 @@ package ui
 
 import (
 	"hash/fnv"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -185,22 +186,100 @@ func reviewStateLabel(state string) string {
 	}
 }
 
-// lightText reports whether a label background (6-hex, no '#') is dark enough to
-// need light text. Uses perceptual luminance; unparsable colors default to
-// light text (safe on the dim fallback chip).
-func lightText(hex string) bool {
+// luminance returns the perceptual luminance (0..255) of a 6-hex color (no '#')
+// and whether it parsed. Shared by lightText and chipReadableAsText.
+func luminance(hex string) (float64, bool) {
 	if len(hex) != 6 {
-		return true
+		return 0, false
 	}
 	r, e1 := strconv.ParseInt(hex[0:2], 16, 0)
 	g, e2 := strconv.ParseInt(hex[2:4], 16, 0)
 	b, e3 := strconv.ParseInt(hex[4:6], 16, 0)
 	if e1 != nil || e2 != nil || e3 != nil {
+		return 0, false
+	}
+	return 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b), true
+}
+
+// lightText reports whether a label background (6-hex, no '#') is dark enough to
+// need light text. Unparsable colors default to light text (safe on the dim
+// fallback chip).
+func lightText(hex string) bool {
+	lum, ok := luminance(hex)
+	if !ok {
 		return true
 	}
-	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
 	return lum < 150
 }
+
+// relativeLuminance is the WCAG relative luminance of a 6-hex color (no '#'),
+// with sRGB channels linearized. Unlike the perceptual byte-average used for
+// text-on-fill decisions, this is the basis for a real contrast ratio.
+func relativeLuminance(hex string) (float64, bool) {
+	if len(hex) != 6 {
+		return 0, false
+	}
+	var lin [3]float64
+	for i := range lin {
+		v, err := strconv.ParseInt(hex[i*2:i*2+2], 16, 0)
+		if err != nil {
+			return 0, false
+		}
+		c := float64(v) / 255
+		if c <= 0.04045 {
+			lin[i] = c / 12.92
+		} else {
+			lin[i] = math.Pow((c+0.055)/1.055, 2.4)
+		}
+	}
+	return 0.2126*lin[0] + 0.7152*lin[1] + 0.0722*lin[2], true
+}
+
+// contrastRatio is the WCAG contrast ratio (1..21) between two relative luminances.
+func contrastRatio(a, b float64) float64 {
+	if a < b {
+		a, b = b, a
+	}
+	return (a + 0.05) / (b + 0.05)
+}
+
+// chipOutlineMinContrast is the WCAG contrast ratio a label color needs against
+// the row backgrounds to read as plain colored text. 3:1 is the AA floor for UI
+// components and large text. Below it the chip falls back to a filled pill.
+//
+// A ratio, not a luminance gap: a saturated red like #FF2200 has low luminance
+// (red barely contributes to it) yet reads vividly on a dark ground — judging it
+// by luminance distance alone wrongly filled it while #FF5500 stayed outlined.
+const chipOutlineMinContrast = 3.0
+
+// chipReadableAsText reports whether a label color contrasts enough with BOTH the
+// pane background and the focused-row background to render as an outline chip
+// (colored brackets + colored text, no fill) on either.
+func chipReadableAsText(hex string) bool {
+	lc, ok := relativeLuminance(hex)
+	if !ok {
+		return false
+	}
+	base, ok1 := relativeLuminance(strings.TrimPrefix(theme.Base, "#"))
+	row, ok2 := relativeLuminance(strings.TrimPrefix(theme.RowBg, "#"))
+	if !ok1 || !ok2 {
+		return false
+	}
+	return contrastRatio(lc, base) >= chipOutlineMinContrast &&
+		contrastRatio(lc, row) >= chipOutlineMinContrast
+}
+
+// Line-2 property glyphs: a person before the author, a branch before the head
+// ref. Set to whatever your Nerd Font maps if these render as tofu.
+const (
+	authorGlyph = "\uF415" // nerd: nf-oct-person
+	branchGlyph = "\uF418" // nerd: nf-oct-git_branch
+)
+
+// reviewApprovedGlyph marks an approved review. A badge, not a ✓: the CI column
+// sits right beside it and already uses the plain check, so a second one read as
+// a duplicate instead of a second signal.
+const reviewApprovedGlyph = "\uF461" // nerd: nf-oct-verified
 
 // Rounded chip end-caps: Powerline half-circles drawn in the chip's own color on
 // the pane background, so a label reads as a rounded pill. Both are Nerd Font
@@ -210,9 +289,15 @@ const (
 	chipCapRight = "\ue0b4" // nerd: ple-right-half-circle-thick
 )
 
-// labelChip renders one rounded label pill: GitHub hex as the fill with auto
-// black/white text by luminance; empty/invalid colors fall back to a dim chip.
+// labelChip renders one label. When the label color contrasts enough with the
+// row backgrounds it renders as a light bracketed chip — "[name]" with brackets
+// and text in the label color, no fill. Low-contrast or invalid colors fall back
+// to a filled pill with auto black/white text so they stay legible.
 func labelChip(name, hex string) string {
+	if chipReadableAsText(hex) {
+		st := lipgloss.NewStyle().Foreground(lipgloss.Color("#" + hex))
+		return st.Render("[" + name + "]")
+	}
 	fg, bg := lipgloss.Color(theme.Base), lipgloss.Color("#"+hex)
 	switch {
 	case len(hex) != 6:
@@ -242,7 +327,7 @@ func ciGlyph(state string) string {
 // autoMergeGlyphRune marks a PR with GitHub auto-merge armed — it will land on
 // its own once checks and reviews clear. Distinct from mergedGlyph (a terminal
 // state); this one appears only on still-open PRs.
-const autoMergeGlyphRune = "" // nerd: nf-fa-refresh
+const autoMergeGlyphRune = "\uF46A" // nerd: nf-oct-sync
 
 // autoMergeGlyph is the dense-row/triage-card auto-merge marker. Blank when
 // disabled so it never crowds the row — mirrors ciGlyph/reviewDot's "unknown"
@@ -267,7 +352,9 @@ const closedGlyph = "✗"
 
 func closedMark() string { return dimStyle.Render(closedGlyph) }
 
-// warnGlyph is the conflict/behind flag. U+FE0E (VS15) forces text presentation
-// so it occupies one terminal cell like ✓/✗/●; the bare U+26A0 defaults to a
-// ~2-cell emoji that shoves the row's columns off the monospace grid.
-const warnGlyph = "⚠︎"
+// warnGlyph is the conflict/behind flag. An Octicon, matching prGlyph/issueGlyph
+// and the other row markers — not U+26A0, which many terminals draw as a 2-cell
+// emoji (with or without a VS15 selector) while lipgloss measures 1, shifting the
+// number column. Keep any replacement single-width; oneCell guards the grid but
+// cannot shrink an over-wide glyph.
+const warnGlyph = "\uF421" // nerd: nf-oct-alert

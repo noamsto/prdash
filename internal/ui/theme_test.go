@@ -77,6 +77,22 @@ func TestLightText(t *testing.T) {
 	}
 }
 
+func TestChipReadableAsText(t *testing.T) {
+	// Real GitHub label colors seen on the board: both reds must read as outline
+	// chips. #FF2200 is the regression — low luminance, high contrast.
+	for _, hex := range []string{"FF2200", "FF5500", "ededed", "f5a25a"} {
+		if !chipReadableAsText(hex) {
+			t.Errorf("#%s should render as an outline chip", hex)
+		}
+	}
+	if chipReadableAsText("313244") { // == RowBg, no contrast
+		t.Error("a label matching the row background must fall back to a filled chip")
+	}
+	if chipReadableAsText("zzz") {
+		t.Error("invalid color must not render as an outline chip")
+	}
+}
+
 func TestRenderChipsOverflow(t *testing.T) {
 	labels := []gh.Label{{Name: "bug", Color: "d73a4a"}, {Name: "enhancement", Color: "a2eeef"}}
 	// Room for one chip ("bug" = 5 cells) plus its " +1" marker (3 cells).

@@ -1683,6 +1683,26 @@ func TestRenderListSingleLineRowHeight(t *testing.T) {
 	}
 }
 
+// TestScrollRevealsGroupHeaderAboveTopRow: scrolling up onto the first row of a
+// group must keep that group's header (one line above the row) on screen.
+func TestScrollRevealsGroupHeaderAboveTopRow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 12 // short viewport → content must scroll
+	review := []gh.PR{{Number: 1, Title: "review me", State: "OPEN"}}
+	var open []gh.PR
+	for i := 2; i <= 14; i++ {
+		open = append(open, gh.PR{Number: i, Title: "open pr", State: "OPEN"})
+	}
+	m.setSections(review, open, "someone-else") // #1 → "Review requested" (first group)
+	m.cursor = m.section.Len() - 1              // scroll to the bottom
+	m.renderList()
+	m.cursor = 0 // back to the first row, under the "Review requested" header
+	m.renderList()
+	if off := m.vp.YOffset(); off != 0 {
+		t.Fatalf("group header above the first row must stay visible; YOffset=%d, want 0", off)
+	}
+}
+
 func TestCtrlJKMovesSelectionAltJKScrollsPreview(t *testing.T) {
 	m := newTestModelWithRows(t)
 	start := m.cursor
