@@ -50,6 +50,8 @@ type Model struct {
 	membersSource     gh.MembersSource     // assignable-users backend
 	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.)
 	actionsSource     gh.ActionsSource     // Actions rerun/job-log backend
+	rateSource        gh.RateSource        // API rate-limit budgets, scraped off responses the other backends make
+	rate              gh.RateSnapshot      // last sampled budget; the zero value is "nothing observed yet"
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
@@ -174,6 +176,9 @@ func (m *Model) SetMutationSource(s gh.MutationSource) { m.mutationSource = s }
 // SetActionsSource installs the REST backend for Actions rerun/job-log
 // operations (internal/action.RerunFailed/RerunCheck/JobLog).
 func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
+
+// SetRateSource installs the backend the header's API-budget segment samples.
+func (m *Model) SetRateSource(s gh.RateSource) { m.rateSource = s }
 
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
@@ -1377,6 +1382,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.backgroundRefresh(), checksPollTick())
 	case themePollMsg:
+		// This is the only tick that runs for the whole session, so the header's
+		// budget countdown rides it rather than arming a second one-second loop.
+		if m.rateSource != nil {
+			if s, ok := m.rateSource.RateLimit(); ok {
+				m.rate = s
+			}
+		}
 		mod, err := statModTime(themeStatePath())
 		if err != nil || mod.Equal(msg.lastMod) {
 			return m, themeWatchTick(msg.lastMod) // gone or unchanged: keep watching
@@ -1961,6 +1973,12 @@ func (m Model) header() string {
 	h += m.statusBadge(m.width - lipgloss.Width(h))
 	if n := m.sel.count(); n > 0 {
 		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
+	}
+	// Last, right-aligned, and out of whatever the badge and selection count left
+	// over: the API budget is the header's lowest-priority element and the first
+	// to go when the terminal narrows.
+	if seg := rateSegment(m.rate, time.Now(), m.width-lipgloss.Width(h)-rateGap); seg != "" {
+		h += strings.Repeat(" ", m.width-lipgloss.Width(h)-lipgloss.Width(seg)) + seg
 	}
 	return h
 }
