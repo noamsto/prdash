@@ -20,6 +20,7 @@ type RowOpts struct {
 	Focused  bool
 	Selected bool
 	Draft    bool   // dim the title; drafts sort last (see prRank)
+	Landed   bool   // merged by prdash this session, held on the open board until ctrl+r
 	Flag     string // pre-rendered ! column glyph (conflict/behind), "" when unknown
 	TwoLine  bool   // render labels + branch on an indented second line
 }
@@ -394,15 +395,23 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	}
 	// A draft dims the whole row but paints its tag in the draft accent (peach),
 	// so the one thing that stands out on a receded row is what it is.
-	draftTag := ""
+	tags := ""
 	if o.Draft {
 		const tag = " [draft]"
-		draftTag = draftTagStyle.Render(tag)
+		tags = draftTagStyle.Render(tag)
 		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
 			titleRoom = 1
 		}
 	}
-	titleTxt := titleSt.Render(truncate(title, titleRoom)) + draftTag
+	// Without the tag, a merge glyph on the open board reads as a live PR.
+	if o.Landed {
+		const tag = " landed"
+		tags += dimStyle.Render(tag)
+		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
+			titleRoom = 1
+		}
+	}
+	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
 
 	gap := w - leftW - lipgloss.Width(titleTxt) - rightW
 	if gap < 1 {

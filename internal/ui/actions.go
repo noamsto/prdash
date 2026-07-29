@@ -138,6 +138,17 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // OSC 52 is fire-and-forget
 		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
+	case "cleanup-branch":
+		ps, ok := m.section.(*PRSection)
+		if !ok || m.section.Len() == 0 {
+			return nil // issue board, or an empty one: no PR branch to clean up
+		}
+		p, dir := ps.prAt(m.cursor), m.dir
+		m.actionStatus = statFor(a)
+		m.actionStatus.nums = []int{p.Number}
+		return tea.Batch(func() tea.Msg {
+			return actionDoneMsg{err: cleanupBranch(dir, p)}
+		}, m.startSpinner())
 	case "rerun-failed":
 		branch, native := v.HeadRefName, m.actionsSource
 		m.actionStatus = statFor(a)
@@ -181,6 +192,9 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 	m.actionStatus = statFor(a)
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = []int{p.Number}
+	if a.Command.Native == "merge-squash" {
+		m.actionStatus.merged = []gh.PR{p}
+	}
 	return tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: fn()}
 	}, m.startSpinner()), true
@@ -269,9 +283,10 @@ type actionStat struct {
 	fail    string // shown on failure
 	settled bool
 	err     error
-	refresh bool  // true when the action mutated the PR(s) → refetch on success
-	rerunCI bool  // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
-	nums    []int // PR numbers the action touched, for detail-freshness invalidation
+	refresh bool    // true when the action mutated the PR(s) → refetch on success
+	rerunCI bool    // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
+	nums    []int   // PR numbers the action touched, for detail-freshness invalidation
+	merged  []gh.PR // PRs a merge targeted, snapshotted pre-merge → mergedSticky on success
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -442,6 +457,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
 	var nums []int
+	var merging []gh.PR
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -462,6 +478,11 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		}
 		calls = append(calls, fn)
 		nums = append(nums, p.Number)
+		if a.Command.Native == "merge-squash" {
+			// Snapshot now: once the merge lands, the refetch drops the PR from the
+			// open list and there is nothing left to keep showing.
+			merging = append(merging, p)
+		}
 	}
 	if len(calls) == 0 {
 		return nil
@@ -470,6 +491,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	m.actionStatus = statForBulk(a, n)
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
+	m.actionStatus.merged = merging
 	m.sel.clear() // the batch op consumes the selection
 	return tea.Batch(func() tea.Msg {
 		var failed int

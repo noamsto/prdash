@@ -78,6 +78,7 @@ type Model struct {
 	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
 	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
 	ciRerun           map[int]time.Time         // PR number → stamp time when its checks-in-progress override was applied
+	mergedSticky      map[int]gh.PR             // PRs prdash merged this session, kept on the open board until ctrl+r
 	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
 	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
 	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
@@ -135,7 +136,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
-		ciRerun: map[int]time.Time{},
+		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
 		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
@@ -259,8 +260,51 @@ func hasCheckStartedAfter(p gh.PR, t time.Time) bool {
 	return false
 }
 
+// applyMergedSticky appends the PRs prdash merged this session that the fetch no
+// longer returns, so a landed PR doesn't vanish the instant the post-merge
+// refetch lands. Only the open PR board needs the overlay: the merged board
+// returns these PRs itself, and on the closed board (is:unmerged) a merged row
+// would contradict the query.
+func (m *Model) applyMergedSticky(prs []gh.PR) []gh.PR {
+	if len(m.mergedSticky) == 0 || !m.openPRBoard() {
+		return prs
+	}
+	have := make(map[int]bool, len(prs))
+	for _, p := range prs {
+		have[p.Number] = true
+	}
+	add := make([]gh.PR, 0, len(m.mergedSticky))
+	for n, p := range m.mergedSticky {
+		if !have[n] {
+			add = append(add, p)
+		}
+	}
+	if len(add) == 0 {
+		return prs
+	}
+	// Map order is random; sort so equal-ranked landed rows don't shuffle between frames.
+	slices.SortFunc(add, func(a, b gh.PR) int { return b.Number - a.Number })
+	// Fresh slice: prs may share its backing array with the cache.
+	return append(append(make([]gh.PR, 0, len(prs)+len(add)), prs...), add...)
+}
+
+// openPRBoard reports whether the view is the open PR list — the only board a
+// landed PR is held on.
+func (m Model) openPRBoard() bool { return m.mode == "pr" && m.state == "open" }
+
+// isLanded reports whether this row is a PR prdash merged, held on the open board
+// by applyMergedSticky. False on the merged board, where the same PR is just a
+// normal result and needs no tag.
+func (m *Model) isLanded(number int) bool {
+	if !m.openPRBoard() {
+		return false
+	}
+	_, ok := m.mergedSticky[number]
+	return ok
+}
+
 func (m *Model) setPRs(prs []gh.PR) {
-	prs = m.applyCIRerun(prs)
+	prs = m.applyMergedSticky(m.applyCIRerun(prs))
 	if s, ok := m.section.(*PRSection); ok {
 		// Outside the sections default, group by author even with a single
 		// author, so you always see whose PRs you're looking at.
@@ -289,6 +333,9 @@ func (m *Model) setIssues(is []gh.Issue) {
 // real viewer login to split one open list client-side; an empty viewer (login
 // not yet resolved) collapses Mine into Others until viewerFetchedMsg re-runs this.
 func (m *Model) setSections(review, open []gh.PR, viewer string) {
+	// Landed PRs join the open half so they categorize by author like anything
+	// else; a merged PR is no longer awaiting anyone's review.
+	open = m.applyMergedSticky(open)
 	cats := make(map[int]string, len(open)+len(review))
 	all := make([]gh.PR, 0, len(open)+len(review))
 	for _, p := range review {
@@ -344,6 +391,7 @@ type rowKey struct {
 	focused, selected bool
 	flag              string
 	twoLine           bool
+	landed            bool
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
@@ -386,10 +434,11 @@ func (m *Model) renderList() {
 			d, cached := m.detail[ps.prAt(i).Number]
 			flag = flagGlyph(d, cached)
 		}
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine}
+		landed := isPR && m.isLanded(ps.prAt(i).Number)
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine, landed: landed}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine,
+				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine, Landed: landed,
 			})
 			m.rowSig[i] = key
 		}
@@ -1410,6 +1459,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionStatus.fail = msg.fail
 		}
 		cmds := []tea.Cmd{clearStatusCmd()}
+		if msg.err == nil {
+			landed := time.Now()
+			for _, p := range m.actionStatus.merged {
+				p.State, p.MergedAt = "MERGED", landed
+				m.mergedSticky[p.Number] = p
+				delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
+			}
+		}
 		if msg.err == nil && m.actionStatus.refresh {
 			for _, n := range m.actionStatus.nums {
 				delete(m.fresh, n) // force the detail/summary to revalidate
@@ -1623,6 +1680,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			return m, m.toggleMode()
 		case "ctrl+r":
+			// The one refresh the user asked for by name: landed rows go. Every other
+			// caller of backgroundRefresh (post-action, CI poll) keeps them.
+			clear(m.mergedSticky)
 			return m, m.backgroundRefresh()
 		case "z":
 			m.previewMax = !m.previewMax
@@ -1853,9 +1913,14 @@ func (m Model) board() string {
 func (m Model) confirmQuestion() string {
 	a := m.pending
 	if a.Scope != "per-selected" {
-		n := 0
+		n, branch := 0, ""
 		if v, ok := m.cursorVars(); ok {
-			n = v.Number
+			n, branch = v.Number, v.HeadRefName
+		}
+		// A force-delete prompt has to say what it deletes; a PR number alone
+		// doesn't identify the branch about to go.
+		if a.Command.Builtin == "cleanup-branch" && branch != "" {
+			return fmt.Sprintf("%s %s (#%d)?", a.Label, branch, n)
 		}
 		return fmt.Sprintf("%s #%d?", a.Label, n)
 	}
@@ -2091,7 +2156,7 @@ func (m Model) legendGroups() []legendGroup {
 	}
 	if m.mode == "pr" {
 		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"},
-			keyHint{"M", "ready"}, keyHint{"L", "approve"})
+			keyHint{"M", "ready"}, keyHint{"L", "approve"}, keyHint{"X", "cleanup branch"})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
 

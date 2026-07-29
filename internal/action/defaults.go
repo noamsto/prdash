@@ -38,6 +38,11 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Native: "approve"}, Scope: "per-selected", Refresh: true,
 			Confirm: true, ConfirmOthers: true,
 			Progress: "Approving", Past: "Approved", Fail: "Approve failed"},
+		// Local-only: it deletes a merged PR's leftover branch and worktree, so it
+		// needs no Refresh — nothing on GitHub changed.
+		"X": {Key: "X", Label: "Clean up branch",
+			Command: Command{Builtin: "cleanup-branch"}, Scope: "single", Confirm: true,
+			Progress: "Cleaning up", Past: "Branch cleaned up", Fail: "Cleanup failed"},
 	}
 }
 
