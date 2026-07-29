@@ -37,20 +37,23 @@ channel; focus keeps the row background and bold title it already owns.
 |---|---|---|---|---|---|
 | — | — | ` ` | — | none | normal |
 | ✓ | — | `▎` U+258E | Focus (cyan) | `RowBg` | bold |
-| — | ✓ | `▐` U+2590 | Select (pink) | none | normal |
-| ✓ | ✓ | `▐` U+2590 | Select (pink) | `RowBg` | bold |
+| — | ✓ | `▌` U+258C | Select (pink) | none | normal |
+| ✓ | ✓ | `▌` U+258C | Select (pink) | `RowBg` | bold |
 
 Selection wins the bar because it is the rarer and more consequential state — it
 is what an action fires against. Focus loses no information: it was never
 bar-only.
 
-`▐` (right half block) rather than a same-glyph color swap so selection is
+`▌` (left half block) rather than a same-glyph color swap so selection is
 encoded by **weight as well as hue** — legible in a screenshot, under a shifted
-terminal palette, and to a colorblind user. It sits flush against the column's
-right edge, so a run of selected rows forms a solid pink rail.
+terminal palette, and to a colorblind user. Left-flush keeps it co-linear with
+the focus bar and leaves the empty half on the CI side, so the selection mark
+stays clear of the status cluster. A run of selected rows still forms a solid
+pink rail because the glyph is full-height — that contiguity comes from
+vertical coverage, not from which side of the cell it fills.
 
-The gutter narrows from 7 cells to 6 and the whole grid shifts one cell left —
-which is what `section.go:373` wanted in the first place.
+The gutter narrows from 10 display cells to 9 and the whole grid shifts one
+cell left — which is what `section.go:373` wanted in the first place.
 
 ## Changes
 
@@ -61,7 +64,7 @@ Add the two glyph consts beside the existing `warnGlyph` / `mergedGlyph` /
 
 ```go
 focusBarGlyph = "▎" // U+258E, cursor row
-selBarGlyph   = "▐" // U+2590, multi-selected row — heavier than focus on purpose
+selBarGlyph   = "▌" // U+258C, multi-selected row — heavier than focus on purpose
 ```
 
 Fix the stale comment on the `Select` palette field (line 21), which still
@@ -95,7 +98,7 @@ the gutter, so line-2 chips stay aligned under the `#number`.
 
 ### `internal/ui/prlist.go:2145`
 
-Legend becomes `{"▎", "focus"}, {"▐", "selected"}`, using the new consts. This
+Legend becomes `{"▎", "focus"}, {"▌", "selected"}`, using the new consts. This
 resolves the duplicate-`●` ambiguity noted above.
 
 ### `internal/ui/expanded.go:98`, `internal/ui/logview.go:270`
@@ -108,13 +111,13 @@ folding them in is the point of introducing the const.
 Two existing tests assert the old marker and must change:
 
 - `section_test.go:36` — `TestRenderItemRowIsSingleLine` asserts both `▎` and `●`
-  on a focused+selected row; under the new rule neither appears. → `▐`.
-- `section_test.go:73` — `"selected row should carry the ● marker"`. → `▐`.
+  on a focused+selected row; under the new rule neither appears. → `▌`.
+- `section_test.go:73` — `"selected row should carry the ● marker"`. → `▌`.
 
 Three new tests:
 
-1. **Selection wins the bar** — a focused+selected row contains `▐` and *not*
-   `▎`; a focused-only row contains `▎` and not `▐`.
+1. **Selection wins the bar** — a focused+selected row contains `▌` and *not*
+   `▎`; a focused-only row contains `▎` and not `▌`.
 2. **Focus stays legible under selection** — with the bar identical in both, a
    focused+selected row must not render byte-identical to a selected-only row.
    Assert the two rendered strings differ *and* that the focused one still

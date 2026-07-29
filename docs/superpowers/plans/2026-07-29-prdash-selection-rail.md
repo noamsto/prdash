@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make prdash's multi-select indicator the row's leftmost bar cell — a heavy pink `▐` — instead of a pink `●` crammed against the CI glyph, and delete the now-redundant `mark` column.
+**Goal:** Make prdash's multi-select indicator the row's leftmost bar cell — a heavy pink `▌` — instead of a pink `●` crammed against the CI glyph, and delete the now-redundant `mark` column.
 
-**Architecture:** The dense board row's gutter currently has two state cells: `bar` (cyan `▎` when the row is the cursor) and `mark` (pink `●` when multi-selected), with no separator between `mark` and the CI glyph. Focus is already triple-encoded — bar, row background, and bold title — so the bar cell can be handed to selection instead. Selection wins the cell; focus falls back to the row background and bold title it already had. The `mark` column disappears, narrowing the gutter from 7 cells to 6.
+**Architecture:** The dense board row's gutter currently has two state cells: `bar` (cyan `▎` when the row is the cursor) and `mark` (pink `●` when multi-selected), with no separator between `mark` and the CI glyph. Focus is already triple-encoded — bar, row background, and bold title — so the bar cell can be handed to selection instead. Selection wins the cell; focus falls back to the row background and bold title it already had. The `mark` column disappears, narrowing the gutter from 10 display cells to 9.
 
 **Tech Stack:** Go 1.26.3, `charm.land/lipgloss/v2`, `github.com/charmbracelet/x/ansi`. Tests are plain `go test`.
 
@@ -17,7 +17,7 @@
 - The bar cell must render as **exactly one display cell**. Any glyph substituted here must be single-width — `oneCell` guards the grid against zero-width glyphs but cannot shrink an over-wide one, and an over-wide glyph shifts the `#number` column (see the `warnGlyph` comment in `internal/ui/theme.go`).
 - Glyph constants live in `internal/ui/theme.go`. It is the single source of glyphs and styles for the UI package.
 - `selMarkStyle` is **not** renamed. It is the Select-color style, shared by the board bar, the picker mark (`internal/ui/picker.go:97`), and the header's `N selected` count (`internal/ui/prlist.go:2040`).
-- Tests assert the **literal** glyphs `"▐"` and `"▎"`, never the constants. A test asserting `selBarGlyph` would still pass if the constant were changed to the wrong glyph.
+- Tests assert the **literal** glyphs `"▌"` and `"▎"`, never the constants. A test asserting `selBarGlyph` would still pass if the constant were changed to the wrong glyph.
 - `internal/ui/picker.go:97` keeps its `● ` marker. Out of scope — the picker has no status-glyph cluster to collide with.
 - Do **not** touch the row cache (`rowKey`, `internal/ui/prlist.go:443`) or the header's `N selected` counter (`internal/ui/prlist.go:2040`). `rowKey` already keys on both `focused` and `selected`, so both states invalidate cached rows correctly — no change is needed and any change here is out of scope.
 - Run tests with `go test ./internal/ui/`. Full suite: `go test ./...`.
@@ -40,13 +40,13 @@
 - Consumes: nothing from earlier tasks.
 - Produces: two package-level string constants in `internal/ui/theme.go`, used by Tasks 2 and 3:
   - `focusBarGlyph = "▎"` (U+258E left one-quarter block)
-  - `selBarGlyph = "▐"` (U+2590 right half block)
+  - `selBarGlyph = "▌"` (U+258C left half block)
 
 ---
 
 - [ ] **Step 1: Update the two existing tests that assert the old `●` marker**
 
-In `internal/ui/section_test.go`, find `TestRenderItemRowIsSingleLine`. Its `want` list asserts both `▎` and `●` on a row that is focused *and* selected. Under the new rule neither appears — a focused+selected row shows only `▐`.
+In `internal/ui/section_test.go`, find `TestRenderItemRowIsSingleLine`. Its `want` list asserts both `▎` and `●` on a row that is focused *and* selected. Under the new rule neither appears — a focused+selected row shows only `▌`.
 
 Replace this line:
 
@@ -57,7 +57,7 @@ Replace this line:
 with:
 
 ```go
-	for _, want := range []string{"#7", "hello world", "alice", "2d", "▐", "⚠", autoMergeGlyph(true)} {
+	for _, want := range []string{"#7", "hello world", "alice", "2d", "▌", "⚠", autoMergeGlyph(true)} {
 ```
 
 Then find `TestPRSectionRenderRow` and replace this block:
@@ -73,8 +73,8 @@ with:
 
 ```go
 	sel := s.RenderRow(0, RowOpts{Width: 80, Selected: true})
-	if !strings.Contains(sel, "▐") {
-		t.Fatalf("selected row should carry the ▐ bar: %q", sel)
+	if !strings.Contains(sel, "▌") {
+		t.Fatalf("selected row should carry the ▌ bar: %q", sel)
 	}
 ```
 
@@ -96,9 +96,9 @@ func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 		o             RowOpts
 		want, notWant string
 	}{
-		{"selected", RowOpts{Width: 80, Selected: true}, "▐", "▎"},
-		{"focused and selected", RowOpts{Width: 80, Focused: true, Selected: true}, "▐", "▎"},
-		{"focused", RowOpts{Width: 80, Focused: true}, "▎", "▐"},
+		{"selected", RowOpts{Width: 80, Selected: true}, "▌", "▎"},
+		{"focused and selected", RowOpts{Width: 80, Focused: true, Selected: true}, "▌", "▎"},
+		{"focused", RowOpts{Width: 80, Focused: true}, "▎", "▌"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 			}
 		})
 	}
-	if got := row(RowOpts{Width: 80}); strings.Contains(got, "▐") || strings.Contains(got, "▎") {
+	if got := row(RowOpts{Width: 80}); strings.Contains(got, "▌") || strings.Contains(got, "▎") {
 		t.Errorf("a row that is neither focused nor selected must have no bar: %q", got)
 	}
 }
@@ -176,13 +176,13 @@ go test ./internal/ui/ -run 'TestSelectedBarWinsOverFocusBar|TestRenderItemRowIs
 ```
 
 Expected — three tests FAIL:
-- `TestSelectedBarWinsOverFocusBar/selected` — `want bar "▐"` (current code renders `●`).
-- `TestSelectedBarWinsOverFocusBar/focused_and_selected` — both `want bar "▐"` and `must not carry bar "▎"` (current code renders `▎●`).
-- `TestRenderItemRowIsSingleLine` — `row missing "▐"`.
-- `TestPRSectionRenderRow` — `selected row should carry the ▐ bar`.
+- `TestSelectedBarWinsOverFocusBar/selected` — `want bar "▌"` (current code renders `●`).
+- `TestSelectedBarWinsOverFocusBar/focused_and_selected` — both `want bar "▌"` and `must not carry bar "▎"` (current code renders `▎●`).
+- `TestRenderItemRowIsSingleLine` — `row missing "▌"`.
+- `TestPRSectionRenderRow` — `selected row should carry the ▌ bar`.
 
 Expected — these PASS already, as regression guards:
-- `TestSelectedBarWinsOverFocusBar/focused` (current code renders `▎`, no `▐`).
+- `TestSelectedBarWinsOverFocusBar/focused` (current code renders `▎`, no `▌`).
 - `TestFocusedRowGetsBackground` (focus already paints the background regardless of selection).
 - `TestSelectionDoesNotShiftColumnGrid` (the old `mark` column was also exactly one cell, so the grid does not move today either).
 
@@ -195,13 +195,14 @@ Find the `warnGlyph` constant and its comment block — the declaration uses a U
 ```go
 // focusBarGlyph and selBarGlyph share the row's single leftmost cell. The bar
 // encodes multi-selection, and marks the cursor row only when that row is not
-// selected — focus also reads via the row background and a bold title, selection
-// has nothing else. selBarGlyph is the heavier block on purpose: selection is
-// what an action fires against, so it must read by weight and not by hue alone.
+// selected — on the board row, focus also reads via the row background and a
+// bold title, selection has nothing else. selBarGlyph is the heavier block on
+// purpose: selection is what an action fires against, so it must read by
+// weight and not by hue alone.
 // Both must stay single-width; see warnGlyph above.
 const (
 	focusBarGlyph = "▎" // U+258E left one-quarter block
-	selBarGlyph   = "▐" // U+2590 right half block
+	selBarGlyph   = "▌" // U+258C left half block
 )
 ```
 
@@ -216,7 +217,7 @@ The `Select` field comment still describes the marker as `●`. Replace:
 with:
 
 ```go
-	Select  string // pink — multi-select bar ▐
+	Select  string // pink — multi-select bar ▌
 ```
 
 - [ ] **Step 7: Replace the bar/mark block in `internal/ui/section.go`**
@@ -366,8 +367,8 @@ func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 			}
 			seen[h.key] = h.label
 		}
-		if got := seen["▐"]; got != "selected" {
-			t.Errorf("mode %q: want ▐ labelled \"selected\", got %q", mode, got)
+		if got := seen["▌"]; got != "selected" {
+			t.Errorf("mode %q: want ▌ labelled \"selected\", got %q", mode, got)
 		}
 		if got := seen["▎"]; got != "focus" {
 			t.Errorf("mode %q: want ▎ labelled \"focus\", got %q", mode, got)
@@ -384,7 +385,7 @@ Run:
 go test ./internal/ui/ -run TestLegendGlyphsAreUnambiguous -v
 ```
 
-Expected: FAIL, twice per mode — `glyph "●" explained twice — "CI running" and "selected"`, and `want ▐ labelled "selected", got ""`.
+Expected: FAIL, twice per mode — `glyph "●" explained twice — "CI running" and "selected"`, and `want ▌ labelled "selected", got ""`.
 
 - [ ] **Step 3: Update the legend**
 
@@ -515,9 +516,10 @@ On a repo with several open PRs, confirm by eye:
 
 1. `space` on a row paints a **heavy pink bar** at the left edge, clearly separated from the CI glyph — no fused `●✕` cluster.
 2. Move the cursor onto and off that selected row: the pink bar **stays**, while the grey row background and the bold title track the cursor. The selected row is still identifiable as the cursor row when both apply.
-3. Select several adjacent rows — they form a continuous pink rail down the left edge.
-4. The `#number` and age columns still line up vertically across selected, focused, and plain rows, in both one-line and two-line modes (`t` toggles two-line if bound; otherwise check a row with labels).
-5. Open the legend and confirm it reads `▎ focus` and `▐ selected`, with `●` appearing only as "CI running".
-6. `space` in the filter picker (`/`) still shows its own `● ` marker — unchanged, per the spec's non-goals.
+3. Press `V` to select all, then confirm the cursor row is still findable: every bar is pink and no `▎` appears anywhere, so the cursor must read from the row background and bold title alone.
+4. Select several adjacent rows — they form a continuous pink rail down the left edge.
+5. The `#number` and age columns still line up vertically across selected, focused, and plain rows, in both one-line and two-line modes (`t` toggles two-line if bound; otherwise check a row with labels).
+6. Open the legend and confirm it reads `▎ focus` and `▌ selected`, with `●` appearing only as "CI running".
+7. `space` in the filter picker (`/`) still shows its own `● ` marker — unchanged, per the spec's non-goals.
 
 Note: per a known prdash quirk, if you are running inside the `prefix+p` tmux popup, clipboard actions silently fail on tmux 3.6 — unrelated to this change, but do not chase it.
