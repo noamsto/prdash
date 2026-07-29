@@ -147,7 +147,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		m.actionStatus = statFor(a)
 		m.actionStatus.nums = []int{p.Number}
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: cleanupBranch(dir, p)}
+			return cleanupDone(dir, p)
 		}, m.startSpinner())
 	case "rerun-failed":
 		branch, native := v.HeadRefName, m.actionsSource

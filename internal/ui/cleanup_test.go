@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -123,6 +125,36 @@ func TestCleanupBranchKeepsBranchWhenWorktreeRemovalFails(t *testing.T) {
 	}
 	if !gh.BranchExists(dir, "feat/x") {
 		t.Error("branch was deleted even though the worktree removal failed")
+	}
+}
+
+// The badge is the only place a cleanup failure is reported, so it has to carry
+// the reason: "Cleanup failed" alone leaves you guessing which precondition bit.
+func TestCleanupFailureSurfacesReasonInBadge(t *testing.T) {
+	dir := cleanupRepo(t) // has no feat/x branch
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 140, 40
+	m.actionStatus = &actionStat{run: "Cleaning up", ok: "Branch cleaned up", fail: "Cleanup failed"}
+
+	updated, _ := m.Update(cleanupDone(dir, p61()))
+	m = updated.(Model)
+
+	if got := ansi.Strip(m.header()); !strings.Contains(got, "no local branch feat/x") {
+		t.Errorf("header badge = %q, want it to name the reason the cleanup failed", got)
+	}
+}
+
+func TestCleanupSuccessReportsNoFailure(t *testing.T) {
+	dir := cleanupRepo(t)
+	gitIn(t, dir, "branch", "feat/x")
+
+	msg, ok := cleanupDone(dir, p61()).(actionDoneMsg)
+	if !ok {
+		t.Fatalf("cleanupDone returned %T, want actionDoneMsg", msg)
+	}
+	if msg.err != nil || msg.fail != "" {
+		t.Errorf("cleanupDone = %+v, want a clean result", msg)
 	}
 }
 
