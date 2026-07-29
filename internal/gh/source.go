@@ -87,3 +87,11 @@ type ActionsSource interface {
 	// existing parseJobLog consumer unchanged.
 	JobLog(jobID int64, failedOnly bool) ([]byte, error)
 }
+
+// RateSource reports the tightest GitHub rate-limit budget seen so far, scraped
+// off the responses prdash already makes. It reports false until some response
+// has advertised a budget, which is also the state a backend that never observes
+// one stays in.
+type RateSource interface {
+	RateLimit() (RateSnapshot, bool)
+}

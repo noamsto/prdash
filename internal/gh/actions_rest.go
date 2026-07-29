@@ -169,6 +169,9 @@ func (s GraphSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
 	noRedirect := timeoutHTTPClient(func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	})
+	// This hop bypasses s.http but still spends from the core bucket, so it
+	// records its own rate headers — otherwise opening a job log undercounts core.
+	noRedirect.Transport = &rateTransport{next: http.DefaultTransport, store: s.rate}
 	resp, err := noRedirect.Do(req)
 	if err != nil {
 		return nil, err

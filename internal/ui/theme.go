@@ -358,3 +358,6 @@ func closedMark() string { return dimStyle.Render(closedGlyph) }
 // number column. Keep any replacement single-width; oneCell guards the grid but
 // cannot shrink an over-wide glyph.
 const warnGlyph = "\uF421" // nerd: nf-oct-alert
+
+// rateGlyph marks the API-budget segment in the header.
+const rateGlyph = "◔" // nerd: nf-md-gauge

@@ -50,6 +50,7 @@ func main() {
 	m.SetMembersSource(gs)
 	m.SetMutationSource(gs)
 	m.SetActionsSource(gs)
+	m.SetRateSource(gs)
 	m.InitTheme()
 	m.Hydrate()
 

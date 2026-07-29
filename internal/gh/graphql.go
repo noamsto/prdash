@@ -21,14 +21,16 @@ const graphTimeout = 20 * time.Second
 // skipping the per-call `gh` subprocess. It implements PRSource (list),
 // DetailSource (batched per-PR detail), IssueSource (list),
 // IssueDetailSource (per-issue detail), ViewerSource (authenticated login),
-// MembersSource (assignable users), MutationSource (PR mutations), and
-// ActionsSource (Actions rerun/job-log REST calls). repo is owner/name.
+// MembersSource (assignable users), MutationSource (PR mutations),
+// ActionsSource (Actions rerun/job-log REST calls), and RateSource (rate-limit
+// budgets). repo is owner/name.
 type GraphSource struct {
 	repo    string
 	http    *http.Client     // for raw aliased detail queries and REST calls
 	client  *githubv4.Client // for the typed list query
 	token   string           // raw token; actions_rest.go's job-log redirect handling can't reuse http (see its doc comment)
 	apiBase string           // REST API origin override; "" ⇒ https://api.github.com. Set only by tests.
+	rate    *rateStore       // budgets scraped off responses; a pointer so every value copy shares one store
 }
 
 // NewGraphSource builds a GraphSource authenticated with token, as returned by
@@ -37,7 +39,9 @@ func NewGraphSource(token, repo string) GraphSource {
 	hc := oauth2.NewClient(context.Background(),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
 	hc.Timeout = graphTimeout
-	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc), token: token}
+	rate := newRateStore()
+	hc.Transport = &rateTransport{next: hc.Transport, store: rate}
+	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc), token: token, rate: rate}
 }
 
 func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
