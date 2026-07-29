@@ -1830,7 +1830,7 @@ func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 			labels[h.key] = append(labels[h.key], h.label)
 		}
 		for _, c := range []struct{ glyph, want string }{
-			{"▐", "selected"},
+			{"▌", "selected"},
 			{"▎", "focus"},
 			{"●", "CI running"}, // ● was also the old selection mark; it must mean one thing now
 		} {

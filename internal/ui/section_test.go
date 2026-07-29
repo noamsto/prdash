@@ -33,7 +33,7 @@ func TestRenderItemRowIsSingleLine(t *testing.T) {
 	if strings.Contains(row, "\n") {
 		t.Fatalf("dense row must be one line: %q", row)
 	}
-	for _, want := range []string{"#7", "hello world", "alice", "2d", "▐", "⚠", autoMergeGlyph(true)} {
+	for _, want := range []string{"#7", "hello world", "alice", "2d", "▌", "⚠", autoMergeGlyph(true)} {
 		if !strings.Contains(row, want) {
 			t.Fatalf("row missing %q: %q", want, row)
 		}
@@ -71,8 +71,8 @@ func TestPRSectionRenderRow(t *testing.T) {
 	}
 
 	sel := s.RenderRow(0, RowOpts{Width: 80, Selected: true})
-	if !strings.Contains(sel, "▐") {
-		t.Fatalf("selected row should carry the ▐ bar: %q", sel)
+	if !strings.Contains(sel, "▌") {
+		t.Fatalf("selected row should carry the ▌ bar: %q", sel)
 	}
 }
 
@@ -602,27 +602,29 @@ func TestRowColumnsAlignAcrossStates(t *testing.T) {
 	for _, rev := range []string{"APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""} {
 		for _, flag := range []string{"", failStyle.Render(warnGlyph)} {
 			for _, focused := range []bool{false, true} {
-				p := gh.PR{Number: 2959, Title: "t", State: "OPEN", HeadRefName: "br", ReviewDecision: rev}
-				p.Author.Login = "alice"
-				p.Labels = []gh.Label{{Name: "lbl", Color: "e08a2b"}}
-				s := NewPRSection("")
-				s.SetPRs([]gh.PR{p})
-				row := s.RenderRow(0, RowOpts{Width: 90, NumWidth: 5, TwoLine: true, Flag: flag, Focused: focused})
-				lines := strings.Split(ansi.Strip(row), "\n")
-				if len(lines) != 2 {
-					t.Fatalf("rev=%q flag=%v focused=%v: want 2 lines, got %d", rev, flag != "", focused, len(lines))
-				}
-				numCol := cell(lines[0], "#2959")
-				l2Col := lipgloss.Width(lines[1][:len(lines[1])-len(strings.TrimLeft(lines[1], " "))])
-				if numCol != l2Col {
-					t.Errorf("rev=%q flag=%v focused=%v: #number at col %d but line 2 at col %d",
-						rev, flag != "", focused, numCol, l2Col)
-				}
-				if want == -1 {
-					want = numCol
-				} else if numCol != want {
-					t.Errorf("rev=%q flag=%v focused=%v: #number at col %d, want %d (column grid drifted)",
-						rev, flag != "", focused, numCol, want)
+				for _, selected := range []bool{false, true} {
+					p := gh.PR{Number: 2959, Title: "t", State: "OPEN", HeadRefName: "br", ReviewDecision: rev}
+					p.Author.Login = "alice"
+					p.Labels = []gh.Label{{Name: "lbl", Color: "e08a2b"}}
+					s := NewPRSection("")
+					s.SetPRs([]gh.PR{p})
+					row := s.RenderRow(0, RowOpts{Width: 90, NumWidth: 5, TwoLine: true, Flag: flag, Focused: focused, Selected: selected})
+					lines := strings.Split(ansi.Strip(row), "\n")
+					if len(lines) != 2 {
+						t.Fatalf("rev=%q flag=%v focused=%v selected=%v: want 2 lines, got %d", rev, flag != "", focused, selected, len(lines))
+					}
+					numCol := cell(lines[0], "#2959")
+					l2Col := lipgloss.Width(lines[1][:len(lines[1])-len(strings.TrimLeft(lines[1], " "))])
+					if numCol != l2Col {
+						t.Errorf("rev=%q flag=%v focused=%v selected=%v: #number at col %d but line 2 at col %d",
+							rev, flag != "", focused, selected, numCol, l2Col)
+					}
+					if want == -1 {
+						want = numCol
+					} else if numCol != want {
+						t.Errorf("rev=%q flag=%v focused=%v selected=%v: #number at col %d, want %d (column grid drifted)",
+							rev, flag != "", focused, selected, numCol, want)
+					}
 				}
 			}
 		}
@@ -667,9 +669,9 @@ func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 		o             RowOpts
 		want, notWant string
 	}{
-		{"selected", RowOpts{Width: 80, Selected: true}, "▐", "▎"},
-		{"focused and selected", RowOpts{Width: 80, Focused: true, Selected: true}, "▐", "▎"},
-		{"focused", RowOpts{Width: 80, Focused: true}, "▎", "▐"},
+		{"selected", RowOpts{Width: 80, Selected: true}, "▌", "▎"},
+		{"focused and selected", RowOpts{Width: 80, Focused: true, Selected: true}, "▌", "▎"},
+		{"focused", RowOpts{Width: 80, Focused: true}, "▎", "▌"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -682,7 +684,7 @@ func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 			}
 		})
 	}
-	if got := row(RowOpts{Width: 80}); strings.Contains(got, "▐") || strings.Contains(got, "▎") {
+	if got := row(RowOpts{Width: 80}); strings.Contains(got, "▌") || strings.Contains(got, "▎") {
 		t.Errorf("a row that is neither focused nor selected must have no bar: %q", got)
 	}
 }

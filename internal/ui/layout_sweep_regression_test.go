@@ -56,12 +56,14 @@ func TestDenseRowFillsWidthAcrossWidthSweep(t *testing.T) {
 	for _, w := range []int{40, 52, 64, 80, 100, 120, 160, 200} {
 		for i := 0; i < ps.Len(); i++ {
 			for _, focused := range []bool{false, true} {
-				row := ps.RenderRow(i, RowOpts{Width: w, NumWidth: nw, Focused: focused, Flag: flag})
-				if strings.Contains(row, "\n") {
-					t.Fatalf("w=%d row %d focused=%v is not a single line: %q", w, i, focused, row)
-				}
-				if got := lipgloss.Width(row); got != w {
-					t.Errorf("w=%d row %d focused=%v: rendered width %d, want exactly %d (columns won't fill/align)", w, i, focused, got, w)
+				for _, selected := range []bool{false, true} {
+					row := ps.RenderRow(i, RowOpts{Width: w, NumWidth: nw, Focused: focused, Selected: selected, Flag: flag})
+					if strings.Contains(row, "\n") {
+						t.Fatalf("w=%d row %d focused=%v selected=%v is not a single line: %q", w, i, focused, selected, row)
+					}
+					if got := lipgloss.Width(row); got != w {
+						t.Errorf("w=%d row %d focused=%v selected=%v: rendered width %d, want exactly %d (columns won't fill/align)", w, i, focused, selected, got, w)
+					}
 				}
 			}
 		}
