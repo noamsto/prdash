@@ -818,8 +818,8 @@ func TestLaunchReusesFreshCache(t *testing.T) {
 			cmd()
 		}
 	}
-	if cs.calls != 0 {
-		t.Fatalf("fresh cache should suppress all launch fetches, got %d source calls", cs.calls)
+	if n := cs.calls.Load(); n != 0 {
+		t.Fatalf("fresh cache should suppress all launch fetches, got %d source calls", n)
 	}
 }
 
@@ -833,8 +833,8 @@ func TestLaunchFetchesWhenCacheCold(t *testing.T) {
 		}
 	}
 	// sections (review+is:open) + issues + members + viewer = 5 source fetches.
-	if cs.calls != 5 {
-		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 5", cs.calls)
+	if n := cs.calls.Load(); n != 5 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 5", n)
 	}
 }
 
