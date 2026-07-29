@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -431,20 +432,21 @@ func stubBackends(m *Model) {
 }
 
 // countingSource records how many source fetches a command tree makes, so a
-// test can assert whether a fresh cache suppressed the launch fetches.
-type countingSource struct{ calls int }
+// test can assert whether a fresh cache suppressed the launch fetches. The
+// launch fan-out runs its fetches concurrently, so the counter is atomic.
+type countingSource struct{ calls atomic.Int64 }
 
 func (c *countingSource) FetchPRs(string, int) ([]gh.PR, []byte, error) {
-	c.calls++
+	c.calls.Add(1)
 	return nil, nil, nil
 }
 func (c *countingSource) FetchIssues(string, int) ([]gh.Issue, []byte, error) {
-	c.calls++
+	c.calls.Add(1)
 	return nil, nil, nil
 }
-func (c *countingSource) FetchViewer() (string, error) { c.calls++; return "", nil }
+func (c *countingSource) FetchViewer() (string, error) { c.calls.Add(1); return "", nil }
 func (c *countingSource) FetchAssignableUsers() ([]gh.User, []byte, error) {
-	c.calls++
+	c.calls.Add(1)
 	return nil, nil, nil
 }
 
