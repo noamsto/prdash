@@ -359,13 +359,11 @@ func closedMark() string { return dimStyle.Render(closedGlyph) }
 // cannot shrink an over-wide glyph.
 const warnGlyph = "\uF421" // nerd: nf-oct-alert
 
-// focusBarGlyph and selBarGlyph share the row's single leftmost cell. The bar
-// encodes multi-selection, and marks the cursor row only when that row is not
-// selected — on the board row, focus also reads via the row background and a
-// bold title, selection has nothing else. selBarGlyph is the heavier block on
-// purpose: selection is what an action fires against, so it must read by
-// weight and not by hue alone.
-// Both must stay single-width; see warnGlyph above.
+// focusBarGlyph and selBarGlyph share the row's single leftmost cell;
+// renderItemRow resolves which one wins. selBarGlyph is the heavier block on
+// purpose: selection must read by weight and not by hue alone. Both are
+// left-flush so they stay co-linear and leave the empty half on the CI side,
+// and both must stay single-width — see warnGlyph above.
 const (
 	focusBarGlyph = "▎" // U+258E left one-quarter block
 	selBarGlyph   = "▌" // U+258C left half block
