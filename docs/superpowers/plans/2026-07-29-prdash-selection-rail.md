@@ -21,6 +21,11 @@
 - `internal/ui/picker.go:97` keeps its `● ` marker. Out of scope — the picker has no status-glyph cluster to collide with.
 - Do **not** touch the row cache (`rowKey`, `internal/ui/prlist.go:443`) or the header's `N selected` counter (`internal/ui/prlist.go:2040`). `rowKey` already keys on both `focused` and `selected`, so both states invalidate cached rows correctly — no change is needed and any change here is out of scope.
 - Run tests with `go test ./internal/ui/`. Full suite: `go test ./...`.
+- **Pre-existing baseline — do not fix, it is out of scope.** `main` already carries these, verified on the main checkout before this branch started:
+  - `gofmt -l internal/ui/` reports `internal/ui/preview.go` and `internal/ui/threads_render_test.go`.
+  - `golangci-lint run ./internal/ui/` reports 2 staticcheck `QF1012` findings, at `internal/ui/expanded.go:117` and `internal/ui/expanded.go:133`.
+
+  Scope every formatter and linter check to the files your task actually changed, and judge "clean" against this baseline. Reformatting or refactoring these files is scope creep — leave them alone. Note that `expanded.go` is a Task 3 file, so Task 3 will see those 2 findings; they are not yours.
 
 ---
 
@@ -411,10 +416,10 @@ Run:
 
 ```bash
 go test ./internal/ui/
-gofmt -l internal/ui/
+gofmt -l internal/ui/prlist.go internal/ui/prlist_test.go
 ```
 
-Expected: `ok`, and no output from `gofmt -l`.
+Expected: `ok`, and no output from `gofmt -l`. The check is scoped to this task's two files on purpose — `gofmt -l internal/ui/` would also list two files this branch never touched (see the pre-existing baseline in Global Constraints).
 
 - [ ] **Step 6: Commit**
 
@@ -483,11 +488,11 @@ Run:
 
 ```bash
 go test ./...
-gofmt -l internal/
-golangci-lint run ./...
+gofmt -l internal/ui/expanded.go internal/ui/logview.go
+golangci-lint run ./internal/ui/
 ```
 
-Expected: tests `ok`, no `gofmt -l` output, no golangci-lint issues.
+Expected: tests `ok`, no `gofmt -l` output, and golangci-lint reporting **exactly the 2 pre-existing staticcheck `QF1012` findings** at `internal/ui/expanded.go:117` and `internal/ui/expanded.go:133` — no more, no fewer. Those two predate this branch (see the pre-existing baseline in Global Constraints). Do **not** fix them: they sit in a file this task touches, but at unrelated lines, and fixing them is scope creep. If a *third* finding appears, or one appears in `logview.go`, that one is yours.
 
 - [ ] **Step 5: Commit**
 
