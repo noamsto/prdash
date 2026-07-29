@@ -342,7 +342,7 @@ func oneCell(s string) string {
 
 // renderItemRow renders a single-line or two-line row.
 //
-// Single-line (default): ‹bar›‹mark› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+// Single-line (default): ‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
 //
 // Two-line (when o.TwoLine is set and the row has labels or a sub value):
 // Line 1: same single-line layout above.
@@ -352,12 +352,15 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
 	}
-	bar, mark := " ", " "
-	if o.Focused {
-		bar = focusBarStyle.Render("▎")
-	}
-	if o.Selected {
-		mark = selMarkStyle.Render("●")
+	// One cell, two states that want it: selection wins, because it is what an
+	// action fires against. Focus still reads via the row background and the bold
+	// title further down.
+	bar := " "
+	switch {
+	case o.Selected:
+		bar = selMarkStyle.Render(selBarGlyph)
+	case o.Focused:
+		bar = focusBarStyle.Render(focusBarGlyph)
 	}
 	if lipgloss.Width(ci) == 0 {
 		ci = dimStyle.Render("·")
@@ -370,9 +373,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if o.NumWidth > 0 {
 		numCell = padNum(num, o.NumWidth)
 	}
-	// No separator after mark: it is blank on all but multi-selected rows, so it
-	// already reads as spacing — and dropping it pulls every row one cell left.
-	gutter := bar + mark + ci + " " + review + " " + auto + " " + flag + " "
+	gutter := bar + ci + " " + review + " " + auto + " " + flag + " "
 	left := gutter + numStyle.Render(numCell) + " "
 	// Two-line rows lead line 2 with the author; single-line keeps it beside age.
 	right := dimStyle.Render(fmt.Sprintf("  %3s", age))

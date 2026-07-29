@@ -267,7 +267,7 @@ func (m *Model) renderLogBody(w int) string {
 	for i, styled := range m.logStyled {
 		gutter := "  "
 		if i == m.logCursor {
-			gutter = focusBarStyle.Render("▎") + " "
+			gutter = focusBarStyle.Render(focusBarGlyph) + " "
 		}
 		b.WriteString(gutter + styled + "\n")
 	}

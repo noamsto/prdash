@@ -18,7 +18,7 @@ type Theme struct {
 	Issue   string // peach coral — Issues-board accent; shares Draft's hex but drafts are PR-only, so they never co-occur
 	Header  string // mauve — top header + repo wordmark, the app identity
 	Focus   string // sky — cursor-row bar
-	Select  string // pink — multi-select ●
+	Select  string // pink — multi-select bar ▌
 	Text    string // row titles, body
 	Meta    string // age, labels, dim hints
 	Rule    string // dividers, borders
@@ -358,6 +358,16 @@ func closedMark() string { return dimStyle.Render(closedGlyph) }
 // number column. Keep any replacement single-width; oneCell guards the grid but
 // cannot shrink an over-wide glyph.
 const warnGlyph = "\uF421" // nerd: nf-oct-alert
+
+// focusBarGlyph and selBarGlyph share the row's single leftmost cell;
+// renderItemRow resolves which one wins. selBarGlyph is the heavier block on
+// purpose: selection must read by weight and not by hue alone. Both are
+// left-flush so they stay co-linear and leave the empty half on the CI side,
+// and both must stay single-width — see warnGlyph above.
+const (
+	focusBarGlyph = "▎" // U+258E left one-quarter block
+	selBarGlyph   = "▌" // U+258C left half block
+)
 
 // rateGlyph marks the API-budget segment in the header.
 const rateGlyph = "◔" // nerd: nf-md-gauge

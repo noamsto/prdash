@@ -2142,7 +2142,7 @@ func (m Model) legendGroups() []legendGroup {
 			{"✓", "CI pass"}, {"✗", "CI fail"}, {"●", "CI running"}, {"·", "no CI"},
 			{mergedGlyph, "merged"}, {closedGlyph, "closed"},
 			{warnGlyph, "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
-			{"▎", "focus"}, {"●", "selected"}, {"[draft]", "dimmed"},
+			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"}, {"[draft]", "dimmed"},
 		}},
 	}
 

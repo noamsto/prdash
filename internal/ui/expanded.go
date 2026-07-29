@@ -95,7 +95,7 @@ func renderChecks(pr gh.PR, w, cursor int) string {
 		gutter := "  "
 		st := titleStyle
 		if i == cursor {
-			gutter = focusBarStyle.Render("▎") + " "
+			gutter = focusBarStyle.Render(focusBarGlyph) + " "
 			st = st.Bold(true)
 		}
 		b.WriteString(gutter + ciGlyph(c.Result()) + " " + st.Render(truncate(c.Label(), w-4)) + "\n")
