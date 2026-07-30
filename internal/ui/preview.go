@@ -419,7 +419,7 @@ func ciLine(pr gh.PR) string {
 		}
 		return s
 	case "pending":
-		return pendStyle.Render("● checks running")
+		return pendStyle.Render(ciRunningGlyph + " checks running")
 	default: // pass / none — the row glyph carries it; keep the quick view calm
 		return ""
 	}

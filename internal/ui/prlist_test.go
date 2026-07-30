@@ -1809,7 +1809,7 @@ func TestEscTwoStageOnIssueBoard(t *testing.T) {
 
 // TestLegendGlyphsAreUnambiguous: the legend explains glyphs, so listing one glyph
 // under two meanings makes it useless. It shipped with ● as both "CI running" and
-// "selected"; the selection bar freed ●, and this pins that it stays free.
+// "selected"; this pins that the row markers each keep one meaning.
 func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 	for _, mode := range []string{"pr", "issue"} {
 		// width/height are set because legendGroups reaches computeLayout for the
@@ -1831,7 +1831,7 @@ func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 		for _, c := range []struct{ glyph, want string }{
 			{"▌", "selected"},
 			{"▎", "focus"},
-			{"●", "CI running"}, // ● was also the old selection mark; it must mean one thing now
+			{ciRunningGlyph, "CI running"},
 		} {
 			if got := labels[c.glyph]; len(got) != 1 || got[0] != c.want {
 				t.Errorf("mode %q: want %s labelled exactly [%s], got %v", mode, c.glyph, c.want, got)

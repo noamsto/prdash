@@ -30,7 +30,7 @@ func TestRenderCardShowsFailingAndRunningGlyphs(t *testing.T) {
 	if !strings.Contains(out, "✗ lint") {
 		t.Fatalf("failing glyph/label missing: %q", out)
 	}
-	if !strings.Contains(out, "● build") {
+	if !strings.Contains(out, ciRunningGlyph+" build") {
 		t.Fatalf("running glyph/label missing: %q", out)
 	}
 }
@@ -39,7 +39,7 @@ func TestRenderCardRunningOnlyHasNoFailGlyph(t *testing.T) {
 	c := triage.Card{Kind: triage.KindChecksRunning, Headline: "Checks running…",
 		Running: []string{"build"}}
 	out := renderCard(c, 40)
-	if !strings.Contains(out, "● build") {
+	if !strings.Contains(out, ciRunningGlyph+" build") {
 		t.Fatalf("running glyph/label missing: %q", out)
 	}
 	if strings.Contains(out, "✗") {

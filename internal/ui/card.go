@@ -14,7 +14,7 @@ func cardGlyph(k triage.Kind) string {
 	case triage.KindChecksFailing, triage.KindConflict, triage.KindChangesRequested:
 		return failStyle.Render("✗")
 	case triage.KindChecksRunning, triage.KindPending:
-		return pendStyle.Render("●")
+		return pendStyle.Render(ciRunningGlyph)
 	default:
 		return dimStyle.Render("•")
 	}
@@ -32,7 +32,7 @@ func renderCard(c triage.Card, width int) string {
 		b.WriteString("  " + failStyle.Render("✗ "+truncate(l, width-4)) + "\n")
 	}
 	for _, l := range c.Running {
-		b.WriteString("  " + pendStyle.Render("● "+truncate(l, width-4)) + "\n")
+		b.WriteString("  " + pendStyle.Render(ciRunningGlyph+" "+truncate(l, width-4)) + "\n")
 	}
 	if c.ActionKey != "" {
 		b.WriteString(dimStyle.Render(c.ActionLabel+" → ") + accentStyle.Render(c.ActionKey) + "\n")

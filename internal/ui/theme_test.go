@@ -9,7 +9,7 @@ import (
 )
 
 func TestCIGlyph(t *testing.T) {
-	cases := map[string]string{"pass": "✓", "fail": "✗", "pending": "●", "none": "·"}
+	cases := map[string]string{"pass": "✓", "fail": "✗", "pending": ciRunningGlyph, "none": "·"}
 	for state, want := range cases {
 		if got := ciGlyph(state); !strings.Contains(got, want) {
 			t.Errorf("ciGlyph(%q) = %q, want it to contain %q", state, got, want)
