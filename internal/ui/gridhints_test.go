@@ -8,11 +8,9 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// gridHintsRef is the pre-refactor gridHints, kept verbatim as the reference
-// implementation. Phase 1 of the board-render hot path replaces its
-// styled-string measuring with arithmetic, and must not change a single byte of
-// output; these tests assert that by differential comparison rather than frozen
-// goldens, so they keep working when the theme changes.
+// gridHintsRef is the pre-refactor gridHints, kept verbatim so the tests below
+// can assert byte-equality differentially rather than against frozen goldens —
+// which keeps them working when the theme changes.
 func gridHintsRef(hints []keyHint, width int, alignKeys bool) []string {
 	if len(hints) == 0 {
 		return nil
@@ -123,42 +121,25 @@ func TestPanelContentRowsMatchesReferenceAcrossWidths(t *testing.T) {
 	}
 }
 
-// The benchmarks below are a controlled A/B: old and new run in the same process,
-// on the same machine state, so they are immune to the thermal and load drift
-// that makes whole-frame ns/op comparisons across separate runs unreliable.
-//
-// They deliberately sweep rather than pin a single (hints, width, alignKeys)
-// point: the column count — and therefore how much padding work a row does —
-// varies with width, so a single width could flatter or penalise either
-// implementation. benchGridCases covers both real hint lists in both align modes
-// across narrow, docked, and wide panels.
-func benchGridCases() []struct {
+// gridCase is one benchmark point. The benchmarks pair old against new in a
+// single process so they share machine state — whole-frame ns/op compared across
+// separate runs drifts too much with load to be usable.
+type gridCase struct {
 	name      string
 	hints     []keyHint
 	width     int
 	alignKeys bool
-} {
+}
+
+// benchGridCases sweeps width because the column count, and so how much padding
+// each row does, varies with it — a single width could flatter either side.
+func benchGridCases() []gridCase {
 	nav, acts := navHintsFor("pr"), defaultActionHints()
-	var cases []struct {
-		name      string
-		hints     []keyHint
-		width     int
-		alignKeys bool
-	}
+	var cases []gridCase
 	for _, w := range []int{40, 88, 160} {
 		cases = append(cases,
-			struct {
-				name      string
-				hints     []keyHint
-				width     int
-				alignKeys bool
-			}{fmt.Sprintf("nav/w%d", w), nav, w, false},
-			struct {
-				name      string
-				hints     []keyHint
-				width     int
-				alignKeys bool
-			}{fmt.Sprintf("actions/w%d", w), acts, w, true},
+			gridCase{fmt.Sprintf("nav/w%d", w), nav, w, false},
+			gridCase{fmt.Sprintf("actions/w%d", w), acts, w, true},
 		)
 	}
 	return cases
@@ -204,10 +185,9 @@ func BenchmarkPanelContentRows(b *testing.B) {
 	}
 }
 
-// TestHintCellWidthIsStyleIndependent pins the assumption the whole refactor
-// rests on: ANSI escape sequences carry zero display width, so a hint cell's
-// width is computable from the plain key and label without styling them. If this
-// ever fails, the arithmetic in gridLayout is wrong and columns will misalign.
+// TestHintCellWidthIsStyleIndependent pins gridLayout's premise: ANSI carries
+// zero display width, so a cell's width follows from the plain key and label. If
+// this fails the arithmetic is wrong and panel columns will misalign.
 func TestHintCellWidthIsStyleIndependent(t *testing.T) {
 	for name, hints := range hintSets() {
 		for _, alignKeys := range []bool{false, true} {

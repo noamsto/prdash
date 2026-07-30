@@ -12,20 +12,13 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
-// richPRs builds a board fixture with the per-row detail real PRs carry, which
-// benchBoard's fixture omits entirely: it sets only Number/Title/State/Body/Author,
-// so every row skips labelChip (WCAG contrast math per label), ciGlyph,
-// reviewStateLabel and autoMergeGlyph, and every title measures the same width.
+// richPRs carries the per-row detail benchBoard's fixture omits — it sets only
+// Number/Title/State/Body/Author, so every row there skips labelChip (WCAG
+// contrast math per label), ciGlyph, reviewStateLabel and autoMergeGlyph, and
+// every title measures the same width.
 //
-// That omission biases any frame-level profile: the hint/legend panel costs the
-// same regardless of PR content, so on bare rows it looks like a larger share of
-// the frame than it is in practice. Comparing BenchmarkParkedRender against
-// BenchmarkParkedRenderRich is what tells us whether a hint-panel optimisation
-// matters on realistic data or only on the synthetic fixture.
-//
-// Every PR stays OPEN on purpose: mixing MERGED/CLOSED would trip the state
-// filter and change how many rows render, confounding "richer rows" with "fewer
-// rows". Only content richness varies.
+// Every PR stays OPEN deliberately: mixing MERGED/CLOSED would trip the state
+// filter and change how many rows render, confounding richer rows with fewer rows.
 func richPRs(n int) []gh.PR {
 	authors := []string{
 		"octocat", "dependabot[bot]", "renovate[bot]", "a-longer-username",
@@ -99,13 +92,9 @@ func richBoard(b *testing.B) Model {
 	return m
 }
 
-// BenchmarkParkedRenderRich is BenchmarkParkedRender on realistic rows.
-//
-// The two come out equal, and that is the informative result: rows are rendered
-// into m.rowText at setPRs/applyFilter time — before b.ResetTimer — and render()
-// reuses them, so a parked frame excludes per-row cost by design. The remaining
-// per-frame cost is genuinely non-row work (boxes, panels, hints, legend), which
-// is why a hint-panel optimisation shows up at frame level at all.
+// BenchmarkParkedRenderRich is BenchmarkParkedRender on realistic rows. It comes
+// out equal to it, because rows render into m.rowText at setPRs/applyFilter time
+// and render() reuses them — a parked frame is non-row work only.
 func BenchmarkParkedRenderRich(b *testing.B) {
 	m := richBoard(b)
 	b.ResetTimer()
@@ -114,10 +103,8 @@ func BenchmarkParkedRenderRich(b *testing.B) {
 	}
 }
 
-// BenchmarkScrollRenderRich is where row richness actually bites: a cursor move
-// re-renders the rows whose focus flipped, so realistic labels, CI rollups and
-// review states are paid per keystroke. Compared against BenchmarkScrollRender it
-// shows whether a hint-panel win holds up once rows cost what they really cost.
+// BenchmarkScrollRenderRich is where row richness bites: a cursor move re-renders
+// the rows whose focus flipped, so labels and rollups are paid per keystroke.
 func BenchmarkScrollRenderRich(b *testing.B) {
 	m := richBoard(b)
 	b.ResetTimer()
