@@ -123,6 +123,87 @@ func TestPanelContentRowsMatchesReferenceAcrossWidths(t *testing.T) {
 	}
 }
 
+// The benchmarks below are a controlled A/B: old and new run in the same process,
+// on the same machine state, so they are immune to the thermal and load drift
+// that makes whole-frame ns/op comparisons across separate runs unreliable.
+//
+// They deliberately sweep rather than pin a single (hints, width, alignKeys)
+// point: the column count — and therefore how much padding work a row does —
+// varies with width, so a single width could flatter or penalise either
+// implementation. benchGridCases covers both real hint lists in both align modes
+// across narrow, docked, and wide panels.
+func benchGridCases() []struct {
+	name      string
+	hints     []keyHint
+	width     int
+	alignKeys bool
+} {
+	nav, acts := navHintsFor("pr"), defaultActionHints()
+	var cases []struct {
+		name      string
+		hints     []keyHint
+		width     int
+		alignKeys bool
+	}
+	for _, w := range []int{40, 88, 160} {
+		cases = append(cases,
+			struct {
+				name      string
+				hints     []keyHint
+				width     int
+				alignKeys bool
+			}{fmt.Sprintf("nav/w%d", w), nav, w, false},
+			struct {
+				name      string
+				hints     []keyHint
+				width     int
+				alignKeys bool
+			}{fmt.Sprintf("actions/w%d", w), acts, w, true},
+		)
+	}
+	return cases
+}
+
+func BenchmarkGridHintsRef(b *testing.B) {
+	for _, c := range benchGridCases() {
+		b.Run(c.name, func(b *testing.B) {
+			for range b.N {
+				_ = gridHintsRef(c.hints, c.width, c.alignKeys)
+			}
+		})
+	}
+}
+
+func BenchmarkGridHints(b *testing.B) {
+	for _, c := range benchGridCases() {
+		b.Run(c.name, func(b *testing.B) {
+			for range b.N {
+				_ = gridHints(c.hints, c.width, c.alignKeys)
+			}
+		})
+	}
+}
+
+func BenchmarkPanelContentRowsRef(b *testing.B) {
+	for _, w := range []int{80, 180} {
+		b.Run(fmt.Sprintf("w%d", w), func(b *testing.B) {
+			for range b.N {
+				_ = panelContentRowsRef(w)
+			}
+		})
+	}
+}
+
+func BenchmarkPanelContentRows(b *testing.B) {
+	for _, w := range []int{80, 180} {
+		b.Run(fmt.Sprintf("w%d", w), func(b *testing.B) {
+			for range b.N {
+				_ = panelContentRows(w)
+			}
+		})
+	}
+}
+
 // TestHintCellWidthIsStyleIndependent pins the assumption the whole refactor
 // rests on: ANSI escape sequences carry zero display width, so a hint cell's
 // width is computable from the plain key and label without styling them. If this

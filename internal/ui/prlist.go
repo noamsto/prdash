@@ -2294,46 +2294,75 @@ func navHintsFor(mode string) []keyHint {
 	return base
 }
 
+// hintGutter is the horizontal space between hint cells.
+const hintGutter = 3
+
+// hintCellWidth is the display width of the cell gridHints renders for h, given
+// the key-column width keyW. It is computed rather than measured: the styles add
+// only SGR sequences, which carry zero display width, so rendering the cell and
+// then calling lipgloss.Width would strip the very ANSI Style.Render had just
+// added. That round-trip dominated the frame — see
+// docs/superpowers/specs/2026-07-30-board-render-hot-path-design.md.
+//
+// The +1 is the leading space in statusBarStyle.Render(" "+h.label); if that
+// literal changes, this must change with it. TestHintCellWidthIsStyleIndependent
+// fails if the two ever diverge.
+func hintCellWidth(h keyHint, keyW int) int {
+	return max(keyW, lipgloss.Width(h.key)) + 1 + lipgloss.Width(h.label)
+}
+
+// gridLayout computes the hint-grid geometry without building any strings, so
+// gridHints and panelContentRows can share it. cellW includes the gutter;
+// cellWidths holds each hint's own unpadded cell width, in hints order.
+func gridLayout(hints []keyHint, width int, alignKeys bool) (cols, cellW, keyW int, cellWidths []int) {
+	// alignKeys pads every key to the widest so the labels line up in a column.
+	if alignKeys {
+		for _, h := range hints {
+			keyW = max(keyW, lipgloss.Width(h.key))
+		}
+	}
+	cellWidths = make([]int, len(hints))
+	for i, h := range hints {
+		cellWidths[i] = hintCellWidth(h, keyW)
+		cellW = max(cellW, cellWidths[i])
+	}
+	cellW += hintGutter
+	return max(1, (width+hintGutter)/cellW), cellW, keyW, cellWidths
+}
+
+// gridRows is how many rows gridHints emits for n hints packed cols wide. Zero
+// for no hints, matching gridHints' nil return.
+func gridRows(n, cols int) int {
+	if n == 0 {
+		return 0
+	}
+	return (n + cols - 1) / cols
+}
+
 // gridHints lays hints into aligned columns: every cell is padded to the widest
 // hint's width so columns line up vertically across rows (a greedy pack leaves
 // a ragged, cramped-looking grid). Reflows to as many columns as fit in width.
+// Each hint is styled exactly once; widths come from gridLayout's arithmetic.
 func gridHints(hints []keyHint, width int, alignKeys bool) []string {
 	if len(hints) == 0 {
 		return nil
 	}
-	// alignKeys pads every key to the widest so the labels line up in a column.
-	keyW := 0
-	if alignKeys {
-		for _, h := range hints {
-			if w := lipgloss.Width(h.key); w > keyW {
-				keyW = w
-			}
-		}
-	}
-	render := func(h keyHint) string {
+	cols, cellW, keyW, cellWidths := gridLayout(hints, width, alignKeys)
+	cells := make([]string, len(hints))
+	for i, h := range hints {
 		key := accentStyle.Render(h.key)
 		if pad := keyW - lipgloss.Width(h.key); pad > 0 {
 			key += strings.Repeat(" ", pad)
 		}
-		return key + statusBarStyle.Render(" "+h.label)
+		cells[i] = key + statusBarStyle.Render(" "+h.label)
 	}
-	const gutter = 3
-	cellW := 0
-	for _, h := range hints {
-		if w := lipgloss.Width(render(h)); w > cellW {
-			cellW = w
-		}
-	}
-	cellW += gutter
-	cols := max(1, (width+gutter)/cellW)
-	var lines []string
+	lines := make([]string, 0, gridRows(len(hints), cols))
 	for i := 0; i < len(hints); i += cols {
 		var b strings.Builder
 		for j := i; j < i+cols && j < len(hints); j++ {
-			s := render(hints[j])
-			b.WriteString(s)
+			b.WriteString(cells[j])
 			if j < i+cols-1 && j < len(hints)-1 { // pad every cell but the row's last
-				b.WriteString(strings.Repeat(" ", cellW-lipgloss.Width(s)))
+				b.WriteString(strings.Repeat(" ", cellW-cellWidths[j]))
 			}
 		}
 		lines = append(lines, b.String())
@@ -2382,9 +2411,14 @@ func panelBody(innerW int, keyHints []keyHint, actionsLabel string, acts []keyHi
 // Reserved against the full action set (PR mode, the superset of nav hints) so
 // the height is stable when batch mode hides the single-only actions, and
 // doesn't jump when switching to issue mode's shorter hint list.
+// Derives the row counts arithmetically — building both grids just to call len
+// on them cost two full styled renders of every hint, per call.
 func panelContentRows(innerW int) int {
 	lw, rw := panelSplit(innerW)
-	return max(1+len(gridHints(navHintsFor("pr"), lw, false)), 1+len(gridHints(defaultActionHints(), rw, true)))
+	nav, acts := navHintsFor("pr"), defaultActionHints()
+	navCols, _, _, _ := gridLayout(nav, lw, false)
+	actCols, _, _, _ := gridLayout(acts, rw, true)
+	return max(1+gridRows(len(nav), navCols), 1+gridRows(len(acts), actCols))
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
