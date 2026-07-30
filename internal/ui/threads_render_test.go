@@ -96,4 +96,3 @@ func TestRenderFileThreadsWithoutHunk(t *testing.T) {
 		t.Errorf("body missing: %q", out)
 	}
 }
-

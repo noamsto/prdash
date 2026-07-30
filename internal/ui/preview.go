@@ -68,7 +68,6 @@ func (m Model) fetchThreadsCmd(number int) tea.Cmd {
 	}
 }
 
-
 // fetchIssueDetailCmd lazily loads the selected issue's body through the
 // issue-detail source.
 func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
