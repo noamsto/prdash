@@ -43,6 +43,7 @@ func main() {
 	gs := gh.NewGraphSource(tok, repo)
 	m.SetPRSource(gs)
 	m.SetDetailSource(gs)
+	m.SetChecksSource(gs)
 	m.SetThreadsSource(gs)
 	m.SetIssueSource(gs)
 	m.SetIssueDetailSource(gs)
