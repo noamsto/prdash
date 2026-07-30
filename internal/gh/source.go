@@ -22,12 +22,6 @@ type ChecksSource interface {
 	FetchChecks(numbers []int) (checks map[int][]Check, err error)
 }
 
-// ThreadsSource fetches a PR's inline review threads. The []byte is the raw
-// GraphQL response, which ParseReviewThreads reads back on the hydrate path.
-type ThreadsSource interface {
-	FetchReviewThreads(number int) (threads []ReviewThread, raw []byte, err error)
-}
-
 // IssueSource fetches an issue list for a search filter, mirroring PRSource:
 // the []byte is the marshalled []Issue for the cache hydrate round-trip.
 type IssueSource interface {

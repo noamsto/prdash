@@ -44,7 +44,6 @@ type Model struct {
 	prSource          gh.PRSource          // PR-list backend (githubv4)
 	detailSource      gh.DetailSource      // batched per-PR detail backend
 	checksSource      gh.ChecksSource      // rollup-only backend for the live-checks poll
-	threadsSource     gh.ThreadsSource     // per-PR inline review-threads backend
 	issueSource       gh.IssueSource       // issue-list backend
 	issueDetailSource gh.IssueDetailSource // per-issue detail backend
 	viewerSource      gh.ViewerSource      // viewer-login backend
@@ -78,13 +77,11 @@ type Model struct {
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
-	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
-	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
-	ciRerun           map[int]time.Time         // PR number → stamp time when its checks-in-progress override was applied
-	mergedSticky      map[int]gh.PR             // PRs prdash merged this session, kept on the open board until ctrl+r
-	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
-	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
-	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
+	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
+	mergedSticky      map[int]gh.PR       // PRs prdash merged this session, kept on the open board until ctrl+r
+	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
 	previewN          int
 	expanded          bool
@@ -140,7 +137,6 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
 		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
-		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
 		logCache:  map[string][]logStep{},
@@ -158,9 +154,6 @@ func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 // SetChecksSource installs the rollup-only backend the live-checks poll uses
 // instead of refetching the whole list.
 func (m *Model) SetChecksSource(s gh.ChecksSource) { m.checksSource = s }
-
-// SetThreadsSource installs the per-PR inline review-threads backend (githubv4).
-func (m *Model) SetThreadsSource(s gh.ThreadsSource) { m.threadsSource = s }
 
 // SetIssueSource installs the issue-list backend (githubv4).
 func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
@@ -755,7 +748,6 @@ func (m *Model) hydrate() bool {
 		}
 		m.setSections(rev, open, m.viewerLogin)
 		m.hydrateDetail()
-		m.hydrateThreads()
 		return true
 	}
 	prs, ok := m.cachedPRs(m.filter, defaultLimit)
@@ -764,7 +756,6 @@ func (m *Model) hydrate() bool {
 	}
 	m.setPRs(prs)
 	m.hydrateDetail()
-	m.hydrateThreads()
 	return true
 }
 
@@ -794,34 +785,6 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		m.detail[num] = d
-	}
-}
-
-// hydrateThreads paints each shown PR's review threads from the disk cache
-// (leaving threadsFresh false, so the live fetch still revalidates).
-func (m *Model) hydrateThreads() {
-	if m.cache == nil {
-		return
-	}
-	ps, ok := m.section.(*PRSection)
-	if !ok {
-		return
-	}
-	for i := 0; i < ps.Len(); i++ {
-		num := ps.prAt(i).Number
-		if _, ok := m.threads[num]; ok {
-			continue
-		}
-		e, hit := m.cache.Get(threadsKey(m.repo, num))
-		if !hit {
-			continue
-		}
-		ts, err := gh.ParseReviewThreads(e.Rows)
-		if err != nil {
-			slog.Debug("threads cache unmarshal failed", "err", err)
-			continue
-		}
-		m.threads[num] = ts
 	}
 }
 
@@ -1002,7 +965,13 @@ const (
 const launchFreshTTL = 60 * time.Second
 
 func (m Model) cacheFresh(key string) bool {
-	return m.cache != nil && m.cache.Fresh(key, launchFreshTTL)
+	return m.cacheFreshFor(key, launchFreshTTL)
+}
+
+// cacheFreshFor is cacheFresh with an explicit window, for the callers that tier
+// freshness by whose PR it is (see detailFreshTTL).
+func (m Model) cacheFreshFor(key string, ttl time.Duration) bool {
+	return m.cache != nil && m.cache.Fresh(key, ttl)
 }
 
 func checksPollTick(d time.Duration) tea.Cmd {
@@ -1416,14 +1385,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
 		}
 		m.repaintActive() // fold the fresh detail into the active view without losing place
-		return m, nil
-	case threadsMsg:
-		m.threads[msg.number] = msg.threads
-		m.threadsFresh[msg.number] = true
-		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(threadsKey(m.repo, msg.number), msg.raw)
-		}
-		m.repaintActive()
 		return m, nil
 	case detailsBatchMsg:
 		for num, d := range msg.details {

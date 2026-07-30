@@ -463,21 +463,23 @@ func TestPreviewPaneOverviewPrefillsWhenNotCached(t *testing.T) {
 	}
 }
 
-func TestThreadsKeyIsRepoScoped(t *testing.T) {
-	a := threadsKey("noamsto/prdash", 7)
-	b := threadsKey("noamsto/other", 7)
+// Threads now ride the detail cache, so its key is what must not collide across
+// repos — #7 in one repo painting #7's review comments in another.
+func TestDetailKeyIsRepoScoped(t *testing.T) {
+	a := detailKey("noamsto/prdash", 7)
+	b := detailKey("noamsto/other", 7)
 	if a == b {
-		t.Fatal("threadsKey must differ across repos")
+		t.Fatal("detailKey must differ across repos")
 	}
 }
 
-func TestThreadsMsgStores(t *testing.T) {
+func TestDetailMsgStoresReviewThreads(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
-	ts := []gh.ReviewThread{{Path: "main.go", Line: 10}}
-	out, _ := m.Update(threadsMsg{number: 7, threads: ts})
+	d := gh.PRDetail{ReviewThreads: []gh.ReviewThread{{Path: "main.go", Line: 10}}}
+	out, _ := m.Update(prDetailMsg{number: 7, detail: d})
 	got := out.(Model)
-	if len(got.threads[7]) != 1 || !got.threadsFresh[7] {
-		t.Error("review threads not stored / not marked fresh")
+	if len(got.detail[7].ReviewThreads) != 1 || !got.fresh[7] {
+		t.Error("review threads not stored with the detail / not marked fresh")
 	}
 }
 

@@ -6,15 +6,23 @@ import (
 	"testing"
 )
 
-func TestParseReviewThreads(t *testing.T) {
-	b, err := os.ReadFile("testdata/reviewthreads.json")
+// The fixture is a real aliased detail response, so these exercise the threads
+// mapping exactly where it now runs: inside the batched detail parse.
+func threadsFixture(t *testing.T) []ReviewThread {
+	t.Helper()
+	b, err := os.ReadFile("testdata/prdetail-threads.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts, err := ParseReviewThreads(b)
+	details, _, err := parseDetails(b, []int{1})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return details[1].ReviewThreads
+}
+
+func TestDetailParsesReviewThreads(t *testing.T) {
+	ts := threadsFixture(t)
 	if len(ts) == 0 {
 		t.Fatal("no threads parsed")
 	}
@@ -37,15 +45,8 @@ func TestParseReviewThreads(t *testing.T) {
 	}
 }
 
-func TestParseReviewThreadsDiffHunk(t *testing.T) {
-	b, err := os.ReadFile("testdata/reviewthreads.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts, err := ParseReviewThreads(b)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestDetailParsesThreadDiffHunk(t *testing.T) {
+	ts := threadsFixture(t)
 	got := ts[0].Comments[0].DiffHunk
 	if !strings.HasPrefix(got, "@@ -39,6 +39,9 @@") {
 		t.Errorf("DiffHunk = %q, want the fixture's hunk", got)
@@ -55,5 +56,16 @@ func TestParseReviewThreadsDiffHunk(t *testing.T) {
 	}
 	if h := ts[0].Comments[1].DiffHunk; h != "" {
 		t.Errorf("comment without diffHunk should parse to empty, got %q", h)
+	}
+}
+
+// One request, not two: the detail selection must carry the threads fields, or the
+// preview goes back to costing a second round trip per row.
+func TestDetailQueryIncludesReviewThreads(t *testing.T) {
+	q := buildDetailQuery([]int{3})
+	for _, want := range []string{"reviewThreads(first:100)", "diffHunk", "originalLine"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("detail query missing %q:\n%s", want, q)
+		}
 	}
 }

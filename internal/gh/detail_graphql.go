@@ -10,16 +10,16 @@ import (
 	"time"
 )
 
-// detailFields is the GraphQL selection matching what `gh pr view --json
-// comments,reviews,latestReviews,mergeStateStatus,mergeable,isDraft,reviewRequests,files`
-// fetches. mergeStateStatus needs the merge-info preview media type (set on the
-// request), else GitHub rejects the field.
+// detailFields is everything the preview needs for one PR, review threads
+// included: they used to be a second request per row visited, and folding them in
+// costs nothing (see PRDetail.ReviewThreads). mergeStateStatus needs the
+// merge-info preview media type (set on the request), else GitHub rejects it.
 const detailFields = "comments(last:100){nodes{author{login __typename}body createdAt}}" +
 	"reviews(first:100){nodes{author{login __typename}body state submittedAt}}" +
 	"latestReviews(first:20){nodes{author{login __typename}body state submittedAt}}" +
 	"mergeStateStatus mergeable isDraft " +
 	"reviewRequests(first:100){nodes{requestedReviewer{__typename ... on User{login} ... on Bot{login} ... on Team{name}}}}" +
-	"files(first:100){nodes{path additions deletions}}"
+	"files(first:100){nodes{path additions deletions}}" + threadsFields
 
 // FetchDetails fetches per-PR detail for every number in one aliased GraphQL
 // request, replacing the N `gh pr view` subprocesses the prefetch window used to
@@ -113,6 +113,7 @@ type qlDetail struct {
 			Deletions int    `json:"deletions"`
 		}
 	} `json:"files"`
+	ReviewThreads qlThreads `json:"reviewThreads"`
 }
 
 func parseDetails(body []byte, numbers []int) (map[int]PRDetail, map[int][]byte, error) {
@@ -172,6 +173,7 @@ func mapDetail(q qlDetail) PRDetail {
 	for _, f := range q.Files.Nodes {
 		d.Files = append(d.Files, DiffFile{Path: f.Path, Additions: f.Additions, Deletions: f.Deletions})
 	}
+	d.ReviewThreads = mapThreads(q.ReviewThreads)
 	return d
 }
 

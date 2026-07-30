@@ -157,3 +157,55 @@ func TestChecksPollDelayHotForCursorRow(t *testing.T) {
 		t.Errorf("cursor row should poll hot: got %v, want %v", got, pollIntervalHot)
 	}
 }
+
+// The tier only bites on relaunch: within a session m.fresh already suppresses a
+// second fetch. Other people's PRs ride pollIntervalCold, mine stay at 60s.
+func TestDetailFreshTTLTiersByAuthor(t *testing.T) {
+	m := pollModel(t, &fakeChecksSource{}, []gh.PR{
+		{Number: 1, Author: author("me")},
+		{Number: 2, Author: author("someone")},
+	})
+	m.viewerLogin = "me"
+	ps := m.section.(*PRSection)
+	if got := m.detailFreshTTL(ps, 1); got != launchFreshTTL {
+		t.Errorf("own PR TTL = %v, want %v", got, launchFreshTTL)
+	}
+	if got := m.detailFreshTTL(ps, 2); got != pollIntervalCold {
+		t.Errorf("other's PR TTL = %v, want %v", got, pollIntervalCold)
+	}
+}
+
+// With no viewer login resolved yet, nothing is "mine" — everything is cold
+// rather than everything being hot.
+func TestDetailFreshTTLColdWithoutViewer(t *testing.T) {
+	m := pollModel(t, &fakeChecksSource{}, []gh.PR{{Number: 1, Author: author("me")}})
+	if got := m.detailFreshTTL(m.section.(*PRSection), 1); got != pollIntervalCold {
+		t.Errorf("unknown viewer TTL = %v, want %v", got, pollIntervalCold)
+	}
+}
+
+// One request per cold cursor row, not two: the detail fetch carries the threads.
+func TestCursorFetchIsASingleRequest(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{
+		7: {ReviewThreads: []gh.ReviewThread{{Path: "main.go", Line: 3}}},
+	}}
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.SetDetailSource(fd)
+	m.setPRs([]gh.PR{{Number: 7}})
+
+	cmd := m.detailCmdForCursor()
+	if cmd == nil {
+		t.Fatal("a cold cursor row must fetch")
+	}
+	msg, ok := cmd().(detailsBatchMsg)
+	if !ok {
+		t.Fatalf("cursor fetch should be the batched detail request, got %T", cmd())
+	}
+	if len(fd.got) != 1 {
+		t.Fatalf("want exactly one request for the cursor row, got %d", len(fd.got))
+	}
+	if len(msg.details[7].ReviewThreads) != 1 {
+		t.Error("review threads should arrive with the detail, not in a second fetch")
+	}
+}
