@@ -414,7 +414,7 @@ func ciSummary(pr gh.PR) string {
 		}
 		return failStyle.Render(fmt.Sprintf("✗ %d failing", n))
 	case "pending":
-		return pendStyle.Render("● running")
+		return pendStyle.Render(ciRunningGlyph + " running")
 	default:
 		return dimStyle.Render("— no checks")
 	}

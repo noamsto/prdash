@@ -310,6 +310,10 @@ func labelChip(name, hex string) string {
 	return caps.Render(chipCapLeft) + body.Render(name) + caps.Render(chipCapRight)
 }
 
+// ciRunningGlyph marks checks still in flight. A clock face, not a dot, so
+// "running" reads as motion rather than as one more status pip in a row of them.
+const ciRunningGlyph = "\U000F0996" // nerd: nf-md-progress_clock
+
 // ciGlyph maps a CIState() value to a colored single-rune glyph.
 func ciGlyph(state string) string {
 	switch state {
@@ -318,7 +322,7 @@ func ciGlyph(state string) string {
 	case "fail":
 		return failStyle.Render("✗")
 	case "pending":
-		return pendStyle.Render("●")
+		return pendStyle.Render(ciRunningGlyph)
 	default: // "none" and anything unexpected
 		return dimStyle.Render("·")
 	}
