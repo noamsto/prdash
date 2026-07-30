@@ -103,11 +103,12 @@ func renderChecks(pr gh.PR, w, cursor int) string {
 	return b.String()
 }
 
-func renderDiffstat(d gh.PRDetail, threads []gh.ReviewThread, w int) string {
+func renderDiffstat(d gh.PRDetail, w int) string {
 	s := d.Diffstat()
 	if s.Files == 0 {
 		return dimStyle.Render("  No file changes.")
 	}
+	threads := d.ReviewThreads
 	byFile := map[string]preview.FileThreads{}
 	for _, g := range preview.GroupByFile(threads) {
 		byFile[g.Path] = g
@@ -187,7 +188,7 @@ func (m Model) expandedBody(w int) string {
 		}
 		return ""
 	case tabDiff:
-		return renderDiffstat(d, m.threads[v.Number], w)
+		return renderDiffstat(d, w)
 	default:
 		items := preview.Timeline(d)
 		return renderDiscussionColumn(w, func(contentWidth int) string {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -22,7 +23,7 @@ type prDetailMsg struct {
 
 // detailSchemaVer is bumped whenever the PR-detail field set changes, so a
 // stale-shaped cached detail is a clean miss.
-const detailSchemaVer = "v1"
+const detailSchemaVer = "v2"
 
 // detailKey scopes a cached PR detail by repo so #7 in one repo can't paint #7
 // in another (the shared cache file is keyed by content, not cwd).
@@ -36,38 +37,6 @@ const issueDetailSchemaVer = "v1"
 func issueDetailKey(repo string, number int) string {
 	return cache.Key("issuedetail", repo+"#"+strconv.Itoa(number), 0, issueDetailSchemaVer)
 }
-
-// threadsSchemaVer is bumped whenever the review-threads GraphQL query's field
-// set changes, so a stale-shaped cached response is a clean miss.
-const threadsSchemaVer = "v2"
-
-// threadsKey scopes cached review threads by repo so #7 in one repo can't
-// paint #7 in another.
-func threadsKey(repo string, number int) string {
-	return cache.Key("threads", repo+"#"+strconv.Itoa(number), 0, threadsSchemaVer)
-}
-
-type threadsMsg struct {
-	number  int
-	threads []gh.ReviewThread
-	raw     []byte // cached to disk so the preview paints instantly next launch
-}
-
-// fetchThreadsCmd lazily loads the selected PR's inline review threads.
-func (m Model) fetchThreadsCmd(number int) tea.Cmd {
-	src := m.threadsSource
-	if src == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		ts, raw, err := src.FetchReviewThreads(number)
-		if err != nil {
-			return fetchFailedMsg{err: err}
-		}
-		return threadsMsg{number: number, threads: ts, raw: raw}
-	}
-}
-
 
 // fetchIssueDetailCmd lazily loads the selected issue's body through the
 // issue-detail source.
@@ -100,14 +69,10 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		}
 		return m.fetchIssueDetailCmd(v.Number)
 	case "pr":
-		var cmds []tea.Cmd
-		if !m.fresh[v.Number] && !m.cacheFresh(detailKey(m.repo, v.Number)) {
-			cmds = append(cmds, m.batchDetailCmd([]int{v.Number}))
+		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
+			return nil
 		}
-		if !m.threadsFresh[v.Number] && !m.cacheFresh(threadsKey(m.repo, v.Number)) {
-			cmds = append(cmds, m.fetchThreadsCmd(v.Number))
-		}
-		return tea.Batch(cmds...)
+		return m.batchDetailCmd([]int{v.Number})
 	}
 	return nil
 }
@@ -140,12 +105,24 @@ func (m Model) warmDetailCmd() tea.Cmd {
 func (m Model) detailWindow(ps *PRSection) []int {
 	var out []int
 	for _, n := range prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow) {
-		if m.cacheFresh(detailKey(m.repo, n)) {
+		if m.cacheFreshFor(detailKey(m.repo, n), m.detailFreshTTL(ps, n)) {
 			continue
 		}
 		out = append(out, n)
 	}
 	return out
+}
+
+// detailFreshTTL tiers how long a relaunch trusts a cached detail. The viewer's
+// own PRs revalidate at launchFreshTTL; everyone else's ride the cold poll's
+// spacing, which is already how stale the rest of the board is allowed to be.
+// The cursor row is not tiered — detailCmdForCursor always uses launchFreshTTL,
+// because the row you are looking at is the one you want current.
+func (m Model) detailFreshTTL(ps *PRSection, number int) time.Duration {
+	if m.viewerLogin != "" && ps.authorOf(number) == m.viewerLogin {
+		return launchFreshTTL
+	}
+	return pollIntervalCold
 }
 
 // batchDetailCmd fetches detail for numbers in a single request via the batched
@@ -349,7 +326,7 @@ func (m Model) renderOverview(w int) string {
 		return strings.Join(blocks, "\n\n")
 	}
 	blocks = append(blocks, section("review", reviewLine(d)))
-	if ts := m.threads[v.Number]; len(ts) > 0 {
+	if ts := m.detail[v.Number].ReviewThreads; len(ts) > 0 {
 		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
 		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
 			blocks = append(blocks, section(label, body))

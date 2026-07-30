@@ -42,6 +42,11 @@ type PRDetail struct {
 	IsDraft          bool            `json:"isDraft"`
 	ReviewRequests   []ReviewRequest `json:"reviewRequests"`
 	Files            []DiffFile      `json:"files"`
+	// ReviewThreads rides the same query rather than costing a second request per
+	// PR. It is one more connection on a document that already resolves several,
+	// so the batch's cost does not move — and the prefetch window now warms
+	// threads too, which used to be a fetch per row visited.
+	ReviewThreads []ReviewThread `json:"reviewThreads"`
 }
 
 // Diffstat aggregates the per-file changes into totals for the card/Diff tab.

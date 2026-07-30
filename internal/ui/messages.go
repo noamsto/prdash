@@ -89,6 +89,13 @@ type delayedRefreshMsg struct{}
 // shown PR has a running check.
 type checksPollMsg struct{}
 
+// checksFetchedMsg carries one poll beat's rollups, keyed by PR number. It
+// replaces the rollup on rows the board already holds — no row is added,
+// removed or reordered by a beat.
+type checksFetchedMsg struct {
+	checks map[int][]gh.Check
+}
+
 // logFetchedMsg carries a fetched job log back to the log sub-view. all
 // distinguishes the full-log variant from failed-only so a stale in-flight
 // fetch for the other variant is ignored.

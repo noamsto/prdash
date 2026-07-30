@@ -84,6 +84,29 @@ func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 
+// authorOf returns the login that opened PR number, or "" when the board does not
+// hold it.
+func (s *PRSection) authorOf(number int) string {
+	for _, p := range s.prs {
+		if p.Number == number {
+			return p.Author.Login
+		}
+	}
+	return ""
+}
+
+// ApplyChecks replaces the rollup on the PRs named in checks. It deliberately
+// does not re-sort: the sort key ranks by actionability, which CI state feeds, so
+// re-sorting here would move rows under the user on a background beat. Order
+// settles on the next real fetch.
+func (s *PRSection) ApplyChecks(checks map[int][]gh.Check) {
+	for i := range s.prs {
+		if c, ok := checks[s.prs[i].Number]; ok {
+			s.prs[i].StatusCheckRollup = c
+		}
+	}
+}
+
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	o.Draft = p.IsDraft

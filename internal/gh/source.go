@@ -15,10 +15,11 @@ type DetailSource interface {
 	FetchDetails(numbers []int) (details map[int]PRDetail, raw map[int][]byte, err error)
 }
 
-// ThreadsSource fetches a PR's inline review threads. The []byte is the raw
-// GraphQL response, which ParseReviewThreads reads back on the hydrate path.
-type ThreadsSource interface {
-	FetchReviewThreads(number int) (threads []ReviewThread, raw []byte, err error)
+// ChecksSource fetches just the status-check rollup for a set of PR numbers, for
+// the live-CI poll. Nothing is cached: the rollup is the most perishable field on
+// the board, and the poll applies it to rows it already has.
+type ChecksSource interface {
+	FetchChecks(numbers []int) (checks map[int][]Check, err error)
 }
 
 // IssueSource fetches an issue list for a search filter, mirroring PRSource:

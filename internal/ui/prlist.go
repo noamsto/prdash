@@ -43,7 +43,7 @@ type Model struct {
 	cache             *cache.Cache
 	prSource          gh.PRSource          // PR-list backend (githubv4)
 	detailSource      gh.DetailSource      // batched per-PR detail backend
-	threadsSource     gh.ThreadsSource     // per-PR inline review-threads backend
+	checksSource      gh.ChecksSource      // rollup-only backend for the live-checks poll
 	issueSource       gh.IssueSource       // issue-list backend
 	issueDetailSource gh.IssueDetailSource // per-issue detail backend
 	viewerSource      gh.ViewerSource      // viewer-login backend
@@ -77,13 +77,11 @@ type Model struct {
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
-	detail            map[int]gh.PRDetail       // painted detail (fresh this session or hydrated from disk)
-	fresh             map[int]bool              // PR numbers whose detail was refetched this session; gates revalidation
-	ciRerun           map[int]time.Time         // PR number → stamp time when its checks-in-progress override was applied
-	mergedSticky      map[int]gh.PR             // PRs prdash merged this session, kept on the open board until ctrl+r
-	threads           map[int][]gh.ReviewThread // inline review threads, per PR number
-	threadsFresh      map[int]bool              // PR numbers whose threads were refetched this session
-	detailSeq         int                       // bumped on cursor move; gates the debounced detail fetch
+	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
+	mergedSticky      map[int]gh.PR       // PRs prdash merged this session, kept on the open board until ctrl+r
+	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
 	previewN          int
 	expanded          bool
@@ -139,7 +137,6 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
 		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
-		threads: map[int][]gh.ReviewThread{}, threadsFresh: map[int]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
 		logCache:  map[string][]logStep{},
@@ -154,8 +151,9 @@ func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
 // refresh/prefetch path fetches the whole visible window in one request.
 func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 
-// SetThreadsSource installs the per-PR inline review-threads backend (githubv4).
-func (m *Model) SetThreadsSource(s gh.ThreadsSource) { m.threadsSource = s }
+// SetChecksSource installs the rollup-only backend the live-checks poll uses
+// instead of refetching the whole list.
+func (m *Model) SetChecksSource(s gh.ChecksSource) { m.checksSource = s }
 
 // SetIssueSource installs the issue-list backend (githubv4).
 func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
@@ -750,7 +748,6 @@ func (m *Model) hydrate() bool {
 		}
 		m.setSections(rev, open, m.viewerLogin)
 		m.hydrateDetail()
-		m.hydrateThreads()
 		return true
 	}
 	prs, ok := m.cachedPRs(m.filter, defaultLimit)
@@ -759,7 +756,6 @@ func (m *Model) hydrate() bool {
 	}
 	m.setPRs(prs)
 	m.hydrateDetail()
-	m.hydrateThreads()
 	return true
 }
 
@@ -789,34 +785,6 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		m.detail[num] = d
-	}
-}
-
-// hydrateThreads paints each shown PR's review threads from the disk cache
-// (leaving threadsFresh false, so the live fetch still revalidates).
-func (m *Model) hydrateThreads() {
-	if m.cache == nil {
-		return
-	}
-	ps, ok := m.section.(*PRSection)
-	if !ok {
-		return
-	}
-	for i := 0; i < ps.Len(); i++ {
-		num := ps.prAt(i).Number
-		if _, ok := m.threads[num]; ok {
-			continue
-		}
-		e, hit := m.cache.Get(threadsKey(m.repo, num))
-		if !hit {
-			continue
-		}
-		ts, err := gh.ParseReviewThreads(e.Rows)
-		if err != nil {
-			slog.Debug("threads cache unmarshal failed", "err", err)
-			continue
-		}
-		m.threads[num] = ts
 	}
 }
 
@@ -981,7 +949,14 @@ func (m *Model) startSpinner() tea.Cmd {
 	return spinnerTick()
 }
 
-const pollInterval = 30 * time.Second
+// Poll beats are tiered by whose CI is running. A session waits on its own PRs
+// and on whatever row it is sitting on; everything else can lag by minutes. The
+// query is one point either way (one aliased request covers every running PR), so
+// the tier buys budget by asking less often, not by asking for less.
+const (
+	pollIntervalHot  = 30 * time.Second
+	pollIntervalCold = 2 * time.Minute
+)
 
 // launchFreshTTL bounds how recently a cached fetch must have been written for a
 // cold launch to reuse it instead of re-hitting the API. Relaunching within this
@@ -990,11 +965,37 @@ const pollInterval = 30 * time.Second
 const launchFreshTTL = 60 * time.Second
 
 func (m Model) cacheFresh(key string) bool {
-	return m.cache != nil && m.cache.Fresh(key, launchFreshTTL)
+	return m.cacheFreshFor(key, launchFreshTTL)
 }
 
-func checksPollTick() tea.Cmd {
-	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return checksPollMsg{} })
+// cacheFreshFor is cacheFresh with an explicit window, for the callers that tier
+// freshness by whose PR it is (see detailFreshTTL).
+func (m Model) cacheFreshFor(key string, ttl time.Duration) bool {
+	return m.cache != nil && m.cache.Fresh(key, ttl)
+}
+
+func checksPollTick(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return checksPollMsg{} })
+}
+
+// checksPollDelay spaces the next beat: hot while a running check belongs to the
+// viewer or to the cursor row, cold when only other people's PRs are churning.
+func (m Model) checksPollDelay() time.Duration {
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return pollIntervalCold
+	}
+	cursorNum := -1
+	if v, ok := m.cursorVars(); ok {
+		cursorNum = v.Number
+	}
+	for _, i := range runningCheckRows(ps) {
+		p := ps.prAt(i)
+		if p.Number == cursorNum || (m.viewerLogin != "" && p.Author.Login == m.viewerLogin) {
+			return pollIntervalHot
+		}
+	}
+	return pollIntervalCold
 }
 
 // InitTheme reads the system theme mode, applies the matching palette, and seeds
@@ -1020,22 +1021,29 @@ func themeWatchTick(lastMod time.Time) tea.Cmd {
 	})
 }
 
-// anyChecksRunning reports whether any shown PR row has an in-flight check.
+// runningCheckRows returns the shown indexes whose PR has an in-flight check.
 // It scans individual checks rather than PR.CIState(), which collapses to
 // "fail" when any check failed and would hide checks still running behind it.
+func runningCheckRows(ps *PRSection) []int {
+	var out []int
+	for i := 0; i < ps.Len(); i++ {
+		for _, c := range ps.prAt(i).Checks() {
+			if c.Result() == "pending" {
+				out = append(out, i)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// anyChecksRunning reports whether any shown PR row has an in-flight check.
 func (m Model) anyChecksRunning() bool {
 	ps, ok := m.section.(*PRSection)
 	if !ok {
 		return false
 	}
-	for i := 0; i < ps.Len(); i++ {
-		for _, c := range ps.prAt(i).Checks() {
-			if c.Result() == "pending" {
-				return true
-			}
-		}
-	}
-	return false
+	return len(runningCheckRows(ps)) > 0
 }
 
 // pollBusy reports whether a user interaction or an in-flight fetch should defer
@@ -1051,7 +1059,34 @@ func (m *Model) maybeStartPoll() tea.Cmd {
 		return nil
 	}
 	m.polling = true
-	return checksPollTick()
+	return checksPollTick(m.checksPollDelay())
+}
+
+// pollChecksCmd refetches the rollup for every row with an in-flight check, in
+// one aliased request. Deliberately not backgroundRefresh: that refetches both
+// list searches (5 points to this one's 1) and re-sorts the board, moving rows
+// under the user on a beat they never asked for.
+func (m Model) pollChecksCmd() tea.Cmd {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.checksSource == nil {
+		return nil
+	}
+	rows := runningCheckRows(ps)
+	if len(rows) == 0 {
+		return nil
+	}
+	nums := make([]int, 0, len(rows))
+	for _, i := range rows {
+		nums = append(nums, ps.prAt(i).Number)
+	}
+	src := m.checksSource
+	return func() tea.Msg {
+		checks, err := src.FetchChecks(nums)
+		if err != nil {
+			return fetchFailedMsg{err: err}
+		}
+		return checksFetchedMsg{checks: checks}
+	}
 }
 
 // backgroundRefresh silently reconciles the current view without clearing rows —
@@ -1351,14 +1386,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repaintActive() // fold the fresh detail into the active view without losing place
 		return m, nil
-	case threadsMsg:
-		m.threads[msg.number] = msg.threads
-		m.threadsFresh[msg.number] = true
-		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(threadsKey(m.repo, msg.number), msg.raw)
-		}
-		m.repaintActive()
-		return m, nil
 	case detailsBatchMsg:
 		for num, d := range msg.details {
 			m.detail[num] = d
@@ -1427,9 +1454,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.pollBusy() {
-			return m, checksPollTick() // skip this beat, keep the loop alive
+			return m, checksPollTick(m.checksPollDelay()) // skip this beat, keep the loop alive
 		}
-		return m, tea.Batch(m.backgroundRefresh(), checksPollTick())
+		return m, tea.Batch(m.pollChecksCmd(), checksPollTick(m.checksPollDelay()))
+	case checksFetchedMsg:
+		ps, ok := m.section.(*PRSection)
+		if !ok {
+			return m, nil
+		}
+		ps.ApplyChecks(msg.checks)
+		m.repaintActive()
+		// No reschedule: the tick armed alongside this fetch is still in flight, and
+		// it retires the loop itself once nothing is pending.
+		return m, nil
 	case themePollMsg:
 		// This is the only tick that runs for the whole session, so the header's
 		// budget countdown rides it rather than arming a second one-second loop.
