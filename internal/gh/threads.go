@@ -18,7 +18,14 @@ type ReviewThread struct {
 
 // threadsFields selects the review threads the preview renders. It is part of
 // detailFields, not a query of its own — see PRDetail.ReviewThreads.
-const threadsFields = "reviewThreads(first:100){nodes{isResolved path line originalLine" +
+//
+// The 20 is load-bearing, and it is the OUTER page size that matters: `comments`
+// resolves once per thread, so a detail batch pays (PRs × threads) parent nodes
+// for it. At first:100 a five-PR window measured 5 points; at 20 it measures 1,
+// the same as not fetching threads at all. Keep threadsPageSize × prefetchWindow
+// at or under 100. `comments(first:100)` is free by contrast — a leaf
+// connection's own page size never moves the cost.
+const threadsFields = "reviewThreads(first:20){nodes{isResolved path line originalLine" +
 	" comments(first:100){nodes{author{login} body diffHunk createdAt}}}}"
 
 // qlThreads is the JSON shape threadsFields returns.

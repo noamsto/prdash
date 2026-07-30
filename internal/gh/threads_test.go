@@ -63,9 +63,18 @@ func TestDetailParsesThreadDiffHunk(t *testing.T) {
 // preview goes back to costing a second round trip per row.
 func TestDetailQueryIncludesReviewThreads(t *testing.T) {
 	q := buildDetailQuery([]int{3})
-	for _, want := range []string{"reviewThreads(first:100)", "diffHunk", "originalLine"} {
+	for _, want := range []string{"reviewThreads(", "diffHunk", "originalLine"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("detail query missing %q:\n%s", want, q)
 		}
+	}
+}
+
+// The thread page size is a cost knob, not a taste choice: at first:100 a
+// five-PR detail batch measured 5 points against GitHub, at first:20 it measures
+// 1. Guard it so a well-meaning bump doesn't quietly 5× the prefetch.
+func TestThreadPageSizeStaysWithinTheOnePointWindow(t *testing.T) {
+	if !strings.Contains(threadsFields, "reviewThreads(first:20)") {
+		t.Errorf("thread page size changed; re-measure the batch cost first:\n%s", threadsFields)
 	}
 }
