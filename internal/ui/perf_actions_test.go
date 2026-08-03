@@ -175,7 +175,8 @@ func TestSectionsViewRendersBothHeaders(t *testing.T) {
 	m.viewerLogin = "me"
 	m.setSections(
 		[]gh.PR{{Number: 2, Title: "also mine", Author: author("me")}, {Number: 9, Title: "please review", Author: author("someone")}}, // review requested; #2 authored by me too → stays Review requested
-		[]gh.PR{{Number: 1, Title: "my pr", Author: author("me")}, {Number: 2, Title: "also mine", Author: author("me")}},              // open list
+		nil, // reviewed by me
+		[]gh.PR{{Number: 1, Title: "my pr", Author: author("me")}, {Number: 2, Title: "also mine", Author: author("me")}}, // open list
 		"me",
 	)
 	m.renderList()

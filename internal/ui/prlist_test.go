@@ -554,6 +554,7 @@ func TestAnyChecksRunningScansSectionsBothHalves(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil) // sections default
 	m.setSections(
 		[]gh.PR{{Number: 2, StatusCheckRollup: []gh.Check{{State: "PENDING"}}}}, // review requested
+		nil, // reviewed by me
 		[]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}}, // open
 		"",
 	)
@@ -801,6 +802,7 @@ func launchModel(t *testing.T) (Model, *cache.Cache) {
 // warmLaunchCache seeds every key Init reconciles so the whole launch is fresh.
 func warmLaunchCache(m Model, c *cache.Cache) {
 	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit), json.RawMessage("[]"))
+	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(prKey(m.repo, "is:open", openListLimit), json.RawMessage("[]"))
 	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody)), json.RawMessage("[]"))
 	c.Set(membersKey(m.repo), json.RawMessage("[]"))
@@ -832,9 +834,9 @@ func TestLaunchFetchesWhenCacheCold(t *testing.T) {
 			cmd()
 		}
 	}
-	// sections (review+is:open) + issues + members + viewer = 5 source fetches.
-	if n := cs.calls.Load(); n != 5 {
-		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 5", n)
+	// sections (review+reviewed+is:open) + issues + members + viewer = 6 source fetches.
+	if n := cs.calls.Load(); n != 6 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 6", n)
 	}
 }
 
@@ -896,7 +898,7 @@ func TestSetSections(t *testing.T) {
 		{Number: 2, Author: author("me")},
 		{Number: 3, Author: author("someone")},
 	}
-	m.setSections(review, open, me)
+	m.setSections(review, nil, open, me)
 	ps := m.section.(*PRSection)
 	if cat := ps.cats[1]; cat != "Review requested" {
 		t.Errorf("#1 = %q, want Review requested (review beats mine)", cat)
@@ -920,7 +922,7 @@ func TestSetSectionsEmptyViewerFallsBackToOthers(t *testing.T) {
 		{Number: 2, Author: author("me")},
 		{Number: 3, Author: author("someone")},
 	}
-	m.setSections(review, open, "")
+	m.setSections(review, nil, open, "")
 	ps := m.section.(*PRSection)
 	if cat := ps.cats[2]; cat != "Others" {
 		t.Errorf("#2 with empty viewer = %q, want Others", cat)
@@ -929,7 +931,7 @@ func TestSetSectionsEmptyViewerFallsBackToOthers(t *testing.T) {
 		t.Errorf("#3 with empty viewer = %q, want Others", cat)
 	}
 
-	m.setSections(review, open, "me")
+	m.setSections(review, nil, open, "me")
 	if cat := ps.cats[2]; cat != "Mine" {
 		t.Errorf("#2 after viewer resolves = %q, want Mine", cat)
 	}
@@ -942,7 +944,7 @@ func TestViewerFetchedMsgResplitsSections(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	m := NewModel("/tmp", "is:open", c)
 	m.SetRepo("o/r")
-	m.setSections(nil, []gh.PR{
+	m.setSections(nil, nil, []gh.PR{
 		{Number: 2, Author: author("me")},
 		{Number: 3, Author: author("someone")},
 	}, "")
@@ -986,6 +988,131 @@ func TestSectionsFetchedMsgPaints(t *testing.T) {
 	}
 }
 
+// TestSectionsReviewedByMeStaysTop covers the union: a PR GitHub dropped from
+// review-requested:@me when the viewer submitted a review still categorizes as
+// Review requested via the reviewed-by-me half, instead of sinking into Others.
+func TestSectionsReviewedByMeStaysTop(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setSections(
+		nil,
+		[]gh.PR{{Number: 5, Author: author("someone")}},                                         // reviewed by me
+		[]gh.PR{{Number: 5, Author: author("someone")}, {Number: 6, Author: author("someone")}}, // open
+		"me",
+	)
+	ps := m.section.(*PRSection)
+	if cat := ps.cats[5]; cat != "Review requested" {
+		t.Errorf("#5 = %q, want Review requested via the reviewed half", cat)
+	}
+	if cat := ps.cats[6]; cat != "Others" {
+		t.Errorf("#6 = %q, want Others", cat)
+	}
+	if ps.Len() != 2 {
+		t.Errorf("shown = %d, want 2 (deduped)", ps.Len())
+	}
+}
+
+// TestSectionsReRequestedWinsOverReviewed: a PR re-requested after the viewer's
+// comment lands in both halves; the review-requested half owns it (one row),
+// which also clears the ◐ marker — commentedByMe gates on reviewRequested.
+func TestSectionsReRequestedWinsOverReviewed(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	p := gh.PR{Number: 5, Author: author("someone")}
+	m.setSections([]gh.PR{p}, []gh.PR{p}, nil, "me")
+	if n := m.section.Len(); n != 1 {
+		t.Fatalf("shown = %d, want 1 (deduped across halves)", n)
+	}
+	if !m.reviewRequested[5] {
+		t.Fatal("re-requested PR must sit in reviewRequested so the ◐ marker clears")
+	}
+}
+
+func TestCommentedByMeMarker(t *testing.T) {
+	setup := func(state string) Model {
+		m := NewModel("/tmp", "is:open", nil)
+		m.viewerLogin = "me"
+		m.setSections(nil, []gh.PR{{Number: 5, Author: author("someone")}}, nil, "me")
+		if state != "" {
+			var r gh.Review
+			r.Author.Login = "me"
+			r.State = state
+			m.detail[5] = gh.PRDetail{LatestReviews: []gh.Review{r}}
+		}
+		return m
+	}
+	if m := setup("COMMENTED"); !m.commentedByMe(5) {
+		t.Error("viewer whose latest review is a comment should mark the row")
+	}
+	for _, state := range []string{"APPROVED", "CHANGES_REQUESTED", "DISMISSED"} {
+		if m := setup(state); m.commentedByMe(5) {
+			t.Errorf("latest review %q is final — the PR should leave unmarked", state)
+		}
+	}
+	if m := setup(""); m.commentedByMe(5) {
+		t.Error("no detail cached yet: unmarked until the batch lands")
+	}
+
+	reRequested := setup("COMMENTED")
+	reRequested.reviewRequested[5] = true
+	if reRequested.commentedByMe(5) {
+		t.Error("re-requested after my comment: the marker must clear")
+	}
+
+	noViewer := setup("COMMENTED")
+	noViewer.viewerLogin = ""
+	if noViewer.commentedByMe(5) {
+		t.Error("unresolved viewer cannot mark anything")
+	}
+}
+
+// TestCommentedRowShowsHalfDot drives the render path: the review column swaps
+// the pending ● for ◐ on a commented-by-me row.
+func TestCommentedRowShowsHalfDot(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.SetRepo("o/r")
+	m.width, m.height = 120, 30
+	m.viewerLogin = "me"
+	p := gh.PR{Number: 5, Title: "x", ReviewDecision: "REVIEW_REQUIRED", Author: author("someone")}
+	m.setSections(nil, []gh.PR{p}, nil, "me")
+	var r gh.Review
+	r.Author.Login = "me"
+	r.State = "COMMENTED"
+	m.detail[5] = gh.PRDetail{LatestReviews: []gh.Review{r}}
+	m.renderList()
+	row := m.rowText[0]
+	if !strings.Contains(row, reviewCommentedGlyph) {
+		t.Fatalf("commented-by-me row should show ◐:\n%s", row)
+	}
+	if strings.Contains(row, "●") {
+		t.Fatalf("◐ replaces the pending dot on a commented row:\n%s", row)
+	}
+}
+
+// TestReviewedDetailCmdFetchesReviewedSet: the marker's detail warm covers the
+// reviewed half only — review-requested rows ride the normal prefetch window.
+func TestReviewedDetailCmdFetchesReviewedSet(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{2: {}}}
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("o/r")
+	m.SetDetailSource(fd)
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("x")}},
+		[]gh.PR{{Number: 2, Author: author("x")}, {Number: 3, Author: author("x")}},
+		nil,
+		"me",
+	)
+	m.fresh[3] = true // already refetched this session: skip
+	cmd := m.reviewedDetailCmd()
+	if cmd == nil {
+		t.Fatal("reviewed set with cold detail should fetch")
+	}
+	if _, ok := cmd().(detailsBatchMsg); !ok {
+		t.Fatal("reviewed warm should route through the batch source")
+	}
+	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 2 {
+		t.Fatalf("FetchDetails got %v, want one call for [2] (not review-requested #1, not fresh #3)", fd.got)
+	}
+}
+
 func TestDefaultViewIsSections(t *testing.T) {
 	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
 	c.Set(prKey("o/r", searchFor("pr", "open", reviewBody), defaultLimit), nil) // shape only
@@ -1001,6 +1128,7 @@ func TestApplyFilterRenderSwitch(t *testing.T) {
 	m.viewerLogin = "me"
 	m.setSections(
 		[]gh.PR{{Number: 1, Title: "alpha", Author: author("me")}},
+		nil,
 		[]gh.PR{{Number: 2, Title: "beta flaky", Author: author("x")}},
 		"me",
 	)
@@ -1692,8 +1820,8 @@ func TestScrollRevealsGroupHeaderAboveTopRow(t *testing.T) {
 	for i := 2; i <= 14; i++ {
 		open = append(open, gh.PR{Number: i, Title: "open pr", State: "OPEN"})
 	}
-	m.setSections(review, open, "someone-else") // #1 → "Review requested" (first group)
-	m.cursor = m.section.Len() - 1              // scroll to the bottom
+	m.setSections(review, nil, open, "someone-else") // #1 → "Review requested" (first group)
+	m.cursor = m.section.Len() - 1                   // scroll to the bottom
 	m.renderList()
 	m.cursor = 0 // back to the first row, under the "Review requested" header
 	m.renderList()

@@ -48,11 +48,14 @@ func nextState(s string, states []string) string {
 	return states[0]
 }
 
-// mineBody / reviewBody are the two state-agnostic qualifiers the PR "mine" view
-// combines. Issues use a single assignee qualifier (assigneeBody), no dual fetch.
+// mineBody / reviewBody are the state-agnostic qualifiers the PR sections view
+// combines. reviewedBody re-catches PRs GitHub drops from review-requested:@me
+// once the viewer submits a review, so a commented-by-me PR keeps its place.
+// Issues use a single assignee qualifier (assigneeBody), no multi fetch.
 const (
 	mineBody     = "author:@me"
 	reviewBody   = "review-requested:@me"
+	reviewedBody = "reviewed-by:@me -author:@me"
 	assigneeBody = "assignee:@me"
 )
 

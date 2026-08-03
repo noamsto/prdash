@@ -281,6 +281,11 @@ const (
 // a duplicate instead of a second signal.
 const reviewApprovedGlyph = "\uF461" // nerd: nf-oct-verified
 
+// reviewCommentedGlyph marks a PR whose review is still required but the
+// viewer's latest review is already in as a comment: a half-filled version of
+// the pending ●, so the column reads ● → ◐ → approved as a progression.
+const reviewCommentedGlyph = "◐"
+
 // Rounded chip end-caps: Powerline half-circles drawn in the chip's own color on
 // the pane background, so a label reads as a rounded pill. Both are Nerd Font
 // glyphs (ple-left/right-half-circle-thick); swap if your font maps them out.
