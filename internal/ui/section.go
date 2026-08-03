@@ -15,14 +15,15 @@ import (
 
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
-	Width    int
-	NumWidth int // cell width for the right-aligned number column (0 = natural)
-	Focused  bool
-	Selected bool
-	Draft    bool   // dim the title; drafts sort last (see prRank)
-	Landed   bool   // merged by prdash this session, held on the open board until ctrl+r
-	Flag     string // pre-rendered ! column glyph (conflict/behind), "" when unknown
-	TwoLine  bool   // render labels + branch on an indented second line
+	Width     int
+	NumWidth  int // cell width for the right-aligned number column (0 = natural)
+	Focused   bool
+	Selected  bool
+	Draft     bool   // dim the title; drafts sort last (see prRank)
+	Landed    bool   // merged by prdash this session, held on the open board until ctrl+r
+	Commented bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
+	Flag      string // pre-rendered ! column glyph (conflict/behind), "" when unknown
+	TwoLine   bool   // render labels + branch on an indented second line
 }
 
 type Section interface {
@@ -122,6 +123,12 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		status, age = closedMark(), ageString(p.ClosedAt)
 	}
 	auto := autoMergeGlyph(p.AutoMergeEnabled())
+	// A commented-by-me PR keeps the pending color but swaps the dot for ◐:
+	// review is still required, the viewer's part is just already in.
+	review := reviewDot(p.ReviewDecision)
+	if o.Commented {
+		review = pendStyle.Render(reviewCommentedGlyph)
+	}
 	// A PR's author only appears on line 2 (two-line mode); it stays off the dense
 	// single-line row, and off author-grouped boards where the header carries it.
 	byAuthor := s.grouped && len(s.catOrder) == 0
@@ -130,7 +137,7 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		author = p.Author.Login
 	}
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		author, age, status, reviewDot(p.ReviewDecision), auto, p.HeadRefName, p.Labels)
+		author, age, status, review, auto, p.HeadRefName, p.Labels)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {

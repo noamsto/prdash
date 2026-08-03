@@ -22,13 +22,13 @@ type issuesFetchedMsg struct {
 	raw    []byte
 }
 
-// sectionsFetchedMsg carries the two async halves of the empty-default open view
-// (review-requested + the limit-100 open list) so the handler can compose the
-// Review/Mine/Others sections via setSections.
+// sectionsFetchedMsg carries the async thirds of the empty-default open view
+// (review-requested + reviewed-by-me + the limit-100 open list) so the handler
+// can compose the Review/Mine/Others sections via setSections.
 type sectionsFetchedMsg struct {
-	state              string // the PR state (open/merged/closed) this result is for
-	review, open       []gh.PR
-	reviewRaw, openRaw []byte
+	state                           string // the PR state (open/merged/closed) this result is for
+	review, reviewed, open          []gh.PR
+	reviewRaw, reviewedRaw, openRaw []byte
 }
 
 // detailsBatchMsg carries one batched detail fetch — the whole prefetch window

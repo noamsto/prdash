@@ -79,6 +79,8 @@ type Model struct {
 	sel               selection
 	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
 	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
+	reviewRequested   map[int]bool        // PR numbers in the latest review-requested half; gates the ◐ marker off on re-request
+	reviewedSet       map[int]bool        // PR numbers in the latest reviewed-by-me half; the ◐ marker's candidates
 	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
 	mergedSticky      map[int]gh.PR       // PRs prdash merged this session, kept on the open board until ctrl+r
 	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
@@ -136,6 +138,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		reviewRequested: map[int]bool{}, reviewedSet: map[int]bool{},
 		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:  2,
@@ -335,13 +338,27 @@ func (m *Model) setIssues(is []gh.Issue) {
 // Others. Precedence is Review > Mine > Others (first match wins). Mine needs the
 // real viewer login to split one open list client-side; an empty viewer (login
 // not yet resolved) collapses Mine into Others until viewerFetchedMsg re-runs this.
-func (m *Model) setSections(review, open []gh.PR, viewer string) {
+// The reviewed half unions PRs back into Review requested that GitHub drops from
+// review-requested:@me once the viewer submits a review; they keep their place
+// and carry the ◐ marker (see commentedByMe) instead of sinking into Others.
+func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
 	// Landed PRs join the open half so they categorize by author like anything
 	// else; a merged PR is no longer awaiting anyone's review.
 	open = m.applyMergedSticky(open)
-	cats := make(map[int]string, len(open)+len(review))
-	all := make([]gh.PR, 0, len(open)+len(review))
+	m.reviewRequested = make(map[int]bool, len(review))
+	m.reviewedSet = make(map[int]bool, len(reviewed))
+	cats := make(map[int]string, len(open)+len(review)+len(reviewed))
+	all := make([]gh.PR, 0, len(open)+len(review)+len(reviewed))
 	for _, p := range review {
+		m.reviewRequested[p.Number] = true
+		cats[p.Number] = "Review requested"
+		all = append(all, p)
+	}
+	for _, p := range reviewed {
+		m.reviewedSet[p.Number] = true
+		if _, dup := cats[p.Number]; dup {
+			continue // re-requested after my review: the review-requested half wins
+		}
 		cats[p.Number] = "Review requested"
 		all = append(all, p)
 	}
@@ -365,6 +382,44 @@ func (m *Model) setSections(review, open []gh.PR, viewer string) {
 	if n := m.section.Len(); m.cursor >= n {
 		m.cursor = max(0, n-1)
 	}
+}
+
+// commentedByMe reports whether the viewer's latest review on number is a
+// comment — the ◐ marker's state. A PR back in the review-requested half was
+// re-requested after that comment, so the marker clears: my input is stale and
+// the row reads as an ordinary awaiting-review again. LatestReviews holds one
+// entry per reviewer, so the first match is the viewer's latest.
+func (m *Model) commentedByMe(number int) bool {
+	if m.viewerLogin == "" || m.reviewRequested[number] || !m.reviewedSet[number] {
+		return false
+	}
+	d, ok := m.detail[number]
+	if !ok {
+		return false
+	}
+	for _, r := range d.LatestReviews {
+		if r.Author.Login == m.viewerLogin {
+			return r.State == "COMMENTED"
+		}
+	}
+	return false
+}
+
+// reviewedDetailCmd warms detail for the reviewed-by-me set in one batched
+// request, so the ◐ marker lands a beat after the board paints rather than
+// waiting for the cursor to visit each row.
+func (m Model) reviewedDetailCmd() tea.Cmd {
+	var nums []int
+	for num := range m.reviewedSet {
+		if m.reviewRequested[num] || m.fresh[num] {
+			continue
+		}
+		if m.cacheFreshFor(detailKey(m.repo, num), pollIntervalCold) {
+			continue
+		}
+		nums = append(nums, num)
+	}
+	return m.batchDetailCmd(nums)
 }
 
 // moveCursor clamps the cursor to the shown set and keeps it visible.
@@ -395,6 +450,7 @@ type rowKey struct {
 	flag              string
 	twoLine           bool
 	landed            bool
+	commented         bool
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
@@ -438,10 +494,11 @@ func (m *Model) renderList() {
 			flag = flagGlyph(d, cached)
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine, landed: landed}
+		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine, landed: landed, commented: commented}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine, Landed: landed,
+				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine, Landed: landed, Commented: commented,
 			})
 			m.rowSig[i] = key
 		}
@@ -742,11 +799,12 @@ func (m *Model) hydrate() bool {
 	}
 	if m.sectionsDefault() {
 		rev, ok1 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+		revd, _ := m.cachedPRs(searchFor("pr", m.state, reviewedBody), defaultLimit)
 		open, ok2 := m.cachedPRs("is:open", openListLimit)
 		if !ok1 && !ok2 {
 			return false
 		}
-		m.setSections(rev, open, m.viewerLogin)
+		m.setSections(rev, revd, open, m.viewerLogin)
 		m.hydrateDetail()
 		return true
 	}
@@ -897,26 +955,32 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 	}
 }
 
-// sectionsFetchCmd fetches both halves of the empty-default open view — the
-// review-requested search and the wider is:open list — caching each under its
-// own filter+limit key. The two fetches run concurrently: they're independent,
-// so wall-clock is the slower of the two rather than their sum.
+// sectionsFetchCmd fetches the thirds of the empty-default open view — the
+// review-requested search, the reviewed-by-me search (PRs GitHub drops from the
+// first search once the viewer submits a review), and the wider is:open list —
+// caching each under its own filter+limit key. The fetches run concurrently:
+// they're independent, so wall-clock is the slowest of them, not their sum.
 func (m Model) sectionsFetchCmd() tea.Cmd {
 	src := m.prSource
 	state := m.state
 	reviewF := searchFor("pr", state, reviewBody)
+	reviewedF := searchFor("pr", state, reviewedBody)
 	return func() tea.Msg {
 		type half struct {
 			prs []gh.PR
 			raw []byte
 			err error
 		}
-		var review, open half
+		var review, reviewed, open half
 		var wg sync.WaitGroup
-		wg.Add(2)
+		wg.Add(3)
 		go func() {
 			defer wg.Done()
 			review.prs, review.raw, review.err = src.FetchPRs(reviewF, defaultLimit)
+		}()
+		go func() {
+			defer wg.Done()
+			reviewed.prs, reviewed.raw, reviewed.err = src.FetchPRs(reviewedF, defaultLimit)
 		}()
 		go func() {
 			defer wg.Done()
@@ -926,10 +990,16 @@ func (m Model) sectionsFetchCmd() tea.Cmd {
 		if review.err != nil {
 			return fetchFailedMsg{err: review.err, filter: reviewF}
 		}
+		if reviewed.err != nil {
+			return fetchFailedMsg{err: reviewed.err, filter: reviewedF}
+		}
 		if open.err != nil {
 			return fetchFailedMsg{err: open.err, filter: "is:open"}
 		}
-		return sectionsFetchedMsg{state: state, review: review.prs, reviewRaw: review.raw, open: open.prs, openRaw: open.raw}
+		return sectionsFetchedMsg{state: state,
+			review: review.prs, reviewRaw: review.raw,
+			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
+			open: open.prs, openRaw: open.raw}
 	}
 }
 
@@ -1118,7 +1188,7 @@ func (m *Model) switchToFilter() tea.Cmd {
 	}
 	if !hit {
 		if m.sectionsDefault() {
-			m.setSections(nil, nil, m.viewerLogin) // drop stale rows while the fetch is in flight
+			m.setSections(nil, nil, nil, m.viewerLogin) // drop stale rows while the fetch is in flight
 		} else {
 			m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
 		}
@@ -1261,6 +1331,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 	sectionsFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit)) &&
+		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit)) &&
 		m.cacheFresh(prKey(m.repo, "is:open", openListLimit))
 	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
@@ -1326,6 +1397,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sectionsFetchedMsg:
 		if m.cache != nil {
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
+			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewedBody), defaultLimit), msg.reviewedRaw)
 			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
 		}
 		if !m.sectionsDefault() || msg.state != m.state {
@@ -1334,12 +1406,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.loaded = true
 		m.sel.clear()
-		m.setSections(msg.review, msg.open, m.viewerLogin)
+		m.setSections(msg.review, msg.reviewed, msg.open, m.viewerLogin)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
 		m.repaintActive()
-		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // a background prewarm failed; the current view is unaffected
@@ -1372,9 +1444,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.sectionsDefault() {
 			rev, _ := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
+			revd, _ := m.cachedPRs(searchFor("pr", m.state, reviewedBody), defaultLimit)
 			open, ok := m.cachedPRs("is:open", openListLimit)
 			if ok {
-				m.setSections(rev, open, m.viewerLogin)
+				m.setSections(rev, revd, open, m.viewerLogin)
 			}
 		}
 		return m, nil
@@ -1436,7 +1509,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// state the hydrated rows were painted under and warm detail/poll.
 		m.refreshing = false
 		m.loaded = true
-		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
+		return m, tea.Batch(m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
 		if !m.refreshing && !m.actionRunning() && !m.logLoading {
 			m.spinning = false // fetch/action settled; let the loop die
@@ -2179,6 +2252,7 @@ func (m Model) legendGroups() []legendGroup {
 			{"✓", "CI pass"}, {"✗", "CI fail"}, {ciRunningGlyph, "CI running"}, {"·", "no CI"},
 			{mergedGlyph, "merged"}, {closedGlyph, "closed"},
 			{warnGlyph, "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
+			{"●", "review required"}, {reviewCommentedGlyph, "commented by me"},
 			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"}, {"[draft]", "dimmed"},
 		}},
 	}
