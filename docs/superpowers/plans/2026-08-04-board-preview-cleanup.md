@@ -17,6 +17,16 @@ Issue: #88 · Closes #62
 - Never query a GraphQL **connection** for this work. Only leaf scalars on the search node are free. `additions`, `deletions`, `changedFiles`, `stack`, `stackEntry` are all leaves or objects-with-scalar-leaves.
 - Nerd Font glyphs are declared as named constants with a `// nerd: nf-...` comment naming the intended icon. Do NOT invent glyph codepoints — use the placeholder given in the task and leave the comment; the operator sets the real value.
 - The **title column and the glyph gutter never shed** under the responsive ladder.
+- **A rendered row is exactly `w` display cells** at every width and in both focus
+  states. Any column added to `right` must be bounded, or the row grows *wider*
+  than `w` instead of shrinking once `titleRoom` and `gap` reach their `1` floors.
+  The exact-fill sweep must include a **39-character login** (GitHub's maximum):
+  every pre-existing fixture used a short one (`al`, `octocat-bot`), so an
+  unbounded author overflowed the row while CI stayed green.
+- **The `Tree` slot is clipped as well as padded** — a hard 3 cells. It exists to
+  freeze the column grid ahead of #89, so a 4-cell or double-width value must not
+  shift `#num`. `o.Tree` arrives styled, so clip with `ansi.Truncate`, never
+  `truncate` (which walks runes and would slice an SGR sequence).
 - Row rendering tests are differential, not golden (see the comment at the top of `internal/ui/gridhints_test.go`). Assert properties, not frozen strings.
 - Run `go test ./...` from the repo root before every commit.
 - Commit messages use Conventional Commits with a scope, e.g. `feat(ui):`, `refactor(ui):`, `feat(gh):`.
@@ -392,7 +402,17 @@ In `internal/ui/section.go`, delete this field from `RowOpts`:
 In `internal/ui/section.go`, replace the whole body from the `// Two-line rows lead line 2 with the author; single-line keeps it beside age.` comment through the final `return line1 + "\n" + line2` with:
 
 ```go
-	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
+	// The author must be bounded or rightW grows without limit and the row gets
+	// WIDER than w instead of shrinking: past w < leftW+rightW+2 both titleRoom
+	// and gap sit on their 1 floors. A 39-char login (GitHub's max) at innerW=50
+	// — a docked preview on a 120-col terminal — otherwise renders 65 cells, with
+	// the title collapsed to "…" and the age column gone. 17 is the author column
+	// width Task 8 settles on, so this does not fight the eventual design.
+	// truncate is safe here only because author is still plain text.
+	// authorStyle takes the login (it hashes it to a stable hue); Render takes the
+	// text actually shown, so the truncation belongs inside Render.
+	right := authorStyle(author).Render(truncate(author, min(17, max(6, w/4)))) +
+		dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
@@ -448,13 +468,21 @@ In `renderItemRow`, change the `left` construction (currently
 ```go
 	// Tree slot: after the state glyphs, so a stacked row's ci/rv/auto/flag stay
 	// on the same columns as every other row's.
+	//
+	// Hard 3 cells, clipped as well as padded — the slot exists to freeze the
+	// column grid ahead of #89, and it shears the moment #89 passes a 4-cell
+	// string. o.Tree arrives styled, so truncate is wrong here (it walks runes and
+	// would slice an SGR sequence); ansi.Truncate is escape-aware.
 	const treeW = 3
-	tree := o.Tree
+	tree := ansi.Truncate(o.Tree, treeW, "")
 	if pad := treeW - lipgloss.Width(tree); pad > 0 {
 		tree += strings.Repeat(" ", pad)
 	}
 	left := gutter + tree + numStyle.Render(numCell) + " "
 ```
+
+Add `"github.com/charmbracelet/x/ansi"` to the file's imports — it is already a
+direct dependency at v0.11.7, so `go.mod` does not change.
 
 - [ ] **Step 6: Drop the now-unused params**
 
