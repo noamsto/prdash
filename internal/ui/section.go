@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
@@ -409,11 +410,16 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	// Tree slot: after the state glyphs, so a stacked row's ci/rv/auto/flag stay
 	// on the same columns as every other row's.
 	const treeW = 3
-	tree := o.Tree
+	// Clip before padding: the slot only freezes the grid if it is a hard 3 cells.
+	// ansi.Truncate, not truncate — o.Tree arrives styled.
+	tree := ansi.Truncate(o.Tree, treeW, "")
 	if pad := treeW - lipgloss.Width(tree); pad > 0 {
 		tree += strings.Repeat(" ", pad)
 	}
 	left := gutter + tree + numStyle.Render(numCell) + " "
+	// A long login (GitHub allows 39 chars) would otherwise push rightW past the
+	// title's budget and make the row wider than w instead of squeezing the title.
+	author = truncate(author, min(17, max(6, w/4)))
 	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
@@ -432,7 +438,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	tags := ""
 	if o.Landed {
 		const tag = " landed"
-		tags += dimStyle.Render(tag)
+		tags = dimStyle.Render(tag)
 		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
 			titleRoom = 1
 		}

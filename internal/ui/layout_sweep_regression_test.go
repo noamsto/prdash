@@ -35,6 +35,15 @@ func sweepPRs() []gh.PR {
 	}
 }
 
+// maxLoginPR carries a login at GitHub's 39-character maximum — the worst case
+// for the author segment, which sits on the row's right edge and so eats into the
+// title's budget. sweepPRs is left untouched (other tests pin details by number).
+func maxLoginPR() gh.PR {
+	p := gh.PR{Number: 99, Title: "widest possible author login", ReviewDecision: "APPROVED"}
+	p.Author.Login = strings.Repeat("l", 39)
+	return p
+}
+
 // TestDenseRowFillsWidthAcrossWidthSweep locks the core board invariant: every
 // dense row is one line and fills exactly the target width, across a sweep of
 // widths (not the single 80-col point the existing single-line test checks). An
@@ -44,7 +53,7 @@ func sweepPRs() []gh.PR {
 // (a degenerate terminal), so exact-fill is not promised there — see
 // TestDenseRowDegradesWithoutCrashAtNarrowWidths for that regime.
 func TestDenseRowFillsWidthAcrossWidthSweep(t *testing.T) {
-	prs := sweepPRs()
+	prs := append(sweepPRs(), maxLoginPR())
 	ps := NewPRSection("is:open")
 	ps.SetPRs(prs)
 	if got := ps.Len(); got != len(prs) {
@@ -66,6 +75,33 @@ func TestDenseRowFillsWidthAcrossWidthSweep(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestDenseRowTreeSlotIsHardThreeCells pins the tree slot's whole purpose: it
+// freezes the column grid ahead of the stacked-PR feature, so an over-wide value
+// must be clipped rather than shift the number column. Covers a multi-cell ASCII
+// prefix, a double-width (CJK) one, and a styled zero-width value.
+func TestDenseRowTreeSlotIsHardThreeCells(t *testing.T) {
+	ps := NewPRSection("is:open")
+	ps.SetPRs([]gh.PR{{Number: 7, Title: "tree slot row"}})
+	nw := columnWidths(ps)
+
+	numColumn := func(t *testing.T, tree string) int {
+		t.Helper()
+		plain := ansi.Strip(ps.RenderRow(0, RowOpts{Width: 80, NumWidth: nw, Tree: tree}))
+		idx := strings.Index(plain, "#")
+		if idx < 0 {
+			t.Fatalf("tree=%q: no number cell in row %q", tree, plain)
+		}
+		return lipgloss.Width(plain[:idx])
+	}
+
+	want := numColumn(t, "")
+	for _, tree := range []string{" ", "│ ", "├─ ", "├── ", "重试", "└──── ", dimStyle.Render("")} {
+		if got := numColumn(t, tree); got != want {
+			t.Errorf("tree=%q: number column starts at %d, want %d (tree slot must be exactly 3 cells)", tree, got, want)
 		}
 	}
 }
