@@ -67,6 +67,15 @@ type AutoMergeRequest struct {
 	MergeMethod string `json:"mergeMethod"` // MERGE | SQUASH | REBASE
 }
 
+// PRStack is the stack a PR belongs to. Number is drawn from the repo's shared
+// issue/PR sequence but resolves to neither a PR nor an issue and has no url, so
+// it is an internal identity only — never render it as "#N".
+type PRStack struct {
+	Number      int    `json:"number"`
+	Size        int    `json:"size"`
+	BaseRefName string `json:"baseRefName"`
+}
+
 type PR struct {
 	// ID is the GraphQL node ID (e.g. "PR_kwDOA..."), populated only on the
 	// GraphSource list path — every mutation input needs it as pullRequestId.
@@ -93,6 +102,13 @@ type PR struct {
 	State            string            `json:"state"` // OPEN | CLOSED | MERGED
 	Body             string            `json:"body"`
 	AutoMergeRequest *AutoMergeRequest `json:"autoMergeRequest"`
+	Additions        int               `json:"additions"`
+	Deletions        int               `json:"deletions"`
+	ChangedFiles     int               `json:"changedFiles"`
+	// Stack is nil unless the PR is part of a GitHub stack. StackPosition is
+	// 1-based within that stack and 0 when Stack is nil.
+	Stack         *PRStack `json:"stack"`
+	StackPosition int      `json:"stackPosition"`
 }
 
 // IsMerged reports whether the PR landed — its status mark and color differ from

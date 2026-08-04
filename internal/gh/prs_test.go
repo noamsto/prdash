@@ -152,3 +152,39 @@ func TestPRReadsAutoMergeRequest(t *testing.T) {
 		t.Errorf("PR 8 should not have auto-merge enabled: %+v", prs[1])
 	}
 }
+
+func TestMapPRCopiesDiffstatAndStack(t *testing.T) {
+	g := qlPR{
+		Number:       3065,
+		Additions:    412,
+		Deletions:    18,
+		ChangedFiles: 7,
+	}
+	g.Stack = &qlStack{Number: 3074, Size: 2, BaseRefName: "main"}
+	g.StackEntry = &qlStackEntry{Position: 1}
+
+	p := mapPR(g)
+
+	if p.Additions != 412 || p.Deletions != 18 || p.ChangedFiles != 7 {
+		t.Fatalf("diffstat not copied: +%d -%d files=%d", p.Additions, p.Deletions, p.ChangedFiles)
+	}
+	if p.Stack == nil {
+		t.Fatal("Stack not copied")
+	}
+	if p.Stack.Number != 3074 || p.Stack.Size != 2 || p.Stack.BaseRefName != "main" {
+		t.Fatalf("stack wrong: %+v", *p.Stack)
+	}
+	if p.StackPosition != 1 {
+		t.Fatalf("StackPosition = %d, want 1", p.StackPosition)
+	}
+}
+
+func TestMapPRUnstackedLeavesStackNil(t *testing.T) {
+	p := mapPR(qlPR{Number: 3086})
+	if p.Stack != nil {
+		t.Fatalf("Stack = %+v, want nil for an unstacked PR", p.Stack)
+	}
+	if p.StackPosition != 0 {
+		t.Fatalf("StackPosition = %d, want 0", p.StackPosition)
+	}
+}

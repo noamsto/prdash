@@ -2698,7 +2698,9 @@ func (m Model) statusBar() string {
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
-const schemaVer = "v4"
+// v5 adds additions/deletions/changedFiles and the stack fields; a v4 cache
+// entry has none of them and would paint "+0 -0".
+const schemaVer = "v5"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.

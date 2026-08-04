@@ -58,6 +58,20 @@ func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
 	return prs, raw, nil
 }
 
+// qlStack / qlStackEntry are GitHub's stacked-PR fields. Both are OBJECT fields
+// whose selected members are scalars — not connections — so they add no GraphQL
+// cost. Deliberately omits stack.entries, which IS a connection and is
+// unnecessary: every open member is already in the same search result.
+type qlStack struct {
+	Number      int
+	Size        int
+	BaseRefName string
+}
+
+type qlStackEntry struct {
+	Position int
+}
+
 // qlPR is the githubv4 shape of one search result, covering exactly the fields
 // mapPR copies into gh.PR. The statusCheckRollup union is flattened into
 // []Check by mapPR.
@@ -72,6 +86,11 @@ type qlPR struct {
 	HeadRefName    string
 	BaseRefName    string
 	ReviewDecision string
+	Additions      int
+	Deletions      int
+	ChangedFiles   int
+	Stack          *qlStack
+	StackEntry     *qlStackEntry
 	UpdatedAt      githubv4.DateTime
 	MergedAt       *githubv4.DateTime
 	ClosedAt       *githubv4.DateTime
@@ -160,6 +179,9 @@ func mapPR(g qlPR) PR {
 		BaseRefName:    g.BaseRefName,
 		ReviewDecision: g.ReviewDecision,
 		UpdatedAt:      g.UpdatedAt.Time,
+		Additions:      g.Additions,
+		Deletions:      g.Deletions,
+		ChangedFiles:   g.ChangedFiles,
 	}
 	// gh reports GitHub App actors (dependabot, etc.) with an "app/" prefix;
 	// the GraphQL Bot actor's login has none, so add it to match.
@@ -175,6 +197,12 @@ func mapPR(g qlPR) PR {
 	}
 	if g.AutoMergeRequest != nil {
 		p.AutoMergeRequest = &AutoMergeRequest{MergeMethod: g.AutoMergeRequest.MergeMethod}
+	}
+	if g.Stack != nil {
+		p.Stack = &PRStack{Number: g.Stack.Number, Size: g.Stack.Size, BaseRefName: g.Stack.BaseRefName}
+	}
+	if g.StackEntry != nil {
+		p.StackPosition = g.StackEntry.Position
 	}
 	for _, l := range g.Labels.Nodes {
 		p.Labels = append(p.Labels, Label{Name: l.Name, Color: l.Color})
