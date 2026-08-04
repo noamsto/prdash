@@ -34,6 +34,7 @@ Issue: #88 · Closes #62
   shift `#num`. `o.Tree` arrives styled, so clip with `ansi.Truncate`, never
   `truncate` (which walks runes and would slice an SGR sequence).
 - Row rendering tests are differential, not golden (see the comment at the top of `internal/ui/gridhints_test.go`). Assert properties, not frozen strings.
+- **Never test a column by measuring an offset to its right.** Exact fill means the trailing gap absorbs any discrepancy to hold the row at `w`, so anything right-anchored sits at a structurally fixed offset whether or not the column under test is correct. Two such assertions were written for the diffstat and *both* were vacuous — one shipped in this plan, one was prescribed as its fix. Measure the column's **own** width (cells between its neighbours), and prove the assertion has teeth by breaking the producing function, watching it fail, then restoring it. A guard nobody has seen fail is indistinguishable from a tautology.
 - Run `go test ./...` from the repo root before every commit.
 - Commit messages use Conventional Commits with a scope, e.g. `feat(ui):`, `refactor(ui):`, `feat(gh):`.
 
@@ -838,8 +839,18 @@ Add to `RowOpts` in `internal/ui/section.go`:
 In `renderItemRow`, add a `diff string` parameter after `age`, and build `right` from it. Replace the `right :=` line from Task 3 with:
 
 ```go
-	right := authorStyle(author).Render(author)
-	if o.DiffWidth > 0 {
+	// The diffstat's cells must come OUT of the author's budget, or the author
+	// claims cells the diffstat needs and the row overflows w. And unlike the
+	// author the diffstat is not truncatable — once authorCap has clamped to 0
+	// there is nothing left to shrink, so when it does not fit it drops out
+	// entirely, the same degradation tier the author already has.
+	diffExtra := 0
+	if o.DiffWidth > 0 && w-leftW-5-2-1-2-o.DiffWidth >= 0 {
+		diffExtra = 2 + o.DiffWidth // its own "  " separator plus the column
+	}
+	authorCap := min(17, max(0, w-leftW-5-2-1-diffExtra))
+	right := authorStyle(author).Render(truncate(author, authorCap))
+	if diffExtra > 0 {
 		pad := o.DiffWidth - lipgloss.Width(diff)
 		if pad < 0 {
 			pad = 0
@@ -847,6 +858,7 @@ In `renderItemRow`, add a `diff string` parameter after `age`, and build `right`
 		right += "  " + strings.Repeat(" ", pad) + diff // right-aligned in a fixed column
 	}
 	right += dimStyle.Render(fmt.Sprintf("  %3s", age))
+	rightW := lipgloss.Width(right)
 ```
 
 In `PRSection.RenderRow`, pass it:
