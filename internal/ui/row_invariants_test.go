@@ -89,10 +89,12 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 	}
 
 	// renderItemRow floors its working width at 24 and reserves 3 cells for the
-	// tree slot, so 26 is the smallest width where exact-fill is a real
-	// contract; below it the row is legitimately wider than w (covered by
-	// TestDenseRowDegradesWithoutCrashAtNarrowWidths). Sweeping every integer up
-	// to 200 is cheap since this is pure string composition.
+	// tree slot, so 26 is the smallest width where exact-fill is a real contract
+	// for a 4-cell number column; below it the row is legitimately wider than w
+	// (covered by TestDenseRowDegradesWithoutCrashAtNarrowWidths). A wider number
+	// column shifts that floor by the same amount, since it lands in leftW, which
+	// every budget in the row subtracts from w. Sweeping every integer up to 200
+	// is cheap since this is pure string composition.
 	for w := 26; w <= 200; w++ {
 		for _, login := range logins {
 			wantSGR := extractLeadingSGRPrefix(authorStyle(login).Render("x"))
@@ -104,6 +106,9 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 					// calculation that ignores it overflows the row.
 					for _, landed := range []bool{false, true} {
 						for _, nc := range nums {
+							if w < 26+nc.width-4 {
+								continue
+							}
 							num := nc.num
 							opts := RowOpts{
 								Width:     w,

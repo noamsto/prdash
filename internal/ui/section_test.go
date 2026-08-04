@@ -865,3 +865,25 @@ func TestDiffstatColumnWidthIsStableAcrossRows(t *testing.T) {
 		t.Errorf("narrow-diffstat row: diffstat column is %d cells, want dw=%d", got, dw)
 	}
 }
+
+// TestDiffstatWiderThanItsColumnStillHoldsWidth pins renderItemRow's clamp of
+// the diffstat to DiffWidth. renderList can't produce this pairing — one pass
+// sizes DiffWidth from every shown row — so the case is constructed directly:
+// without the clamp the diffstat renders at natural width, inflates rightW past
+// its budget, and the row runs 6 cells past w.
+func TestDiffstatWiderThanItsColumnStillHoldsWidth(t *testing.T) {
+	diff := diffstat(412, 18)
+	if got := lipgloss.Width(diff); got != 8 {
+		t.Fatalf("fixture diffstat is %d cells, want 8 (test would not exceed the column below)", got)
+	}
+	for dw := 1; dw < 8; dw++ {
+		for w := 30; w <= 120; w++ {
+			o := RowOpts{Width: w, NumWidth: 5, DiffWidth: dw}
+			row := renderItemRow(o, accentStyle, "#3087", "a title long enough to be truncated",
+				"noamsto-dev", "2d", diff, ciGlyph("success"), reviewDot("APPROVED"), autoMergeGlyph(true))
+			if got := lipgloss.Width(row); got != w {
+				t.Fatalf("DiffWidth=%d w=%d: row width %d, want exactly %d", dw, w, got, w)
+			}
+		}
+	}
+}

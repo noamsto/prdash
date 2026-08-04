@@ -388,6 +388,10 @@ func oneCell(s string) string {
 	return s
 }
 
+// landedTag suffixes the title of a PR merged during this session; without it a
+// merge glyph on the open board reads as a live PR. ASCII, so len is its width.
+const landedTag = " landed"
+
 // renderItemRow renders one dense row:
 //
 //	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
@@ -437,34 +441,41 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	// Task 8 settles on. At very narrow widths the author drops out entirely,
 	// which is what the responsive ladder would do anyway.
 	//
+	// slack is the whole budget the title, author, diffstat and landed tag share:
 	// 5 = the "  NNN" age suffix, 2 = the title/right separators, 1 = a minimum
-	// title cell. diffExtra reserves the diffstat's own "  " separator plus its
-	// fixed column width, so the author doesn't claim cells the diffstat needs.
+	// title cell. Every optional column is carved out of this one number so the
+	// gap below never has to be floored — a floored gap is overflow, not slack.
 	//
-	// The diffstat isn't truncatable like the author (there's no useful partial
-	// rendering of "+412 -18"), so once even an empty author can't make room for
-	// it, it drops out entirely rather than push the row past w — same
-	// responsive-ladder degradation the author gets above.
+	// Neither the diffstat nor the tag is truncatable like the author (there's no
+	// useful partial rendering of "+412 -18", and " landed" clipped is a lie), so
+	// once even an empty author can't make room they drop out entirely rather
+	// than push the row past w — same responsive-ladder degradation the author
+	// gets above. diffExtra also reserves the diffstat's own "  " separator.
 	//
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated.
+	slack := w - leftW - 5 - 2 - 1
+	tagW := 0
+	if o.Landed && slack-len(landedTag) >= 0 {
+		tagW = len(landedTag)
+	}
 	diffExtra := 0
-	if o.DiffWidth > 0 && w-leftW-5-2-1-2-o.DiffWidth >= 0 {
+	if o.DiffWidth > 0 && slack-tagW-2-o.DiffWidth >= 0 {
 		diffExtra = 2 + o.DiffWidth
 	}
-	authorCap := min(17, max(0, w-leftW-5-2-1-diffExtra))
+	authorCap := min(17, max(0, slack-tagW-diffExtra))
 	right := authorStyle(author).Render(truncate(author, authorCap))
 	if diffExtra > 0 {
-		pad := o.DiffWidth - lipgloss.Width(diff)
-		if pad < 0 {
-			pad = 0
-		}
-		right += "  " + strings.Repeat(" ", pad) + diff // right-aligned in a fixed column
+		// Clamp before padding: DiffWidth is the column, so a diffstat wider than
+		// it would render at natural width and push the row past w.
+		// ansi.Truncate, not truncate — diff arrives styled.
+		diff = ansi.Truncate(diff, o.DiffWidth, "")
+		right += "  " + strings.Repeat(" ", o.DiffWidth-lipgloss.Width(diff)) + diff // right-aligned in a fixed column
 	}
 	right += dimStyle.Render(fmt.Sprintf("  %3s", age))
 	rightW := lipgloss.Width(right)
 
-	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
+	titleRoom := w - leftW - rightW - 2 - tagW // -2: title/right separators
 	if titleRoom < 1 {
 		titleRoom = 1
 	}
@@ -475,14 +486,9 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	case o.Draft:
 		titleSt = dimStyle
 	}
-	// Without the tag, a merge glyph on the open board reads as a live PR.
 	tags := ""
-	if o.Landed {
-		const tag = " landed"
-		tags = dimStyle.Render(tag)
-		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
-			titleRoom = 1
-		}
+	if tagW > 0 {
+		tags = dimStyle.Render(landedTag)
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
 
