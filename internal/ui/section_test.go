@@ -791,15 +791,17 @@ func extractLeadingSGRPrefix(s string) string {
 
 func stripANSIForTest(s string) string { return ansi.Strip(s) }
 
-// idxFromRight reports how many display cells sit between the end of sub and the
-// end of the line, or -1 when sub is absent.
-func idxFromRight(line, sub string) int {
-	plain := stripANSIForTest(line)
-	i := strings.LastIndex(plain, sub)
+// cellOffset finds sub's starting column in row, in display cells rather than
+// bytes: row prefixes carry multi-byte glyphs (box-drawing runes are 3 bytes
+// but 1 cell), so a byte index disagrees with the visual column.
+func cellOffset(t *testing.T, row, sub string) int {
+	t.Helper()
+	plain := stripANSIForTest(row)
+	i := strings.Index(plain, sub)
 	if i < 0 {
-		return -1
+		t.Fatalf("%q not found in %q", sub, plain)
 	}
-	return len(plain) - (i + len(sub))
+	return lipgloss.Width(plain[:i])
 }
 
 func TestDiffstatFormatting(t *testing.T) {
@@ -822,9 +824,16 @@ func TestDiffstatFormatting(t *testing.T) {
 
 func TestDiffstatColumnWidthIsStableAcrossRows(t *testing.T) {
 	s := NewPRSection("is:open")
+	now := time.Now()
 	s.SetPRs([]gh.PR{
-		{Number: 3087, Title: "big", State: "OPEN", Additions: 1600, Deletions: 63},
-		{Number: 3084, Title: "small", State: "OPEN", Additions: 31, Deletions: 4},
+		// Non-zero and distinct: the original bug fixture left UpdatedAt unset, so
+		// ageString (section.go) returned "" for both rows and the age assertion
+		// below could never fire. 5h/3d sit well inside ageString's hour/day
+		// buckets, so neither flips to a different unit while the test runs, and
+		// both fit the age field's 3-cell width so the suffix stays a fixed 5
+		// cells (see diffColWidth below).
+		{Number: 3087, Title: "big", State: "OPEN", Additions: 1600, Deletions: 63, UpdatedAt: now.Add(-5 * time.Hour)},
+		{Number: 3084, Title: "small", State: "OPEN", Additions: 31, Deletions: 4, UpdatedAt: now.Add(-3 * 24 * time.Hour)},
 	})
 	s.prs[0].Author.Login = "noamsto"
 	s.prs[1].Author.Login = "rubytify"
@@ -836,8 +845,23 @@ func TestDiffstatColumnWidthIsStableAcrossRows(t *testing.T) {
 	if lipgloss.Width(a) != lipgloss.Width(b) {
 		t.Fatalf("rows differ in width: %d vs %d", lipgloss.Width(a), lipgloss.Width(b))
 	}
-	// The age column is the rightmost thing; it must start at the same offset.
-	if idxFromRight(a, "1m") != idxFromRight(b, "10m") {
-		t.Error("age column shifted between rows — diffstat width is not fixed")
+	// A same-cell check on the age column itself (e.g. cellOffset(a, "5h") vs
+	// cellOffset(b, "3d")) cannot fail: the age suffix is a fixed 5 cells
+	// ("  " + a right-aligned 3-char field) glued to the very end of the row,
+	// and renderItemRow's trailing gap absorbs any diffstat-width error to hold
+	// the row at the exact-fill width above regardless — confirmed by breaking
+	// diffstatWidth (see commit message) and watching that check keep passing.
+	// The assertion with teeth is on the diffstat column itself: the cells
+	// between the end of the author login and that fixed suffix must equal dw
+	// for every row, wide diffstat or narrow.
+	diffColWidth := func(row, login string) int {
+		authorEnd := cellOffset(t, row, login) + lipgloss.Width(login)
+		return lipgloss.Width(stripANSIForTest(row)) - 5 - authorEnd - 2 // -5 age suffix, -2 "  " separator
+	}
+	if got := diffColWidth(a, "noamsto"); got != dw {
+		t.Errorf("wide-diffstat row: diffstat column is %d cells, want dw=%d", got, dw)
+	}
+	if got := diffColWidth(b, "rubytify"); got != dw {
+		t.Errorf("narrow-diffstat row: diffstat column is %d cells, want dw=%d", got, dw)
 	}
 }
