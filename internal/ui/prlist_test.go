@@ -2085,3 +2085,30 @@ func TestAdvanceSelectionFlatAllThenNone(t *testing.T) {
 		t.Fatalf("flat second V should clear, got %d", m.sel.count())
 	}
 }
+
+func TestVKeyAdvancesSelection(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.width, m.height = 120, 40
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("a")}},
+		nil,
+		[]gh.PR{{Number: 1, Author: author("a")}, {Number: 2, Author: author("x")}},
+		"me",
+	)
+	m.cursor = 0
+	u, _ := m.Update(keyMsg("V"))
+	m = u.(Model)
+	if m.sel.count() != 1 || !m.sel.has(0) {
+		t.Fatalf("V on Review group: sel=%v, want {0}", m.sel.indices())
+	}
+	u, _ = m.Update(keyMsg("V"))
+	m = u.(Model)
+	if m.sel.count() != 2 {
+		t.Fatalf("second V should select all, got %d", m.sel.count())
+	}
+	u, _ = m.Update(keyMsg("V"))
+	m = u.(Model)
+	if m.sel.count() != 0 {
+		t.Fatalf("third V should clear, got %d", m.sel.count())
+	}
+}

@@ -1930,11 +1930,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderList()
 			return m, nil
 		case "V":
-			for i := 0; i < m.section.Len(); i++ {
-				if !m.sel.has(i) {
-					m.sel.toggle(i)
-				}
-			}
+			m.advanceSelection()
 			m.renderList()
 			return m, nil
 		case "p":
@@ -2326,7 +2322,7 @@ func (m Model) legendGroups() []legendGroup {
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand"})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "all"})
+	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "group"})
 	groups = append(groups, legendGroup{"navigation", nav})
 
 	filters := []keyHint{{"/", "filter (@user, is:, text)"}, {"s", "state"}}
@@ -2421,7 +2417,7 @@ type keyHint struct{ key, label string }
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
 		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
-		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
+		{"/", "find"}, {"space", "select"}, {"V", "group"}, {"q", "quit"},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
