@@ -363,10 +363,21 @@ func TestRowIsAlwaysOneLine(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run the test and expect it to PASS**
 
 Run: `go test ./internal/ui/ -run TestRowIsAlwaysOneLine -v`
-Expected: FAIL — the row contains a newline and the label/branch text, because `RowOpts{}` zero-values `TwoLine` to false but `RenderRow` still passes labels through and `renderItemRow` still has the two-line branch. (If it passes because `TwoLine` defaulted false, still proceed — the deletions below are what make the single path unconditional.)
+Expected: **PASS**.
+
+This is deliberate, and the one place in this plan where red-first does not
+apply. `RowOpts{}` zero-values `TwoLine` to false, so the test already passes
+against current code: it is a **regression guard added ahead of a deletion**, not
+a specification of new behaviour. Its job is to fail if a second line is ever
+reintroduced.
+
+Verification for this task is structural instead, in Step 10: the two-line path
+stops existing, and the compiler proves it by rejecting every remaining
+`TwoLine` reference. Do **not** manufacture a red state by temporarily setting
+`TwoLine: true` — after Step 3 that field is gone and the test would not compile.
 
 - [ ] **Step 3: Remove `TwoLine` from `RowOpts`**
 
@@ -1434,19 +1445,26 @@ func (m Model) filterBar() string {
 	}
 	body = accentStyle.Render(filterGlyph) + " " + body
 
-	// The match count is the lowest-priority element and drops first.
-	if total, shown := m.section.Len(), m.shownCount(); m.filterInput.Value() != "" {
+	// The match count is the lowest-priority element and drops first. Len() is
+	// post-filter (SetShown narrows it) and Haystacks() covers the whole set, so
+	// the pair is total→shown without storing anything on the model.
+	if m.filterInput.Value() != "" {
+		total, shown := len(m.section.Haystacks()), m.section.Len()
 		count := dimStyle.Render(fmt.Sprintf("%d→%d", total, shown))
 		if pad := inner - lipgloss.Width(body) - lipgloss.Width(count); pad > 0 {
 			body += strings.Repeat(" ", pad) + count
 		}
 	}
+	// body is already styled, so it must NOT go through truncate — that walks
+	// runes and would slice an ANSI escape. lipgloss's Width + MaxWidth clamp
+	// styled content safely.
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(theme.Rule)).
 		Width(inner).
+		MaxWidth(inner + 2). // +2 for the border columns
 		Padding(0, 1).
-		Render(truncate2(body, inner))
+		Render(body)
 }
 ```
 
@@ -1456,24 +1474,11 @@ Add the glyph to `internal/ui/theme.go`:
 const filterGlyph = "⌕" // nerd: nf-oct-search
 ```
 
-If a style-safe truncate for already-rendered strings does not exist, do not add `truncate2` — instead clamp `body` before styling and drop that call. `truncate` is documented as plain-text only and **will slice an escape sequence** if used on styled output.
-
-- [ ] **Step 4: Add the match-count accessor**
-
-If `shownCount` does not exist, add to `internal/ui/prlist.go`:
-
-```go
-// shownCount is the post-filter row count, for the filter bar's n→m readout.
-func (m Model) shownCount() int { return m.section.Len() }
-```
-
-If `m.section.Len()` is already post-filter, capture the pre-filter total where `applyFilter` runs and store it on the model as `m.filterTotal int`, then use that as `total`.
-
-- [ ] **Step 5: Delete the old dropdown spacer hack**
+- [ ] **Step 4: Delete the old dropdown spacer hack**
 
 The removed code returned `bar + "\n"` to leave a clear row for the floating `@`-panel. The box now always occupies three rows, so confirm `omniDropdownY` still lands the panel below the box; if it assumed a 1-row bar, add 2 to its offset.
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 5: Run tests**
 
 Run: `go test ./internal/ui/ -run 'TestFilterBar|TestOmni' -v`
 Expected: PASS
@@ -1481,7 +1486,7 @@ Expected: PASS
 Run: `go test ./...`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add internal/ui/prlist.go internal/ui/theme.go internal/ui/prlist_test.go
