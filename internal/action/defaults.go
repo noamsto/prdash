@@ -11,7 +11,7 @@ func DefaultPRActions() map[string]Action {
 			Progress: "Merging", Past: "Merged", Fail: "Merge failed"},
 		"A": {Key: "A", Label: "Auto-merge (squash)",
 			Command: Command{Native: "auto-merge-squash"},
-			Scope:   "per-selected", ConfirmOthers: true,
+			Scope:   "per-selected", ConfirmOthers: true, Refresh: true,
 			Progress: "Enabling auto-merge", Past: "Auto-merge on", Fail: "Auto-merge failed"},
 		"r": {Key: "r", Label: "Rerun checks",
 			Command: Command{Builtin: "rerun-failed"}, Scope: "single", Refresh: true,

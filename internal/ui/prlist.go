@@ -213,6 +213,59 @@ func delayedRefreshCmd() tea.Cmd {
 // check has demonstrably started AFTER the stamp (real new runs have
 // appeared) or the window expires. Clearing on any pending check, as before,
 // made the override no-op in exactly the case it exists for.
+//
+// applyOptimisticAction paints mutation results onto the in-memory board as
+// soon as the request succeeds, so glyphs do not wait on backgroundRefresh.
+func (m *Model) applyOptimisticAction() {
+	if m.actionStatus == nil {
+		return
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return
+	}
+	switch m.actionStatus.native {
+	case "auto-merge-squash":
+		for _, n := range m.actionStatus.nums {
+			ps.updatePR(n, func(p *gh.PR) {
+				p.AutoMergeRequest = &gh.AutoMergeRequest{MergeMethod: "SQUASH"}
+			})
+		}
+	case "approve":
+		for _, n := range m.actionStatus.nums {
+			ps.updatePR(n, func(p *gh.PR) {
+				p.ReviewDecision = "APPROVED"
+			})
+			if m.viewerLogin == "" {
+				continue
+			}
+			d, ok := m.detail[n]
+			if !ok {
+				continue
+			}
+			replaced := false
+			for i := range d.LatestReviews {
+				if d.LatestReviews[i].Author.Login == m.viewerLogin {
+					d.LatestReviews[i].State = "APPROVED"
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				var r gh.Review
+				r.Author.Login = m.viewerLogin
+				r.State = "APPROVED"
+				d.LatestReviews = append(d.LatestReviews, r)
+			}
+			m.detail[n] = d
+		}
+	default:
+		return
+	}
+	m.rowGen++
+	m.renderList()
+}
+
 func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
 	now := time.Now()
 	for n, stamp := range m.ciRerun {
@@ -1588,6 +1641,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mergedSticky[p.Number] = p
 				delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
 			}
+			m.applyOptimisticAction()
 		}
 		if msg.err == nil && m.actionStatus.refresh {
 			for _, n := range m.actionStatus.nums {

@@ -287,6 +287,7 @@ type actionStat struct {
 	rerunCI bool    // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
 	nums    []int   // PR numbers the action touched, for detail-freshness invalidation
 	merged  []gh.PR // PRs a merge targeted, snapshotted pre-merge → mergedSticky on success
+	native  string  // a.Command.Native — drives optimistic row patches on success
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -302,7 +303,7 @@ func statFor(a action.Action) *actionStat {
 	if fail == "" {
 		fail = a.Label
 	}
-	return &actionStat{run: run, ok: ok, fail: fail, rerunCI: rerunsCI(a)}
+	return &actionStat{run: run, ok: ok, fail: fail, rerunCI: rerunsCI(a), native: a.Command.Native}
 }
 
 // rerunsCI reports whether an action causes GitHub to queue fresh check runs —
