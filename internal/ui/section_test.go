@@ -119,6 +119,29 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 	}
 }
 
+func TestDraftOverridesCIGlyphNotTitle(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{{
+		Number: 3083, Title: "fix(services): canonicalize CLW JSON values",
+		State: "OPEN", IsDraft: true,
+		StatusCheckRollup: []gh.Check{{Name: "build", State: "SUCCESS", Conclusion: "SUCCESS"}},
+	}})
+	s.prs[0].Author.Login = "noamsto"
+	s.SetShown([]int{0})
+
+	row := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5})
+	if strings.Contains(row, "[draft]") {
+		t.Error("draft must not render as a trailing tag")
+	}
+	if !strings.Contains(row, draftGlyph) {
+		t.Errorf("draft glyph missing from the gutter:\n%s", row)
+	}
+	// The draft glyph replaces the CI mark rather than joining it.
+	if strings.Contains(row, ciGlyph("pass")) {
+		t.Error("draft row still shows a CI glyph; it should be overridden")
+	}
+}
+
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
 		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))

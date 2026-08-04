@@ -134,6 +134,11 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		status, age = mergedMark(), ageString(p.MergedAt)
 	case p.State == "CLOSED":
 		status, age = closedMark(), ageString(p.ClosedAt)
+	case p.IsDraft:
+		// A draft's CI rollup is the least interesting thing about it, and every
+		// other indicator on this row is a gutter glyph. Costs the CI mark; the
+		// preview still has it.
+		status = draftMark()
 	}
 	auto := autoMergeGlyph(p.AutoMergeEnabled())
 	// A commented-by-me PR keeps the pending color but swaps the dot for ◐:

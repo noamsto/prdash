@@ -354,6 +354,14 @@ const closedGlyph = "✗"
 
 func closedMark() string { return dimStyle.Render(closedGlyph) }
 
+// draftGlyph marks a draft PR in gutter cell 1, overriding the CI mark the same
+// way mergedGlyph/closedGlyph do for terminal states.
+const draftGlyph = "◌" // nerd: nf-oct-git_pull_request_draft
+
+// draftMark is the dim draft indicator. Dim, not peach: the row as a whole is
+// receding, and cell 1 is a state column rather than an accent.
+func draftMark() string { return dimStyle.Render(draftGlyph) }
+
 // warnGlyph is the conflict/behind flag. An Octicon, matching prGlyph/issueGlyph
 // and the other row markers — not U+26A0, which many terminals draw as a 2-cell
 // emoji (with or without a VS15 selector) while lipgloss measures 1, shifting the

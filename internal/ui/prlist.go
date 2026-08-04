@@ -2363,11 +2363,11 @@ type legendGroup struct {
 func (m Model) legendGroups() []legendGroup {
 	groups := []legendGroup{
 		{"glyphs", []keyHint{
-			{"✓", "CI pass"}, {"✗", "CI fail"}, {ciRunningGlyph, "CI running"}, {"·", "no CI"},
-			{mergedGlyph, "merged"}, {closedGlyph, "closed"},
+			{"✓", "CI pass"}, {"✗", "checks failed"}, {ciRunningGlyph, "CI running"}, {"·", "no CI"},
+			{mergedGlyph, "merged"}, {closedGlyph, "closed"}, {draftGlyph, "draft"},
 			{warnGlyph, "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
-			{"●", "review required"}, {reviewCommentedGlyph, "commented by me"},
-			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"}, {"[draft]", "dimmed"},
+			{"●", "review required"}, {"✗", "changes requested"}, {reviewCommentedGlyph, "commented by me"},
+			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"},
 		}},
 	}
 
