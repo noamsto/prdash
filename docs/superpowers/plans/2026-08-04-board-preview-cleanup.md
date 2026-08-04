@@ -415,11 +415,23 @@ In `internal/ui/section.go`, replace the whole body from the `// Two-line rows l
 	// the title collapsed to "…" and the age column gone. 17 is the author column
 	// width Task 8 settles on, so this does not fight the eventual design.
 	// truncate is safe here only because author is still plain text.
+	leftW := lipgloss.Width(left)
+
+	// The author gets what's LEFT after the fixed columns — never a fraction of w.
+	// A width-derived floor grants cells that may not exist, and the row then
+	// grows past w instead of shrinking (titleRoom and gap both bottom out at 1
+	// and nothing shrinks leftW/rightW back). 17 caps it at the column width
+	// Task 8 settles on. At very narrow widths the author drops out entirely,
+	// which is what the responsive ladder would do there anyway.
+	//
+	// 5 = the "  NNN" age suffix, 2 = title/right separators, 1 = a minimum title.
+	//
 	// authorStyle takes the login (it hashes it to a stable hue); Render takes the
 	// text actually shown, so the truncation belongs inside Render.
-	right := authorStyle(author).Render(truncate(author, min(17, max(6, w/4)))) +
+	authorCap := min(17, max(0, w-leftW-5-2-1))
+	right := authorStyle(author).Render(truncate(author, authorCap)) +
 		dimStyle.Render(fmt.Sprintf("  %3s", age))
-	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
+	rightW := lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
 	if titleRoom < 1 {
