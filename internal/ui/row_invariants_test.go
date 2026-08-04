@@ -54,6 +54,29 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 	review := reviewDot("APPROVED")
 	auto := autoMergeGlyph(true)
 
+	// Diffstat dimension: absent (pre-Task-5 behavior), a small value, and a
+	// large abbreviated one. small/large share one column width (the wider of
+	// the two) so the sweep also exercises the pad-when-smaller path a real
+	// shown set hits once diffstatWidth picks the widest row.
+	diffs := []struct {
+		name  string
+		diff  string
+		width int
+	}{
+		{"absent", "", 0},
+		{"small", diffstat(31, 4), 0},
+		{"large", diffstat(12300, 2000), 0},
+	}
+	dw := 0
+	for _, d := range diffs[1:] {
+		dw = max(dw, lipgloss.Width(d.diff))
+	}
+	for i := range diffs {
+		if diffs[i].name != "absent" {
+			diffs[i].width = dw
+		}
+	}
+
 	// renderItemRow floors its working width at 24 and reserves 3 cells for the
 	// tree slot, so 26 is the smallest width where exact-fill is a real
 	// contract; below it the row is legitimately wider than w (covered by
@@ -64,59 +87,61 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 			wantSGR := extractLeadingSGRPrefix(authorStyle(login).Render("x"))
 
 			for _, st := range states {
-				opts := RowOpts{Width: w, Focused: st.focused, Selected: st.selected}
+				for _, dc := range diffs {
+					opts := RowOpts{Width: w, Focused: st.focused, Selected: st.selected, DiffWidth: dc.width}
 
-				// baseOffset pins invariant 4: the tree slot is a fixed-width
-				// reservation, so the #number's column must not move regardless
-				// of what's drawn into that slot.
-				var baseOffset int
-				for ti, tree := range trees {
-					opts.Tree = tree
-					row := renderItemRow(opts, accentStyle, num, title, login, age, "", ci, review, auto)
+					// baseOffset pins invariant 4: the tree slot is a fixed-width
+					// reservation, so the #number's column must not move regardless
+					// of what's drawn into that slot.
+					var baseOffset int
+					for ti, tree := range trees {
+						opts.Tree = tree
+						row := renderItemRow(opts, accentStyle, num, title, login, age, dc.diff, ci, review, auto)
 
-					if got := lipgloss.Width(row); got != w {
-						t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s: row width %d, want exactly %d",
-							login, len(login), w, tree, st.name, got, w)
-					}
-					if strings.Contains(row, "\n") {
-						t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s: row is not a single line: %q",
-							login, len(login), w, tree, st.name, row)
-					}
+						if got := lipgloss.Width(row); got != w {
+							t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s: row width %d, want exactly %d",
+								login, len(login), w, tree, st.name, dc.name, got, w)
+						}
+						if strings.Contains(row, "\n") {
+							t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s: row is not a single line: %q",
+								login, len(login), w, tree, st.name, dc.name, row)
+						}
 
-					// Trap: strings.Index below returns a BYTE offset. Box-drawing
-					// glyphs (│, ├, ─) are 3 bytes each and 重/试 are 3 bytes but 2
-					// cells, so a byte offset fed straight into a "column" check
-					// would be garbage. Strip ANSI first, then convert the byte
-					// offset to a cell offset via lipgloss.Width on the prefix —
-					// that's the only combination that's actually correct.
-					plain := ansi.Strip(row)
+						// Trap: strings.Index below returns a BYTE offset. Box-drawing
+						// glyphs (│, ├, ─) are 3 bytes each and 重/试 are 3 bytes but 2
+						// cells, so a byte offset fed straight into a "column" check
+						// would be garbage. Strip ANSI first, then convert the byte
+						// offset to a cell offset via lipgloss.Width on the prefix —
+						// that's the only combination that's actually correct.
+						plain := ansi.Strip(row)
 
-					if !strings.Contains(plain, age) {
-						t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s: age %q missing from row: %q",
-							login, len(login), w, tree, st.name, age, plain)
-					}
+						if !strings.Contains(plain, age) {
+							t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s: age %q missing from row: %q",
+								login, len(login), w, tree, st.name, dc.name, age, plain)
+						}
 
-					idx := strings.Index(plain, num)
-					if idx < 0 {
-						t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s: %q not found in row: %q",
-							login, len(login), w, tree, st.name, num, plain)
-					}
-					offset := lipgloss.Width(plain[:idx])
-					if ti == 0 {
-						baseOffset = offset
-					} else if offset != baseOffset {
-						t.Errorf("login=%q(len %d) w=%d tree=%q state=%s: #number at col %d, want %d (tree slot must stay a fixed 3 cells)",
-							login, len(login), w, tree, st.name, offset, baseOffset)
-					}
+						idx := strings.Index(plain, num)
+						if idx < 0 {
+							t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s: %q not found in row: %q",
+								login, len(login), w, tree, st.name, dc.name, num, plain)
+						}
+						offset := lipgloss.Width(plain[:idx])
+						if ti == 0 {
+							baseOffset = offset
+						} else if offset != baseOffset {
+							t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s: #number at col %d, want %d (tree slot must stay a fixed 3 cells)",
+								login, len(login), w, tree, st.name, dc.name, offset, baseOffset)
+						}
 
-					// Invariant 5, the actual pin for defect 2: the hue must come
-					// from the FULL login, not whatever truncate() left in the
-					// row. Comparing the raw (unstripped) row against the SGR
-					// prefix authorStyle(login) produces on the full login catches
-					// a regression to hashing the truncated display text instead.
-					if wantSGR != "" && !strings.Contains(row, wantSGR) {
-						t.Errorf("login=%q(len %d) w=%d tree=%q state=%s: row missing author hue SGR %q for the full login (hue must not be derived from truncated display text)",
-							login, len(login), w, tree, st.name, wantSGR)
+						// Invariant 5, the actual pin for defect 2: the hue must come
+						// from the FULL login, not whatever truncate() left in the
+						// row. Comparing the raw (unstripped) row against the SGR
+						// prefix authorStyle(login) produces on the full login catches
+						// a regression to hashing the truncated display text instead.
+						if wantSGR != "" && !strings.Contains(row, wantSGR) {
+							t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s: row missing author hue SGR %q for the full login (hue must not be derived from truncated display text)",
+								login, len(login), w, tree, st.name, dc.name, wantSGR)
+						}
 					}
 				}
 			}
