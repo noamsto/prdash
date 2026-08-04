@@ -58,7 +58,7 @@ type Model struct {
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
-	cursorRows        int // display height of the cursor row (2 in two-line mode)
+	cursorRows        int // display height of the cursor row
 	cursorTop         int // topmost line to keep visible for the cursor (its group header, if any)
 	previewOffset     int // alt+j/k scroll position within the side preview
 	width             int
@@ -566,7 +566,6 @@ type rowKey struct {
 	gen, w, numW      int
 	focused, selected bool
 	flag              string
-	twoLine           bool
 	landed            bool
 	commented         bool
 }
@@ -613,10 +612,10 @@ func (m *Model) renderList() {
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine, landed: landed, commented: commented}
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine, Landed: landed, Commented: commented,
+				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
 			})
 			m.rowSig[i] = key
 		}

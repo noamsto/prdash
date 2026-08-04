@@ -269,13 +269,6 @@ func chipReadableAsText(hex string) bool {
 		contrastRatio(lc, row) >= chipOutlineMinContrast
 }
 
-// Line-2 property glyphs: a person before the author, a branch before the head
-// ref. Set to whatever your Nerd Font maps if these render as tofu.
-const (
-	authorGlyph = "\uF415" // nerd: nf-oct-person
-	branchGlyph = "\uF418" // nerd: nf-oct-git_branch
-)
-
 // reviewApprovedGlyph marks an approved review. A badge, not a ✓: the CI column
 // sits right beside it and already uses the plain check, so a second one read as
 // a duplicate instead of a second signal.

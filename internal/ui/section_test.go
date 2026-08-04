@@ -29,7 +29,7 @@ func TestReviewDot(t *testing.T) {
 func TestRenderItemRowIsSingleLine(t *testing.T) {
 	o := RowOpts{Width: 80, Focused: true, Selected: true, Flag: failStyle.Render("⚠")}
 	row := renderItemRow(o, accentStyle, "#7", "hello world", "alice", "2d",
-		ciGlyph("fail"), reviewDot("APPROVED"), autoMergeGlyph(true), "", nil)
+		ciGlyph("fail"), reviewDot("APPROVED"), autoMergeGlyph(true))
 	if strings.Contains(row, "\n") {
 		t.Fatalf("dense row must be one line: %q", row)
 	}
@@ -37,6 +37,28 @@ func TestRenderItemRowIsSingleLine(t *testing.T) {
 		if !strings.Contains(row, want) {
 			t.Fatalf("row missing %q: %q", want, row)
 		}
+	}
+}
+
+func TestRowIsAlwaysOneLine(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{{
+		Number: 3065, Title: "feat(infra): add deploy-time SpiceDB migrator",
+		HeadRefName: "eng-7726-thing", State: "OPEN",
+		Labels: []gh.Label{{Name: "complexity:6", Color: "fab387"}, {Name: "preview:full", Color: "a6adc8"}},
+	}})
+	s.prs[0].Author.Login = "asaf-s-factify"
+	s.SetShown([]int{0})
+
+	row := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5})
+	if strings.Contains(row, "\n") {
+		t.Fatalf("row spans multiple lines:\n%s", row)
+	}
+	if strings.Contains(row, "complexity:6") {
+		t.Error("labels must not appear on the row — they belong to the preview")
+	}
+	if strings.Contains(row, "eng-7726-thing") {
+		t.Error("head branch must not appear on the row — it belongs to the preview")
 	}
 }
 
@@ -99,7 +121,7 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), "", nil)
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	plain := args(RowOpts{Width: 80})
 	draft := args(RowOpts{Width: 80, Draft: true})
@@ -115,18 +137,6 @@ func TestPRSectionMarksDraftRow(t *testing.T) {
 	normal.SetPRs([]gh.PR{{Number: 1, Title: "wip"}})
 	if s.RenderRow(0, RowOpts{Width: 80}) == normal.RenderRow(0, RowOpts{Width: 80}) {
 		t.Fatal("PRSection.RenderRow should style a draft PR distinctly")
-	}
-}
-
-func TestDraftRowShowsDraftTag(t *testing.T) {
-	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), "", nil)
-	}
-	if got := row(RowOpts{Width: 80, Draft: true}); !strings.Contains(got, "[draft]") {
-		t.Fatalf("draft row should carry a [draft] tag: %q", got)
-	}
-	if got := row(RowOpts{Width: 80}); strings.Contains(got, "[draft]") {
-		t.Fatalf("non-draft row must not carry a [draft] tag: %q", got)
 	}
 }
 
@@ -229,32 +239,18 @@ func TestSetShownOrderedFlatWhenSingleAuthor(t *testing.T) {
 	}
 }
 
-func TestPRRowOmitsInlineAuthor(t *testing.T) {
-	p := gh.PR{Number: 1, Title: "do the thing"}
-	p.Author.Login = "alice"
-	s := NewPRSection("")
-	s.SetPRs([]gh.PR{p})
-	if row := s.RenderRow(0, RowOpts{Width: 80}); strings.Contains(row, "alice") {
-		t.Fatalf("PR row must not render the author inline (it lives in the header): %q", row)
-	}
-}
-
-func TestPRRowTwoLineShowsAuthorOnLine2(t *testing.T) {
+func TestPRRowShowsAuthor(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "do the thing"}
 	p.Author.Login = "alice"
 	p.HeadRefName = "feat/x"
 	s := NewPRSection("")
 	s.SetPRs([]gh.PR{p})
-	row := s.RenderRow(0, RowOpts{Width: 100, NumWidth: columnWidths(s), TwoLine: true})
-	lines := strings.Split(row, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("two-line PR row expected 2 lines, got %d: %q", len(lines), row)
+	row := s.RenderRow(0, RowOpts{Width: 100, NumWidth: columnWidths(s)})
+	if strings.Contains(row, "\n") {
+		t.Fatalf("PR row must be a single line: %q", row)
 	}
-	if strings.Contains(ansi.Strip(lines[0]), "alice") {
-		t.Errorf("author must not appear on line 1: %q", ansi.Strip(lines[0]))
-	}
-	if !strings.Contains(ansi.Strip(lines[1]), "alice") {
-		t.Errorf("author must lead line 2: %q", ansi.Strip(lines[1]))
+	if !strings.Contains(ansi.Strip(row), "alice") {
+		t.Errorf("author must appear on the row: %q", ansi.Strip(row))
 	}
 }
 
@@ -360,7 +356,7 @@ func TestFocusedRowGetsBackground(t *testing.T) {
 	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
 	set := probe[:strings.Index(probe, "X")]
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), "", nil)
+		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
 		t.Fatalf("focused row should carry the cursor background: %q", got)
@@ -488,45 +484,12 @@ func TestRenderRowSingleLineHasNoChips(t *testing.T) {
 	}
 }
 
-// TestRenderRowTwoLine: with TwoLine on, chips + branch move to an indented
-// second line; line 1 carries the title but no chips; both lines are w wide.
-func TestRenderRowTwoLine(t *testing.T) {
-	p := labeledPR()
-	p.HeadRefName = "feat/responsive-rail"
-	s := NewPRSection("is:open")
-	s.SetPRs([]gh.PR{p})
-	nw := columnWidths(s)
-	const w = 100
-	row := s.RenderRow(0, RowOpts{Width: w, NumWidth: nw, TwoLine: true})
-	lines := strings.Split(row, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("two-line row must be 2 lines, got %d: %q", len(lines), row)
-	}
-	if strings.Contains(ansi.Strip(lines[0]), "bug") {
-		t.Errorf("line 1 must not carry chips: %q", ansi.Strip(lines[0]))
-	}
-	l2 := ansi.Strip(lines[1])
-	if !strings.Contains(l2, "bug") {
-		t.Errorf("line 2 must carry chips: %q", l2)
-	}
-	if !strings.Contains(l2, "feat/responsive-rail") {
-		t.Errorf("line 2 must carry the head branch: %q", l2)
-	}
-	for i, ln := range lines {
-		if got := lipgloss.Width(ln); got != w {
-			t.Errorf("line %d width = %d, want %d", i, got, w)
-		}
-	}
-}
-
-// TestRenderRowTwoLineNoLabelsNoBranch: a two-line-mode row with nothing for
-// line 2 collapses back to a single line (no blank second line).
-func TestRenderRowTwoLineNoLabelsNoBranch(t *testing.T) {
+func TestIssueRowIsSingleLine(t *testing.T) {
 	s := NewIssueSection("is:open")
 	s.SetIssues([]gh.Issue{{Number: 5, Title: "no labels here"}})
-	row := s.RenderRow(0, RowOpts{Width: 100, NumWidth: 4, TwoLine: true})
+	row := s.RenderRow(0, RowOpts{Width: 100, NumWidth: 4})
 	if strings.Contains(row, "\n") {
-		t.Fatalf("labelless issue row must stay single line in two-line mode: %q", row)
+		t.Fatalf("issue row must be a single line: %q", row)
 	}
 }
 
@@ -585,11 +548,11 @@ func TestRenderChipsNeverExceedsMaxW(t *testing.T) {
 	}
 }
 
-// TestRowColumnsAlignAcrossStates pins the column grid: the #number and the
-// two-line row's second line must start at the same cell column for every
-// combination of conflict flag, focus, and review decision. A glyph whose
-// rendered width disagrees with lipgloss (U+26A0, with or without a VS15
-// selector, is the classic offender) shifts one variant and fails here.
+// TestRowColumnsAlignAcrossStates pins the column grid: the #number must start
+// at the same cell column for every combination of conflict flag, focus,
+// selection, and review decision. A glyph whose rendered width disagrees with
+// lipgloss (U+26A0, with or without a VS15 selector, is the classic offender)
+// shifts one variant and fails here.
 func TestRowColumnsAlignAcrossStates(t *testing.T) {
 	cell := func(s, sub string) int {
 		b := strings.Index(s, sub)
@@ -608,17 +571,11 @@ func TestRowColumnsAlignAcrossStates(t *testing.T) {
 					p.Labels = []gh.Label{{Name: "lbl", Color: "e08a2b"}}
 					s := NewPRSection("")
 					s.SetPRs([]gh.PR{p})
-					row := s.RenderRow(0, RowOpts{Width: 90, NumWidth: 5, TwoLine: true, Flag: flag, Focused: focused, Selected: selected})
-					lines := strings.Split(ansi.Strip(row), "\n")
-					if len(lines) != 2 {
-						t.Fatalf("rev=%q flag=%v focused=%v selected=%v: want 2 lines, got %d", rev, flag != "", focused, selected, len(lines))
+					row := ansi.Strip(s.RenderRow(0, RowOpts{Width: 90, NumWidth: 5, Flag: flag, Focused: focused, Selected: selected}))
+					if strings.Contains(row, "\n") {
+						t.Fatalf("rev=%q flag=%v focused=%v selected=%v: want 1 line, got %q", rev, flag != "", focused, selected, row)
 					}
-					numCol := cell(lines[0], "#2959")
-					l2Col := lipgloss.Width(lines[1][:len(lines[1])-len(strings.TrimLeft(lines[1], " "))])
-					if numCol != l2Col {
-						t.Errorf("rev=%q flag=%v focused=%v selected=%v: #number at col %d but line 2 at col %d",
-							rev, flag != "", focused, selected, numCol, l2Col)
-					}
+					numCol := cell(row, "#2959")
 					if want == -1 {
 						want = numCol
 					} else if numCol != want {
@@ -633,8 +590,8 @@ func TestRowColumnsAlignAcrossStates(t *testing.T) {
 
 // TestGutterSurvivesZeroWidthMarker: a marker that is a non-empty string but
 // renders zero-width (a styled empty glyph const — how autoMergeGlyphRune once
-// shipped) must still occupy its cell. Otherwise that row's #number, and the
-// two-line row's second line, drift one cell out of the column grid.
+// shipped) must still occupy its cell. Otherwise that row's #number drifts one
+// cell out of the column grid.
 func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
 	numCol := func(row string) int {
 		line := strings.Split(ansi.Strip(row), "\n")[0]
@@ -645,9 +602,9 @@ func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
 		return lipgloss.Width(line[:b])
 	}
 	base := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d",
-		ciGlyph("pass"), reviewDot(""), "", "", nil)
+		ciGlyph("pass"), reviewDot(""), "")
 	styledEmpty := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d",
-		ciGlyph("pass"), reviewDot(""), mergedStyle.Render(""), "", nil)
+		ciGlyph("pass"), reviewDot(""), mergedStyle.Render(""))
 	if lipgloss.Width(mergedStyle.Render("")) != 0 {
 		t.Skip("styled empty string is not zero-width in this lipgloss build")
 	}
@@ -662,7 +619,7 @@ func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
 func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 	row := func(o RowOpts) string {
 		return renderItemRow(o, accentStyle, "#1", "title", "", "2d",
-			ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), "", nil)
+			ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	cases := []struct {
 		name          string
@@ -703,7 +660,7 @@ func TestSelectionDoesNotShiftColumnGrid(t *testing.T) {
 	}
 	row := func(o RowOpts) string {
 		return renderItemRow(o, accentStyle, "#7", "t", "", "2d",
-			ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false), "", nil)
+			ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	want := numCol(row(RowOpts{Width: 80, NumWidth: 3}))
 	for _, o := range []RowOpts{

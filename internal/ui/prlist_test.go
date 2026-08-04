@@ -1787,26 +1787,19 @@ func TestMainViewTabsAreProOnly(t *testing.T) {
 	}
 }
 
-func TestRenderListTwoLineRowHeight(t *testing.T) {
-	p := labeledPR()
-	p.HeadRefName = "feat/x"
-	m := NewModel("/repo", "is:open", nil)
-	m.width, m.height = 100, 44 // tall → two-line mode
-	m.setPRs([]gh.PR{p})
-	m.renderList()
-	if m.cursorRows != 2 {
-		t.Fatalf("labeled PR in two-line mode should be 2 rows tall, got %d", m.cursorRows)
-	}
-}
-
+// A labeled PR with a branch is the row that used to grow a second line; it must
+// stay one row tall at every viewport height.
 func TestRenderListSingleLineRowHeight(t *testing.T) {
-	p := labeledPR()
-	m := NewModel("/repo", "is:open", nil)
-	m.width, m.height = 100, 12 // short → single-line mode
-	m.setPRs([]gh.PR{p})
-	m.renderList()
-	if m.cursorRows != 1 {
-		t.Fatalf("row in single-line mode should be 1 row tall, got %d", m.cursorRows)
+	for _, h := range []int{12, 44} {
+		p := labeledPR()
+		p.HeadRefName = "feat/x"
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, h
+		m.setPRs([]gh.PR{p})
+		m.renderList()
+		if m.cursorRows != 1 {
+			t.Fatalf("h=%d: row should be 1 row tall, got %d", h, m.cursorRows)
+		}
 	}
 }
 

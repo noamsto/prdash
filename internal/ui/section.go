@@ -23,13 +23,13 @@ type RowOpts struct {
 	Landed    bool   // merged by prdash this session, held on the open board until ctrl+r
 	Commented bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
 	Flag      string // pre-rendered ! column glyph (conflict/behind), "" when unknown
-	TwoLine   bool   // render labels + branch on an indented second line
+	Tree      string // stack chain glyph, rendered between the gutter and the number
 }
 
 type Section interface {
 	Kind() string
 	Filter() string
-	RenderRow(i int, o RowOpts) string // render shown-row i as a dense row (single or two lines when two-line mode is enabled)
+	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single-line row
 	Len() int
 	VarsAt(i int) action.Vars
 	Haystacks() []string
@@ -141,15 +141,9 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	if o.Commented {
 		review = pendStyle.Render(reviewCommentedGlyph)
 	}
-	// A PR's author only appears on line 2 (two-line mode); it stays off the dense
-	// single-line row, and off author-grouped boards where the header carries it.
-	byAuthor := s.grouped && len(s.catOrder) == 0
-	author := ""
-	if o.TwoLine && !byAuthor {
-		author = p.Author.Login
-	}
+	author := p.Author.Login
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		author, age, status, review, auto, p.HeadRefName, p.Labels)
+		author, age, status, review, auto)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -333,7 +327,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), "", "", "", "", is.Labels)
+		is.Author.Login, ageString(is.UpdatedAt), "", "", "")
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -382,14 +376,10 @@ func oneCell(s string) string {
 	return s
 }
 
-// renderItemRow renders a single-line or two-line row.
+// renderItemRow renders one dense row:
 //
-// Single-line (default): ‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
-//
-// Two-line (when o.TwoLine is set and the row has labels or a sub value):
-// Line 1: same single-line layout above.
-// Line 2: label chips and dim secondary (branch) indented under the title.
-func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto, sub string, labels []gh.Label) string {
+//	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto string) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -416,15 +406,17 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 		numCell = padNum(num, o.NumWidth)
 	}
 	gutter := bar + ci + " " + review + " " + auto + " " + flag + " "
-	left := gutter + numStyle.Render(numCell) + " "
-	// Two-line rows lead line 2 with the author; single-line keeps it beside age.
-	right := dimStyle.Render(fmt.Sprintf("  %3s", age))
-	if !o.TwoLine {
-		right = authorStyle(author).Render(author) + right
+	// Tree slot: after the state glyphs, so a stacked row's ci/rv/auto/flag stay
+	// on the same columns as every other row's.
+	const treeW = 3
+	tree := o.Tree
+	if pad := treeW - lipgloss.Width(tree); pad > 0 {
+		tree += strings.Repeat(" ", pad)
 	}
+	left := gutter + tree + numStyle.Render(numCell) + " "
+	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
-	// The title owns the whole flexible middle; chips live on line 2, not here.
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
 	if titleRoom < 1 {
 		titleRoom = 1
@@ -436,17 +428,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	case o.Draft:
 		titleSt = dimStyle
 	}
-	// A draft dims the whole row but paints its tag in the draft accent (peach),
-	// so the one thing that stands out on a receded row is what it is.
-	tags := ""
-	if o.Draft {
-		const tag = " [draft]"
-		tags = draftTagStyle.Render(tag)
-		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
-			titleRoom = 1
-		}
-	}
 	// Without the tag, a merge glyph on the open board reads as a live PR.
+	tags := ""
 	if o.Landed {
 		const tag = " landed"
 		tags += dimStyle.Render(tag)
@@ -460,58 +443,11 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if gap < 1 {
 		gap = 1
 	}
-	line1 := left + titleTxt + strings.Repeat(" ", gap) + right
-
-	// Single-line mode, or a row with nothing to show below, stays one dense line.
-	if !o.TwoLine || (author == "" && len(labels) == 0 && sub == "") {
-		if o.Focused {
-			line1 = rowBgWrap(line1, theme.RowBg)
-		}
-		return line1
-	}
-
-	// Two-line mode: author, label chips, and the dim head branch on their own
-	// line, indented under line 1's #number. Author and branch are bounded (and
-	// glyph-prefixed) so chips get the remaining width.
-	indent := lipgloss.Width(gutter)
-	avail := w - indent
-	authorTxt := ""
-	if author != "" {
-		authorTxt = authorStyle(author).Render(authorGlyph + " " + truncate(author, max(0, avail/3)))
-	}
-	subTxt := ""
-	if sub != "" {
-		subTxt = dimStyle.Render(branchGlyph + " " + truncate(sub, max(0, avail/3)))
-	}
-	authorW, subW := lipgloss.Width(authorTxt), lipgloss.Width(subTxt)
-	// Plain two-space gaps between segments (author / chips / branch); the glyphs
-	// and bracketed chips carry the structure, so no separator glyph is needed.
-	const sep, sepW = "  ", 2
-	chips := ""
-	if budget := avail - authorW - subW - sepW*2; budget >= 3 {
-		chips = renderChips(labels, budget)
-	}
-	parts := make([]string, 0, 3)
-	if authorW > 0 {
-		parts = append(parts, authorTxt)
-	}
-	if chips != "" {
-		parts = append(parts, chips)
-	}
-	if subW > 0 {
-		parts = append(parts, subTxt)
-	}
-	body := strings.Join(parts, sep)
-	pad := avail - lipgloss.Width(body)
-	if pad < 0 {
-		pad = 0
-	}
-	line2 := strings.Repeat(" ", indent) + body + strings.Repeat(" ", pad)
+	line := left + titleTxt + strings.Repeat(" ", gap) + right
 	if o.Focused {
-		line1 = rowBgWrap(line1, theme.RowBg)
-		line2 = rowBgWrap(line2, theme.RowBg)
+		line = rowBgWrap(line, theme.RowBg)
 	}
-	return line1 + "\n" + line2
+	return line
 }
 
 // rowBgWrap fills a composed row with a background. lipgloss ends each styled
