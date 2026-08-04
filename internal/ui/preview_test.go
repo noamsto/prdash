@@ -159,7 +159,7 @@ func TestPrefetchNumbers(t *testing.T) {
 	fresh := map[int]bool{2: true} // #2 already refreshed this session
 
 	got := prefetchNumbers(ps, 0, fresh, 3)
-	want := []int{1, 3, 4} // skips fresh #2, capped at window=3
+	want := []int{1, 3, 4} // skips fresh #2, capped at window=3; cursor at top → only downward
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -172,6 +172,66 @@ func TestPrefetchNumbers(t *testing.T) {
 	all := map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true}
 	if n := prefetchNumbers(ps, 0, all, 3); n != nil {
 		t.Fatalf("all fresh should yield nil, got %v", n)
+	}
+}
+
+// TestPrefetchNumbersBidirectional: cursor in the middle fills both directions
+// by distance, preferring below on ties.
+func TestPrefetchNumbersBidirectional(t *testing.T) {
+	ps := NewPRSection("is:open")
+	// Numbers 1..9 at shown indexes 0..8.
+	prs := make([]gh.PR, 9)
+	for i := range prs {
+		prs[i].Number = i + 1
+	}
+	ps.SetPRs(prs)
+
+	got := prefetchNumbers(ps, 4, nil, 5) // cursor on #5 (index 4)
+	// distances: 0→#5, 1→#6 then #4, 2→#7 then #3
+	want := []int{5, 6, 4, 7, 3}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
+	ps := NewPRSection("is:open")
+	prs := make([]gh.PR, 7)
+	for i := range prs {
+		prs[i].Number = i + 1
+	}
+	ps.SetPRs(prs)
+	// Cursor #4 (index 3). Mark nearest neighbors fresh so the window reaches farther.
+	fresh := map[int]bool{4: true, 5: true, 3: true}
+	got := prefetchNumbers(ps, 3, fresh, 3)
+	want := []int{6, 2, 7} // dist 2 below, 2 above, 3 below
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestPrefetchNumbersAtEndGoesUp(t *testing.T) {
+	ps := NewPRSection("is:open")
+	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}})
+	got := prefetchNumbers(ps, 3, nil, 3) // cursor on last row (#4)
+	want := []int{4, 3, 2}                // only upward after cursor
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
 	}
 }
 

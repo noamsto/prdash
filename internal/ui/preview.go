@@ -100,7 +100,7 @@ func (m Model) warmDetailCmd() tea.Cmd {
 	return tea.Batch(m.detailCmdForCursor(), m.batchDetailCmd(rest))
 }
 
-// detailWindow is the cursor-first set of shown PR numbers still needing detail
+// detailWindow is the cursor-nearest set of shown PR numbers still needing detail
 // (not refreshed this session, not fresh on disk), bounded by prefetchWindow.
 func (m Model) detailWindow(ps *PRSection) []int {
 	var out []int
@@ -144,16 +144,41 @@ func (m Model) batchDetailCmd(numbers []int) tea.Cmd {
 // prefetchWindow bounds how many uncached PR details we fan out per settle.
 const prefetchWindow = 5
 
-// prefetchNumbers returns up to window PR numbers from cursor downward whose
-// detail hasn't been refreshed this session yet.
+// prefetchNumbers returns up to window PR numbers nearest the cursor whose
+// detail hasn't been refreshed this session yet. Order is by |i - cursor|
+// ascending; on a tie the row below the cursor wins (preserves the old
+// downward bias for the first neighbor).
 func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) []int {
+	n := ps.Len()
+	if n == 0 || window <= 0 {
+		return nil
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= n {
+		cursor = n - 1
+	}
 	var out []int
-	for i := cursor; i < ps.Len() && len(out) < window; i++ {
-		num := ps.prAt(i).Number
-		if fresh[num] {
-			continue
+	// d == 0 yields only the cursor; d > 0 yields below then above.
+	for d := 0; len(out) < window && d < n; d++ {
+		candidates := []int{cursor + d}
+		if d > 0 {
+			candidates = append(candidates, cursor-d)
 		}
-		out = append(out, num)
+		for _, i := range candidates {
+			if i < 0 || i >= n {
+				continue
+			}
+			num := ps.prAt(i).Number
+			if fresh[num] {
+				continue
+			}
+			out = append(out, num)
+			if len(out) >= window {
+				return out
+			}
+		}
 	}
 	return out
 }
