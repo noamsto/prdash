@@ -1967,3 +1967,148 @@ func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupRangeCategorized(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("a")}}, // Review requested
+		nil,
+		[]gh.PR{{Number: 1, Author: author("a")}, {Number: 2, Author: author("me")}, {Number: 3, Author: author("x")}},
+		"me",
+	)
+	// After setSections: Review requested (#1), Mine (#2), Others (#3) — one each.
+	m.cursor = 1 // Mine
+	lo, hi := m.groupRange()
+	if lo != 1 || hi != 1 {
+		t.Fatalf("Mine groupRange = [%d,%d], want [1,1]", lo, hi)
+	}
+	m.cursor = 0
+	lo, hi = m.groupRange()
+	if lo != 0 || hi != 0 {
+		t.Fatalf("Review groupRange = [%d,%d], want [0,0]", lo, hi)
+	}
+}
+
+func TestGroupRangeAuthorGrouped(t *testing.T) {
+	m := NewModel("/tmp", "author:x", nil) // non-sections → author grouping when ≥2 authors
+	m.SetRepo("o/r")
+	ps := NewPRSection("author:x")
+	ps.SetForceGroup(true)
+	ps.SetPRs([]gh.PR{
+		{Number: 1, Author: author("alice"), UpdatedAt: time.Now()},
+		{Number: 2, Author: author("alice"), UpdatedAt: time.Now().Add(-time.Hour)},
+		{Number: 3, Author: author("bob"), UpdatedAt: time.Now()},
+	})
+	m.section = ps
+	// ForceGroup + 2 authors → grouped by author. Find alice's span.
+	var aliceLo = -1
+	for i := 0; i < ps.Len(); i++ {
+		if ps.groupLabel(i) == "alice" {
+			if aliceLo < 0 {
+				aliceLo = i
+			}
+			m.cursor = i
+		}
+	}
+	if aliceLo < 0 {
+		t.Fatal("alice group missing")
+	}
+	lo, hi := m.groupRange()
+	if lo != aliceLo || hi != aliceLo+1 {
+		t.Fatalf("alice groupRange = [%d,%d], want [%d,%d]", lo, hi, aliceLo, aliceLo+1)
+	}
+}
+
+func TestGroupRangeFlatIsWholeBoard(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 1, Author: author("only")}, {Number: 2, Author: author("only")}})
+	m.cursor = 1
+	lo, hi := m.groupRange()
+	if lo != 0 || hi != 1 {
+		t.Fatalf("flat groupRange = [%d,%d], want [0,1]", lo, hi)
+	}
+}
+
+func TestAdvanceSelectionCycle(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("a")}, {Number: 2, Author: author("a")}},
+		nil,
+		[]gh.PR{
+			{Number: 1, Author: author("a")}, {Number: 2, Author: author("a")},
+			{Number: 3, Author: author("me")},
+			{Number: 4, Author: author("x")},
+		},
+		"me",
+	)
+	// Review requested = #1,#2; Mine = #3; Others = #4
+	m.cursor = 0 // in Review requested
+	m.advanceSelection() // Group
+	if m.sel.count() != 2 || !m.sel.has(0) || !m.sel.has(1) {
+		t.Fatalf("after Group: sel=%v, want indexes 0,1", m.sel.indices())
+	}
+	m.advanceSelection() // All
+	if m.sel.count() != 4 {
+		t.Fatalf("after All: count=%d, want 4", m.sel.count())
+	}
+	m.advanceSelection() // None
+	if m.sel.count() != 0 {
+		t.Fatalf("after None: count=%d, want 0", m.sel.count())
+	}
+}
+
+func TestAdvanceSelectionFillsPartialGroup(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("a")}, {Number: 2, Author: author("a")}, {Number: 3, Author: author("a")}},
+		nil,
+		[]gh.PR{{Number: 1, Author: author("a")}, {Number: 2, Author: author("a")}, {Number: 3, Author: author("a")}, {Number: 4, Author: author("x")}},
+		"me",
+	)
+	m.cursor = 0
+	m.sel.toggle(1) // partial group
+	m.advanceSelection()
+	if !m.sel.has(0) || !m.sel.has(1) || !m.sel.has(2) || m.sel.has(3) {
+		t.Fatalf("partial group should fill group only, sel=%v", m.sel.indices())
+	}
+}
+
+func TestAdvanceSelectionFlatAllThenNone(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 1, Author: author("only")}, {Number: 2, Author: author("only")}})
+	m.advanceSelection()
+	if m.sel.count() != 2 {
+		t.Fatalf("flat first V should select all, got %d", m.sel.count())
+	}
+	m.advanceSelection()
+	if m.sel.count() != 0 {
+		t.Fatalf("flat second V should clear, got %d", m.sel.count())
+	}
+}
+
+func TestVKeyAdvancesSelection(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.width, m.height = 120, 40
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("a")}},
+		nil,
+		[]gh.PR{{Number: 1, Author: author("a")}, {Number: 2, Author: author("x")}},
+		"me",
+	)
+	m.cursor = 0
+	u, _ := m.Update(keyMsg("V"))
+	m = u.(Model)
+	if m.sel.count() != 1 || !m.sel.has(0) {
+		t.Fatalf("V on Review group: sel=%v, want {0}", m.sel.indices())
+	}
+	u, _ = m.Update(keyMsg("V"))
+	m = u.(Model)
+	if m.sel.count() != 2 {
+		t.Fatalf("second V should select all, got %d", m.sel.count())
+	}
+	u, _ = m.Update(keyMsg("V"))
+	m = u.(Model)
+	if m.sel.count() != 0 {
+		t.Fatalf("third V should clear, got %d", m.sel.count())
+	}
+}

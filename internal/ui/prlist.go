@@ -475,6 +475,71 @@ func (m Model) reviewedDetailCmd() tea.Cmd {
 	return m.batchDetailCmd(nums)
 }
 
+// groupRange returns the inclusive [lo, hi] shown-index span of the cursor's
+// group. When the board is ungrouped (or not a PR section), the whole shown
+// set is one group.
+func (m Model) groupRange() (lo, hi int) {
+	n := m.section.Len()
+	if n == 0 {
+		return 0, -1
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.grouped {
+		return 0, n - 1
+	}
+	cur := m.cursor
+	if cur < 0 {
+		cur = 0
+	}
+	if cur >= n {
+		cur = n - 1
+	}
+	label := ps.groupLabel(cur)
+	lo, hi = cur, cur
+	for lo > 0 && ps.groupLabel(lo-1) == label {
+		lo--
+	}
+	for hi+1 < n && ps.groupLabel(hi+1) == label {
+		hi++
+	}
+	return lo, hi
+}
+
+// advanceSelection cycles multi-select: Group → All → None, derived from the
+// current selection (no stored mode).
+func (m *Model) advanceSelection() {
+	n := m.section.Len()
+	if n == 0 {
+		return
+	}
+	lo, hi := m.groupRange()
+	groupFull := true
+	for i := lo; i <= hi; i++ {
+		if !m.sel.has(i) {
+			groupFull = false
+			break
+		}
+	}
+	if !groupFull {
+		for i := lo; i <= hi; i++ {
+			if !m.sel.has(i) {
+				m.sel.toggle(i)
+			}
+		}
+		return
+	}
+	allFull := m.sel.count() == n
+	if !allFull {
+		for i := 0; i < n; i++ {
+			if !m.sel.has(i) {
+				m.sel.toggle(i)
+			}
+		}
+		return
+	}
+	m.sel.clear()
+}
+
 // moveCursor clamps the cursor to the shown set and keeps it visible.
 func (m *Model) moveCursor(delta int) {
 	n := m.section.Len()
@@ -1919,11 +1984,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderList()
 			return m, nil
 		case "V":
-			for i := 0; i < m.section.Len(); i++ {
-				if !m.sel.has(i) {
-					m.sel.toggle(i)
-				}
-			}
+			m.advanceSelection()
 			m.renderList()
 			return m, nil
 		case "p":
@@ -2315,7 +2376,7 @@ func (m Model) legendGroups() []legendGroup {
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand"})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "all"})
+	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "group"})
 	groups = append(groups, legendGroup{"navigation", nav})
 
 	filters := []keyHint{{"/", "filter (@user, is:, text)"}, {"s", "state"}}
@@ -2410,7 +2471,7 @@ type keyHint struct{ key, label string }
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
 		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
-		{"/", "find"}, {"space", "select"}, {"V", "all"}, {"q", "quit"},
+		{"/", "find"}, {"space", "select"}, {"V", "group"}, {"q", "quit"},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
