@@ -17,9 +17,15 @@ Issue: #88 · Closes #62
 - Never query a GraphQL **connection** for this work. Only leaf scalars on the search node are free. `additions`, `deletions`, `changedFiles`, `stack`, `stackEntry` are all leaves or objects-with-scalar-leaves.
 - Nerd Font glyphs are declared as named constants with a `// nerd: nf-...` comment naming the intended icon. Do NOT invent glyph codepoints — use the placeholder given in the task and leave the comment; the operator sets the real value.
 - The **title column and the glyph gutter never shed** under the responsive ladder.
-- **A rendered row is exactly `w` display cells** at every width and in both focus
-  states. Any column added to `right` must be bounded, or the row grows *wider*
-  than `w` instead of shrinking once `titleRoom` and `gap` reach their `1` floors.
+- **A rendered row is exactly `w` display cells** for every `w` at or above the
+  fixed-column total, in both focus states. Below that total the row cannot be `w`
+  cells and the existing sub-floor test asserts only "single line, non-empty" —
+  `renderItemRow` floors its working width at 24, and reserving the 3-cell tree
+  slot raised the smallest achievable exact-fill width from 24 to 26. That regime
+  is transient (pre-`WindowSizeMsg`) and the viewport clips it, so it is accepted,
+  not fixed. Do not "fix" it by weakening the ≥40 sweeps.
+- Any column added to `right` must be bounded, or the row grows *wider* than `w`
+  instead of shrinking once `titleRoom` and `gap` reach their `1` floors.
   The exact-fill sweep must include a **39-character login** (GitHub's maximum):
   every pre-existing fixture used a short one (`al`, `octocat-bot`), so an
   unbounded author overflowed the row while CI stayed green.
