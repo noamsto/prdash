@@ -142,6 +142,48 @@ func TestDraftOverridesCIGlyphNotTitle(t *testing.T) {
 	}
 }
 
+func TestTerminalStateOverridesDraftGlyph(t *testing.T) {
+	// Draft is checked last in the switch so a merged or closed draft shows
+	// the terminal glyph, not the draft glyph. This test guards against
+	// accidental reordering of the switch cases.
+	mrg, _ := time.Parse(time.RFC3339, "2026-07-12T00:00:00Z")
+	cls, _ := time.Parse(time.RFC3339, "2026-07-01T00:00:00Z")
+
+	// Test 1: draft + merged → merged glyph, no draft glyph
+	s := NewPRSection("")
+	s.SetPRs([]gh.PR{{
+		Number: 1, Title: "merged draft", State: "MERGED", IsDraft: true,
+		MergedAt: mrg, ClosedAt: mrg,
+	}})
+	s.prs[0].Author.Login = "alice"
+	s.SetShown([]int{0})
+
+	row := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5})
+	if !strings.Contains(row, mergedGlyph) {
+		t.Errorf("merged draft should show mergedGlyph %q: %s", mergedGlyph, row)
+	}
+	if strings.Contains(row, draftGlyph) {
+		t.Errorf("merged draft must not show draftGlyph %q: %s", draftGlyph, row)
+	}
+
+	// Test 2: draft + closed → closed glyph, no draft glyph
+	s = NewPRSection("")
+	s.SetPRs([]gh.PR{{
+		Number: 2, Title: "closed draft", State: "CLOSED", IsDraft: true,
+		ClosedAt: cls,
+	}})
+	s.prs[0].Author.Login = "bob"
+	s.SetShown([]int{0})
+
+	row = s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5})
+	if !strings.Contains(row, closedGlyph) {
+		t.Errorf("closed draft should show closedGlyph %q: %s", closedGlyph, row)
+	}
+	if strings.Contains(row, draftGlyph) {
+		t.Errorf("closed draft must not show draftGlyph %q: %s", draftGlyph, row)
+	}
+}
+
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
 		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
