@@ -563,11 +563,11 @@ func (m *Model) moveCursor(delta int) {
 // re-styling the row — so a cursor move re-renders only the two rows whose focus
 // flipped, not all of them. gen invalidates the whole cache on a content change.
 type rowKey struct {
-	gen, w, numW      int
-	focused, selected bool
-	flag              string
-	landed            bool
-	commented         bool
+	gen, w, numW, diffW int
+	focused, selected   bool
+	flag                string
+	landed              bool
+	commented           bool
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
@@ -582,6 +582,7 @@ func (m *Model) renderList() {
 		innerH = 1
 	}
 	numW := columnWidths(m.section)
+	diffW := diffstatWidth(m.section)
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
 	n := m.section.Len()
@@ -612,10 +613,10 @@ func (m *Model) renderList() {
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented}
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
+				Width: innerW, NumWidth: numW, DiffWidth: diffW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
 			})
 			m.rowSig[i] = key
 		}

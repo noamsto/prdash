@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type RowOpts struct {
 	Commented bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
 	Flag      string // pre-rendered ! column glyph (conflict/behind), "" when unknown
 	Tree      string // stack chain glyph, rendered between the gutter and the number
+	DiffWidth int    // cell width of the diffstat column; 0 hides it
 }
 
 type Section interface {
@@ -148,8 +150,12 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		review = pendStyle.Render(reviewCommentedGlyph)
 	}
 	author := p.Author.Login
+	diff := ""
+	if o.DiffWidth > 0 {
+		diff = diffstat(p.Additions, p.Deletions)
+	}
 	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		author, age, status, review, auto)
+		author, age, diff, status, review, auto)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -333,7 +339,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
 	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), "", "", "")
+		is.Author.Login, ageString(is.UpdatedAt), "", "", "", "")
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -385,7 +391,7 @@ func oneCell(s string) string {
 // renderItemRow renders one dense row:
 //
 //	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
-func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto string) string {
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, diff, ci, review, auto string) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -432,13 +438,30 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	// which is what the responsive ladder would do anyway.
 	//
 	// 5 = the "  NNN" age suffix, 2 = the title/right separators, 1 = a minimum
-	// title cell.
+	// title cell. diffExtra reserves the diffstat's own "  " separator plus its
+	// fixed column width, so the author doesn't claim cells the diffstat needs.
+	//
+	// The diffstat isn't truncatable like the author (there's no useful partial
+	// rendering of "+412 -18"), so once even an empty author can't make room for
+	// it, it drops out entirely rather than push the row past w — same
+	// responsive-ladder degradation the author gets above.
 	//
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated.
-	authorCap := min(17, max(0, w-leftW-5-2-1))
-	right := authorStyle(author).Render(truncate(author, authorCap)) +
-		dimStyle.Render(fmt.Sprintf("  %3s", age))
+	diffExtra := 0
+	if o.DiffWidth > 0 && w-leftW-5-2-1-2-o.DiffWidth >= 0 {
+		diffExtra = 2 + o.DiffWidth
+	}
+	authorCap := min(17, max(0, w-leftW-5-2-1-diffExtra))
+	right := authorStyle(author).Render(truncate(author, authorCap))
+	if diffExtra > 0 {
+		pad := o.DiffWidth - lipgloss.Width(diff)
+		if pad < 0 {
+			pad = 0
+		}
+		right += "  " + strings.Repeat(" ", pad) + diff // right-aligned in a fixed column
+	}
+	right += dimStyle.Render(fmt.Sprintf("  %3s", age))
 	rightW := lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
@@ -484,6 +507,38 @@ func rowBgWrap(line, bg string) string {
 	set := probe[:strings.Index(probe, "X")]
 	const reset = "\x1b[m"
 	return set + strings.ReplaceAll(line, reset, reset+set) + reset
+}
+
+// abbrevCount renders a change count, shortening at 1000 so a 5-digit diff can't
+// blow the column: 999 -> "999", 1000 -> "1k", 1600 -> "1.6k".
+func abbrevCount(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	v := float64(n) / 1000
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	s = strings.TrimSuffix(s, ".0")
+	return s + "k"
+}
+
+// diffstat renders "+412 -18" with colour on the numbers only — the signs and
+// the space stay unstyled so the pair reads as one value.
+func diffstat(add, del int) string {
+	return passStyle.Render("+"+abbrevCount(add)) + " " + failStyle.Render("-"+abbrevCount(del))
+}
+
+// diffstatWidth is the cell width of the diffstat column: the widest rendering
+// across the shown set, so the age column never shifts between rows.
+func diffstatWidth(s Section) int {
+	ps, ok := s.(*PRSection)
+	if !ok {
+		return 0
+	}
+	w := 0
+	for _, i := range ps.shown {
+		w = max(w, lipgloss.Width(diffstat(ps.prs[i].Additions, ps.prs[i].Deletions)))
+	}
+	return w
 }
 
 // padNum right-aligns a plain "#123" string to w cells; never truncates.

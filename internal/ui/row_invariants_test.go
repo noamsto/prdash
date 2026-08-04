@@ -72,7 +72,7 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 				var baseOffset int
 				for ti, tree := range trees {
 					opts.Tree = tree
-					row := renderItemRow(opts, accentStyle, num, title, login, age, ci, review, auto)
+					row := renderItemRow(opts, accentStyle, num, title, login, age, "", ci, review, auto)
 
 					if got := lipgloss.Width(row); got != w {
 						t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s: row width %d, want exactly %d",

@@ -28,7 +28,7 @@ func TestReviewDot(t *testing.T) {
 
 func TestRenderItemRowIsSingleLine(t *testing.T) {
 	o := RowOpts{Width: 80, Focused: true, Selected: true, Flag: failStyle.Render("⚠")}
-	row := renderItemRow(o, accentStyle, "#7", "hello world", "alice", "2d",
+	row := renderItemRow(o, accentStyle, "#7", "hello world", "alice", "2d", "",
 		ciGlyph("fail"), reviewDot("APPROVED"), autoMergeGlyph(true))
 	if strings.Contains(row, "\n") {
 		t.Fatalf("dense row must be one line: %q", row)
@@ -186,7 +186,7 @@ func TestTerminalStateOverridesDraftGlyph(t *testing.T) {
 
 func TestDraftRowIsStyledDistinctly(t *testing.T) {
 	args := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
+		return renderItemRow(o, accentStyle, "#1", "title", "alice", "2d", "", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	plain := args(RowOpts{Width: 80})
 	draft := args(RowOpts{Width: 80, Draft: true})
@@ -421,7 +421,7 @@ func TestFocusedRowGetsBackground(t *testing.T) {
 	probe := lipgloss.NewStyle().Background(lipgloss.Color(theme.RowBg)).Render("X")
 	set := probe[:strings.Index(probe, "X")]
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
+		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", "", ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	if got := row(RowOpts{Width: 80, Focused: true}); !strings.Contains(got, set) {
 		t.Fatalf("focused row should carry the cursor background: %q", got)
@@ -666,9 +666,9 @@ func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
 		}
 		return lipgloss.Width(line[:b])
 	}
-	base := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d",
+	base := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d", "",
 		ciGlyph("pass"), reviewDot(""), "")
-	styledEmpty := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d",
+	styledEmpty := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "2d", "",
 		ciGlyph("pass"), reviewDot(""), mergedStyle.Render(""))
 	if lipgloss.Width(mergedStyle.Render("")) != 0 {
 		t.Skip("styled empty string is not zero-width in this lipgloss build")
@@ -683,7 +683,7 @@ func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
 // falls back to the row background and bold title (TestFocusedRowGetsBackground).
 func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#1", "title", "", "2d",
+		return renderItemRow(o, accentStyle, "#1", "title", "", "2d", "",
 			ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	cases := []struct {
@@ -724,7 +724,7 @@ func TestSelectionDoesNotShiftColumnGrid(t *testing.T) {
 		return lipgloss.Width(line[:b])
 	}
 	row := func(o RowOpts) string {
-		return renderItemRow(o, accentStyle, "#7", "t", "", "2d",
+		return renderItemRow(o, accentStyle, "#7", "t", "", "2d", "",
 			ciGlyph("pass"), reviewDot(""), autoMergeGlyph(false))
 	}
 	want := numCol(row(RowOpts{Width: 80, NumWidth: 3}))
@@ -754,7 +754,7 @@ func TestAuthorHueUsesFullLoginNotTruncated(t *testing.T) {
 
 	// Render with Width: 50, which will truncate the login to ~12 chars.
 	o := RowOpts{Width: 50, NumWidth: 3}
-	row := renderItemRow(o, accentStyle, "#123", "some title", fullLogin, "2d",
+	row := renderItemRow(o, accentStyle, "#123", "some title", fullLogin, "2d", "",
 		ciGlyph("success"), reviewDot("APPROVED"), autoMergeGlyph(true))
 
 	// Extract the SGR color code from authorStyle(fullLogin).
@@ -787,4 +787,57 @@ func extractLeadingSGRPrefix(s string) string {
 		return ""
 	}
 	return s[:len(esc)+end+1]
+}
+
+func stripANSIForTest(s string) string { return ansi.Strip(s) }
+
+// idxFromRight reports how many display cells sit between the end of sub and the
+// end of the line, or -1 when sub is absent.
+func idxFromRight(line, sub string) int {
+	plain := stripANSIForTest(line)
+	i := strings.LastIndex(plain, sub)
+	if i < 0 {
+		return -1
+	}
+	return len(plain) - (i + len(sub))
+}
+
+func TestDiffstatFormatting(t *testing.T) {
+	for _, tc := range []struct {
+		add, del int
+		want     string
+	}{
+		{412, 18, "+412 -18"},
+		{0, 0, "+0 -0"},
+		{1600, 63, "+1.6k -63"},
+		{1000, 999, "+1k -999"},
+		{12345, 2000, "+12.3k -2k"},
+	} {
+		got := stripANSIForTest(diffstat(tc.add, tc.del))
+		if got != tc.want {
+			t.Errorf("diffstat(%d,%d) = %q, want %q", tc.add, tc.del, got, tc.want)
+		}
+	}
+}
+
+func TestDiffstatColumnWidthIsStableAcrossRows(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{
+		{Number: 3087, Title: "big", State: "OPEN", Additions: 1600, Deletions: 63},
+		{Number: 3084, Title: "small", State: "OPEN", Additions: 31, Deletions: 4},
+	})
+	s.prs[0].Author.Login = "noamsto"
+	s.prs[1].Author.Login = "rubytify"
+	s.SetShown([]int{0, 1})
+
+	dw := diffstatWidth(s)
+	a := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw})
+	b := s.RenderRow(1, RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw})
+	if lipgloss.Width(a) != lipgloss.Width(b) {
+		t.Fatalf("rows differ in width: %d vs %d", lipgloss.Width(a), lipgloss.Width(b))
+	}
+	// The age column is the rightmost thing; it must start at the same offset.
+	if idxFromRight(a, "1m") != idxFromRight(b, "10m") {
+		t.Error("age column shifted between rows — diffstat width is not fixed")
+	}
 }
