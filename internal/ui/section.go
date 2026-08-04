@@ -417,13 +417,24 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 		tree += strings.Repeat(" ", pad)
 	}
 	left := gutter + tree + numStyle.Render(numCell) + " "
-	// authorStyle hashes the login for a stable per-person hue, so it must see the
-	// FULL login; only the rendered text is truncated. A long login (GitHub allows
-	// 39 chars) would otherwise push rightW past the title's budget and make the
-	// row wider than w instead of squeezing the title.
-	right := authorStyle(author).Render(truncate(author, min(17, max(6, w/4)))) +
+	leftW := lipgloss.Width(left)
+
+	// The author gets what's left after the fixed columns, never a fixed
+	// fraction of w: a width-derived floor grants cells that may not exist and
+	// the row then grows past w instead of shrinking (both floors below sit at
+	// 1 and nothing shrinks leftW/rightW back). 17 caps it at the column width
+	// Task 8 settles on. At very narrow widths the author drops out entirely,
+	// which is what the responsive ladder would do anyway.
+	//
+	// 5 = the "  NNN" age suffix, 2 = the title/right separators, 1 = a minimum
+	// title cell.
+	//
+	// authorStyle hashes the login for a stable per-person hue, so it must see
+	// the FULL login; only the rendered text is truncated.
+	authorCap := min(17, max(0, w-leftW-5-2-1))
+	right := authorStyle(author).Render(truncate(author, authorCap)) +
 		dimStyle.Render(fmt.Sprintf("  %3s", age))
-	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
+	rightW := lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
 	if titleRoom < 1 {
