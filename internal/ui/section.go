@@ -417,10 +417,12 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 		tree += strings.Repeat(" ", pad)
 	}
 	left := gutter + tree + numStyle.Render(numCell) + " "
-	// A long login (GitHub allows 39 chars) would otherwise push rightW past the
-	// title's budget and make the row wider than w instead of squeezing the title.
-	author = truncate(author, min(17, max(6, w/4)))
-	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
+	// authorStyle hashes the login for a stable per-person hue, so it must see the
+	// FULL login; only the rendered text is truncated. A long login (GitHub allows
+	// 39 chars) would otherwise push rightW past the title's budget and make the
+	// row wider than w instead of squeezing the title.
+	right := authorStyle(author).Render(truncate(author, min(17, max(6, w/4)))) +
+		dimStyle.Render(fmt.Sprintf("  %3s", age))
 	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators

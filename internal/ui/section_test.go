@@ -674,3 +674,52 @@ func TestSelectionDoesNotShiftColumnGrid(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthorHueUsesFullLoginNotTruncated(t *testing.T) {
+	// GitHub allows logins up to 39 characters. Verify that authorStyle hashes
+	// the full login, not the truncated display text. A long login that gets
+	// truncated in the row (due to narrow width) must still render with the hue
+	// derived from the full login.
+
+	// 39-character login (GitHub's max).
+	fullLogin := "this-is-a-very-long-39-character-logins"
+	if len(fullLogin) != 39 {
+		t.Fatalf("test login must be 39 chars, got %d", len(fullLogin))
+	}
+
+	// Render with Width: 50, which will truncate the login to ~12 chars.
+	o := RowOpts{Width: 50, NumWidth: 3}
+	row := renderItemRow(o, accentStyle, "#123", "some title", fullLogin, "2d",
+		ciGlyph("success"), reviewDot("APPROVED"), autoMergeGlyph(true))
+
+	// Extract the SGR color code from authorStyle(fullLogin).
+	// This is the Foreground color sequence that identifies this author.
+	styledAuthor := authorStyle(fullLogin).Render("x")
+	expectedCode := extractLeadingSGRPrefix(styledAuthor)
+
+	if expectedCode == "" {
+		t.Fatalf("failed to extract SGR code from authorStyle(%q)", fullLogin)
+	}
+
+	if !strings.Contains(row, expectedCode) {
+		t.Errorf("row does not contain expected SGR code for author %q\n"+
+			"row output:\n%q\n\n"+
+			"expected SGR prefix:\n%q",
+			fullLogin, row, expectedCode)
+	}
+}
+
+// extractLeadingSGRPrefix extracts the leading ANSI escape sequence (SGR code)
+// from a styled string. For example, from "\x1b[38;5;123mx" it returns "\x1b[38;5;123m".
+func extractLeadingSGRPrefix(s string) string {
+	// SGR sequences start with ESC[ and end with 'm'
+	const esc = "\x1b["
+	if !strings.HasPrefix(s, esc) {
+		return ""
+	}
+	end := strings.Index(s[len(esc):], "m")
+	if end == -1 {
+		return ""
+	}
+	return s[:len(esc)+end+1]
+}
