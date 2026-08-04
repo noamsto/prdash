@@ -421,8 +421,9 @@ In `internal/ui/section.go`, replace the whole body from the `// Two-line rows l
 	// A width-derived floor grants cells that may not exist, and the row then
 	// grows past w instead of shrinking (titleRoom and gap both bottom out at 1
 	// and nothing shrinks leftW/rightW back). 17 caps it at the column width
-	// Task 8 settles on. At very narrow widths the author drops out entirely,
-	// which is what the responsive ladder would do there anyway.
+	// Task 8 settles on. As w narrows the author shrinks toward empty — it only
+	// reaches empty below the internal 24-cell floor, so do NOT assume it
+	// disappears at any particular width; assume only that it never overflows.
 	//
 	// 5 = the "  NNN" age suffix, 2 = title/right separators, 1 = a minimum title.
 	//
