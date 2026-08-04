@@ -239,7 +239,10 @@ func (m *Model) applyOptimisticAction() {
 			if m.viewerLogin == "" {
 				continue
 			}
-			d := m.detail[n]
+			d, ok := m.detail[n]
+			if !ok {
+				continue
+			}
 			replaced := false
 			for i := range d.LatestReviews {
 				if d.LatestReviews[i].Author.Login == m.viewerLogin {

@@ -498,6 +498,25 @@ func TestOptimisticApprovePaintsReviewGlyph(t *testing.T) {
 	}
 }
 
+func TestOptimisticApproveWithoutDetailDoesNotFabricateEntry(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{
+		Number: 13, ID: "pr13node", State: "OPEN",
+		ReviewDecision: "REVIEW_REQUIRED", Title: "x",
+	}})
+	m.viewerLogin = "me"
+	m.actionStatus = statFor(action.DefaultPRActions()["L"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "APPROVED" {
+		t.Fatalf("ReviewDecision = %q, want APPROVED", got)
+	}
+	if _, ok := m.detail[13]; ok {
+		t.Fatal("approve without pre-seeded detail must not fabricate m.detail entry")
+	}
+}
+
 func TestFailedApproveDoesNotPaint(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{
 		Number: 13, ID: "pr13node", State: "OPEN", ReviewDecision: "REVIEW_REQUIRED",
