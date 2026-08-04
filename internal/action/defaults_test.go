@@ -76,6 +76,20 @@ func TestDefaultsHaveUpdateAndReady(t *testing.T) {
 	}
 }
 
+func TestAutoMergeActionRefreshes(t *testing.T) {
+	a := DefaultPRActions()["A"]
+	if !a.Refresh {
+		t.Fatal(`default "A" (auto-merge) must Refresh so the board reconciles after arming`)
+	}
+}
+
+func TestApproveActionStillRefreshes(t *testing.T) {
+	a := DefaultPRActions()["L"]
+	if !a.Refresh {
+		t.Fatal(`default "L" (approve) must keep Refresh`)
+	}
+}
+
 func TestDefaultsConfirmOthers(t *testing.T) {
 	d := DefaultPRActions()
 	if !d["A"].ConfirmOthers {
