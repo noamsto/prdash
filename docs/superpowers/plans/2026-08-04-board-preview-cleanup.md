@@ -542,6 +542,57 @@ Refs #88"
 
 ---
 
+### Task 3b: Standing row-invariant sweep
+
+Added mid-execution, after Task 3 needed two fix rounds for defects the whole
+suite passed. Both were invisible for the same structural reason: the guard did
+not exist yet, because the behaviour was introduced in the same commit. Tasks 5,
+6 and 8 all modify the same `renderItemRow` arithmetic, so the guard goes in
+first rather than being rediscovered three more times.
+
+**Files:**
+- Modify: `internal/ui/section_test.go` (or create `internal/ui/row_invariants_test.go`)
+
+**Test-only. No non-test code changes.**
+
+Sweep the cross-product and assert the row's structural invariants:
+
+| Dimension | Values |
+|---|---|
+| Login length | 0, 2, 11, 14, 19, 27, 39 (39 = GitHub max; 19 ≈ `github-actions[bot]`) |
+| Width | every integer 26–200 |
+| `RowOpts.Tree` | `""`, `" "`, `"│ "`, `"├─ "`, `"├── "`, `"重试"`, `"╰──── "` |
+| State | unfocused, focused, selected |
+
+Assertions:
+
+1. `lipgloss.Width(row) == w` exactly.
+2. Single line — no `\n`.
+3. The age string survives (losing it was defect 1's visible symptom).
+4. `#number` starts at the same **cell** offset for every `Tree` value.
+5. The row carries the hue derived from the **full** login, not the truncated
+   display text (pins defect 2).
+
+Two traps, both hit for real while validating Task 3:
+
+- **`strings.Index` returns byte offsets, not cells.** `│`, `├`, `─` are 3 bytes
+  each; `重` is 3 bytes and 2 cells. Measuring columns with byte offsets produces
+  phantom failures on assertion 4. Strip ANSI, find the byte index, then take
+  `lipgloss.Width(plain[:byteIdx])`.
+- **Start the width sweep at 26, not 24.** Exact fill is achievable only at or
+  above the fixed-column total, which the reserved tree slot raised from 24 to
+  26. The sub-floor regime is already covered by a test asserting only
+  single-line/non-empty. Do not weaken it.
+
+- [ ] **Step 1: Write the sweep**
+- [ ] **Step 2: Confirm it PASSES against current code** — this is a guard, not a
+      bug hunt. A failure means a real defect: stop and report it rather than
+      adjusting the test.
+- [ ] **Step 3: Run `go test ./...`**
+- [ ] **Step 4: Commit** with `test(ui):` scope
+
+---
+
 ### Task 4: Draft takes gutter cell 1
 
 **Files:**
