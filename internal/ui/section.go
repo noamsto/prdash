@@ -108,6 +108,18 @@ func (s *PRSection) ApplyChecks(checks map[int][]gh.Check) {
 	}
 }
 
+// updatePR applies fn to the stored PR with the given number. ok is false when
+// the board does not hold it.
+func (s *PRSection) updatePR(number int, fn func(*gh.PR)) bool {
+	for i := range s.prs {
+		if s.prs[i].Number == number {
+			fn(&s.prs[i])
+			return true
+		}
+	}
+	return false
+}
+
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	o.Draft = p.IsDraft

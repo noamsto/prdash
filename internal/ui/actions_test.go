@@ -432,6 +432,104 @@ func TestStartBulkPreservesRerunCI(t *testing.T) {
 	}
 }
 
+func TestOptimisticAutoMergePaintsGlyph(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{
+		Number: 13, ID: "pr13node", State: "OPEN", Title: "x", Author: author("alice"),
+	}})
+	m.width, m.height = 120, 40
+	m.actionStatus = statFor(action.DefaultPRActions()["A"])
+	m.actionStatus.nums = []int{13}
+	m.actionStatus.refresh = true
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	p := ps.prAt(0)
+	if !p.AutoMergeEnabled() {
+		t.Fatal("successful auto-merge must arm AutoMergeRequest on the in-memory PR")
+	}
+	m.renderList()
+	if !strings.Contains(m.rowText[0], autoMergeGlyph(true)) {
+		t.Fatalf("row should show auto-merge glyph immediately:\n%s", m.rowText[0])
+	}
+}
+
+func TestFailedAutoMergeDoesNotPaintGlyph(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
+	m.actionStatus = statFor(action.DefaultPRActions()["A"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{err: errors.New("boom")})
+	m = u.(Model)
+	if m.section.(*PRSection).prAt(0).AutoMergeEnabled() {
+		t.Fatal("failed auto-merge must leave AutoMergeRequest unset")
+	}
+}
+
+func TestOptimisticApprovePaintsReviewGlyph(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{
+		Number: 13, ID: "pr13node", State: "OPEN",
+		ReviewDecision: "REVIEW_REQUIRED", Title: "x",
+	}})
+	m.width, m.height = 120, 40
+	m.viewerLogin = "me"
+	m.detail[13] = gh.PRDetail{} // empty reviews → upsert path
+	m.actionStatus = statFor(action.DefaultPRActions()["L"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "APPROVED" {
+		t.Fatalf("ReviewDecision = %q, want APPROVED", got)
+	}
+	d := m.detail[13]
+	found := false
+	for _, r := range d.LatestReviews {
+		if r.Author.Login == "me" && r.State == "APPROVED" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("detail LatestReviews should carry viewer APPROVED, got %+v", d.LatestReviews)
+	}
+	m.renderList()
+	if !strings.Contains(m.rowText[0], reviewApprovedGlyph) {
+		t.Fatalf("row should show approved glyph immediately:\n%s", m.rowText[0])
+	}
+}
+
+func TestFailedApproveDoesNotPaint(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{
+		Number: 13, ID: "pr13node", State: "OPEN", ReviewDecision: "REVIEW_REQUIRED",
+	}})
+	m.actionStatus = statFor(action.DefaultPRActions()["L"])
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{err: errors.New("boom")})
+	m = u.(Model)
+	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "REVIEW_REQUIRED" {
+		t.Fatalf("failed approve must leave ReviewDecision, got %q", got)
+	}
+}
+
+func TestOptimisticAutoMergeBulkPatchesAllNums(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{
+		{Number: 1, ID: "n1", State: "OPEN"},
+		{Number: 2, ID: "n2", State: "OPEN"},
+	})
+	m.actionStatus = statFor(action.DefaultPRActions()["A"])
+	m.actionStatus.nums = []int{1, 2}
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	for i := 0; i < ps.Len(); i++ {
+		if !ps.prAt(i).AutoMergeEnabled() {
+			t.Fatalf("PR #%d should be armed after bulk success", ps.prAt(i).Number)
+		}
+	}
+}
+
 // TestApproveActionContract pins the "L" binding: it must always confirm (own
 // selection can't skip GitHub's opaque self-approval 422), name the author when
 // approving someone else's PR, act per-selection, and refetch on success.
