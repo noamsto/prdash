@@ -26,8 +26,18 @@ func showFooter(w, h int) bool {
 	return w >= footerMinWidth && h >= footerMinHeight
 }
 
+// rowColumns is which optional board-row columns survive at a given list width.
+// The title and the glyph gutter are absent here on purpose: they never shed.
+type rowColumns struct {
+	ShowDiffstat    bool
+	CompactDiffstat bool // "±430" instead of "+412 -18"
+	ShowTicket      bool
+	InitialsAuthor  bool // 2-char initials instead of the full login
+}
+
 // Layout is the computed geometry for one frame.
 type Layout struct {
+	rowColumns
 	ShowSide      bool
 	ShowFooter    bool // false hides the footer entirely, reclaiming its row(s) for content
 	ShowPanel     bool // dock the keys/actions panel instead of the status bar (only when ShowFooter)
@@ -49,11 +59,15 @@ func computeLayout(w, h int) Layout {
 	showSide := w >= sideThreshold
 	footer := showFooter(w, h)
 
-	panelCol := w // narrow: panel spans the whole width
+	// The list's own column: the whole terminal until the preview pane appears.
+	// Both the panel (which docks under it) and the row's column ladder measure
+	// against it, never against the terminal.
+	listCol := w
 	if showSide {
-		panelCol = list // wide: panel sits under the list only
+		listCol = list
 	}
-	pr := panelRowsFor(panelCol - 2)
+	pr := panelRowsFor(listCol - 2)
+	cols := columnLadder(listCol)
 	showPanel := footer && h-2-pr >= minMainRows
 
 	var ch int
@@ -71,9 +85,40 @@ func computeLayout(w, h int) Layout {
 		ch = 1
 	}
 	if !showSide {
-		return Layout{ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch}
+		return Layout{rowColumns: cols, ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch}
 	}
-	return Layout{ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
+	return Layout{rowColumns: cols, ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
+}
+
+// Column breakpoints, in LIST cells — not terminal cells. Once the preview pane
+// drops, the list gets the whole terminal, so the lower steps fire less often
+// than the numbers suggest.
+const (
+	ladderCompactDiff = 92 // below: diffstat collapses to ±N
+	ladderInitials    = 80 // below: author collapses to initials
+	ladderDropTicket  = 70 // below: ticket column goes
+	ladderDropDiff    = 62 // below: diffstat goes
+)
+
+// columnLadder decides which optional columns survive at a given list width.
+// Order is least-load-bearing first. It only ever asks for less than the row
+// could fit: renderItemRow still carves every column out of one slack budget and
+// drops what doesn't fit, so the ladder can never cause an overflow.
+func columnLadder(listCells int) rowColumns {
+	c := rowColumns{ShowDiffstat: true, ShowTicket: true}
+	if listCells < ladderCompactDiff {
+		c.CompactDiffstat = true
+	}
+	if listCells < ladderInitials {
+		c.InitialsAuthor = true
+	}
+	if listCells < ladderDropTicket {
+		c.ShowTicket = false
+	}
+	if listCells < ladderDropDiff {
+		c.ShowDiffstat = false
+	}
+	return c
 }
 
 const (

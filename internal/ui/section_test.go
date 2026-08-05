@@ -808,6 +808,76 @@ func cellOffset(t *testing.T, row, sub string) int {
 	return lipgloss.Width(plain[:i])
 }
 
+func TestDiffstatCompactFormatting(t *testing.T) {
+	for _, tc := range []struct {
+		add, del int
+		want     string
+	}{
+		{412, 18, "±430"},
+		{0, 0, "±0"},
+		{1600, 63, "±1.7k"},
+		{12345, 2000, "±14.3k"},
+	} {
+		got := stripANSIForTest(diffstatCompact(tc.add, tc.del))
+		if got != tc.want {
+			t.Errorf("diffstatCompact(%d,%d) = %q, want %q", tc.add, tc.del, got, tc.want)
+		}
+		if full := lipgloss.Width(diffstat(tc.add, tc.del)); lipgloss.Width(diffstatCompact(tc.add, tc.del)) > full {
+			t.Errorf("diffstatCompact(%d,%d) is not narrower than the full form (%d cells)", tc.add, tc.del, full)
+		}
+	}
+}
+
+func TestAuthorInitials(t *testing.T) {
+	for _, tc := range []struct {
+		login, want string
+	}{
+		{"noamsto", "N"},
+		{"asaf-s-factify", "AS"},
+		{"alex-smith", "AS"}, // documented collision: 2 letters is all there is at this width
+		{"assaflavi", "A"},   // no separator, so there is only one initial to take
+		{"github-actions[bot]", "GA"},
+		{"app/dependabot", "D"}, // the app/ prefix is chrome, not part of the name
+		{"a_b_c", "AB"},
+		{"", ""},
+	} {
+		if got := authorInitials(tc.login); got != tc.want {
+			t.Errorf("authorInitials(%q) = %q, want %q", tc.login, got, tc.want)
+		}
+	}
+}
+
+// TestInitialsAuthorKeepsTheFullLoginHue pins the initials column to the same
+// rule the truncated column already follows: authorStyle hashes the login for a
+// stable per-person colour, so it must see the whole login even when only two
+// letters are drawn. It matters most here — with the name gone, the hue is the
+// only thing left identifying the person.
+func TestInitialsAuthorKeepsTheFullLoginHue(t *testing.T) {
+	const login = "asaf-s-factify"
+	want := extractLeadingSGRPrefix(authorStyle(login).Render("x"))
+	if want == "" {
+		t.Fatalf("authorStyle(%q) yields no SGR prefix; the assertion below would pass vacuously", login)
+	}
+	for w := 40; w <= 120; w++ {
+		row := renderItemRow(RowOpts{Width: w, NumWidth: 5, Initials: true}, accentStyle,
+			"#3087", "a title long enough to be truncated", "", login, "2d", "",
+			ciGlyph("success"), reviewDot("APPROVED"), autoMergeGlyph(true))
+		if got := lipgloss.Width(row); got != w {
+			t.Fatalf("w=%d: initials row width %d, want exactly %d", w, got, w)
+		}
+		plain := stripANSIForTest(row)
+		if strings.Contains(plain, login) {
+			t.Fatalf("w=%d: full login rendered where initials were asked for: %q", w, plain)
+		}
+		if !strings.Contains(plain, "AS") {
+			t.Fatalf("w=%d: initials missing from %q", w, plain)
+		}
+		if !strings.Contains(row, want) {
+			t.Errorf("w=%d: row missing the full login's hue SGR %q (hue must not be derived from the initials)", w, want)
+		}
+	}
+}
+
 func TestDiffstatFormatting(t *testing.T) {
 	for _, tc := range []struct {
 		add, del int
@@ -843,7 +913,7 @@ func TestDiffstatColumnWidthIsStableAcrossRows(t *testing.T) {
 	s.prs[1].Author.Login = "rubytify"
 	s.SetShown([]int{0, 1})
 
-	dw := diffstatWidth(s)
+	dw := diffstatWidth(s, false)
 	a := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw})
 	b := s.RenderRow(1, RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw})
 	if lipgloss.Width(a) != lipgloss.Width(b) {

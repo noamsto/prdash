@@ -568,6 +568,7 @@ type rowKey struct {
 	flag                      string
 	landed                    bool
 	commented                 bool
+	compactDiff, initials     bool
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
@@ -582,8 +583,14 @@ func (m *Model) renderList() {
 		innerH = 1
 	}
 	numW := columnWidths(m.section)
-	diffW := diffstatWidth(m.section)
-	tktW := ticketWidth(m.section)
+	diffW := 0
+	if l.ShowDiffstat {
+		diffW = diffstatWidth(m.section, l.CompactDiffstat)
+	}
+	tktW := 0
+	if l.ShowTicket {
+		tktW = ticketWidth(m.section)
+	}
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
 	n := m.section.Len()
@@ -614,10 +621,11 @@ func (m *Model) renderList() {
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented}
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
 				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
+				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,
 			})
 			m.rowSig[i] = key
 		}

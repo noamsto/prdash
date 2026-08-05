@@ -28,6 +28,8 @@ type RowOpts struct {
 	Tree        string // stack chain glyph, rendered between the gutter and the number
 	DiffWidth   int    // cell width of the diffstat column; 0 hides it
 	TicketWidth int    // cell width of the ticket-id column; 0 hides it
+	CompactDiff bool   // render ±N instead of +N -N
+	Initials    bool   // 2-char author initials instead of the login
 }
 
 type Section interface {
@@ -153,7 +155,11 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	author := p.Author.Login
 	diff := ""
 	if o.DiffWidth > 0 {
-		diff = diffstat(p.Additions, p.Deletions)
+		if o.CompactDiff {
+			diff = diffstatCompact(p.Additions, p.Deletions)
+		} else {
+			diff = diffstat(p.Additions, p.Deletions)
+		}
 	}
 	ticket := ""
 	if o.TicketWidth > 0 {
@@ -452,9 +458,9 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// The author gets what's left after the fixed columns, never a fixed
 	// fraction of w: a width-derived floor grants cells that may not exist and
 	// the row then grows past w instead of shrinking (both floors below sit at
-	// 1 and nothing shrinks leftW/rightW back). 17 caps it at the column width
-	// Task 8 settles on. At very narrow widths the author drops out entirely,
-	// which is what the responsive ladder would do anyway.
+	// 1 and nothing shrinks leftW/rightW back). 17 caps the full-login column. At
+	// very narrow widths the author drops out entirely, which is what the
+	// responsive ladder would do anyway.
 	//
 	// slack is the whole budget the title, author, diffstat and landed tag share:
 	// 5 = the "  NNN" age suffix, 2 = the title/right separators, 1 = a minimum
@@ -468,13 +474,14 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// row past w — same responsive-ladder degradation the author gets above.
 	// diffExtra/tktExtra also reserve their own "  " separator.
 	//
-	// The ticket id is reserved after the diffstat: Task 8 sheds it at a wider
-	// column (70 cells) than the diffstat (62), so on the way down the ticket is
-	// always the first of the two to go — reserving it last makes that the
-	// natural outcome instead of something a tie-break has to enforce.
+	// The ticket id is reserved after the diffstat: columnLadder sheds it at a
+	// wider column (ladderDropTicket) than the diffstat (ladderDropDiff), so on
+	// the way down the ticket is always the first of the two to go — reserving it
+	// last makes that the natural outcome instead of something a tie-break has to
+	// enforce.
 	//
 	// authorStyle hashes the login for a stable per-person hue, so it must see
-	// the FULL login; only the rendered text is truncated.
+	// the FULL login; only the rendered text is truncated or cut to initials.
 	slack := w - leftW - 5 - 2 - 1
 	tagW := 0
 	if o.Landed && slack-len(landedTag) >= 0 {
@@ -494,7 +501,11 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 		right = sectionLabelStyle.Render(ticket) +
 			strings.Repeat(" ", o.TicketWidth-lipgloss.Width(ticket)) + "  "
 	}
-	right += authorStyle(author).Render(truncate(author, authorCap))
+	authorTxt := author
+	if o.Initials {
+		authorTxt = authorInitials(author)
+	}
+	right += authorStyle(author).Render(truncate(authorTxt, authorCap))
 	if diffExtra > 0 {
 		// Clamp before padding: DiffWidth is the column, so a diffstat wider than
 		// it would render at natural width and push the row past w.
@@ -563,16 +574,43 @@ func diffstat(add, del int) string {
 	return passStyle.Render("+"+abbrevCount(add)) + " " + failStyle.Render("-"+abbrevCount(del))
 }
 
+// diffstatCompact is the narrow form: one signed magnitude instead of a pair.
+func diffstatCompact(add, del int) string {
+	return passStyle.Render("±" + abbrevCount(add+del))
+}
+
+// authorInitials is the narrow form of the author column. Two letters can
+// collide (asaf-s-factify and alex-smith both give "AS"), which is why the full
+// login is preferred wherever it fits — here the alternative is no author.
+func authorInitials(login string) string {
+	parts := strings.FieldsFunc(strings.TrimPrefix(login, "app/"), func(r rune) bool {
+		return r == '-' || r == '/' || r == '_'
+	})
+	out := make([]rune, 0, 2)
+	for _, p := range parts {
+		if len(out) == 2 {
+			break
+		}
+		out = append(out, []rune(strings.ToUpper(p))[0])
+	}
+	return string(out)
+}
+
 // diffstatWidth is the cell width of the diffstat column: the widest rendering
-// across the shown set, so the age column never shifts between rows.
-func diffstatWidth(s Section) int {
+// across the shown set, so the age column never shifts between rows. It must
+// measure whichever form the row will draw, hence compact.
+func diffstatWidth(s Section, compact bool) int {
 	ps, ok := s.(*PRSection)
 	if !ok {
 		return 0
 	}
+	render := diffstat
+	if compact {
+		render = diffstatCompact
+	}
 	w := 0
 	for _, i := range ps.shown {
-		w = max(w, lipgloss.Width(diffstat(ps.prs[i].Additions, ps.prs[i].Deletions)))
+		w = max(w, lipgloss.Width(render(ps.prs[i].Additions, ps.prs[i].Deletions)))
 	}
 	return w
 }

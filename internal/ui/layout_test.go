@@ -1,6 +1,14 @@
 package ui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"charm.land/lipgloss/v2"
+
+	"github.com/noamsto/prdash/internal/gh"
+)
 
 func TestLayoutWideShowsSide(t *testing.T) {
 	l := computeLayout(160, 40)
@@ -83,6 +91,90 @@ func TestLayoutHidesFooterOnSmallWindow(t *testing.T) {
 	wide := computeLayout(120, 30)
 	if !wide.ShowFooter {
 		t.Fatal("large window should show the footer")
+	}
+}
+
+func TestColumnLadder(t *testing.T) {
+	for _, tc := range []struct {
+		cells                           int
+		diff, compact, ticket, initials bool
+	}{
+		{120, true, false, true, false},
+		{92, true, false, true, false},
+		{91, true, true, true, false},
+		{80, true, true, true, false},
+		{79, true, true, true, true},
+		{70, true, true, true, true},
+		{69, true, true, false, true},
+		{62, true, true, false, true},
+		{61, false, true, false, true},
+		{40, false, true, false, true},
+	} {
+		l := columnLadder(tc.cells)
+		if l.ShowDiffstat != tc.diff || l.CompactDiffstat != tc.compact ||
+			l.ShowTicket != tc.ticket || l.InitialsAuthor != tc.initials {
+			t.Errorf("columnLadder(%d) = diff:%v compact:%v ticket:%v initials:%v, want %v %v %v %v",
+				tc.cells, l.ShowDiffstat, l.CompactDiffstat, l.ShowTicket, l.InitialsAuthor,
+				tc.diff, tc.compact, tc.ticket, tc.initials)
+		}
+	}
+}
+
+// TestTitleNeverStarvesAcrossTheSweep is the ladder's whole reason to exist: at
+// every width the board can be handed, enough optional columns shed that the
+// title still gets a readable slice of the row.
+//
+// Asserted against a rendered row, not against a hand-recomputed column budget:
+// that arithmetic lives in renderItemRow, and a second copy here would drift
+// from it and start guarding a fiction. The fixture carries the worst case for
+// every optional column at once — a 39-character login (GitHub's maximum), a
+// 5-digit diffstat, and a parseable Linear ticket — so the columns the ladder
+// sheds are all really present at the top of the sweep.
+func TestTitleNeverStarvesAcrossTheSweep(t *testing.T) {
+	const title = "responsive ladder title long enough to be truncated"
+	probe := title[:8]
+
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{{
+		Number: 3087, Title: title, State: "OPEN", HeadRefName: "eng-7726-ladder",
+		Additions: 12300, Deletions: 2000, UpdatedAt: time.Now().Add(-3 * 24 * time.Hour),
+	}})
+	// A login with a separator, so the initials form is its full 2 cells rather
+	// than the 1 cell a single-word login collapses to.
+	s.prs[0].Author.Login = strings.Repeat("l", 19) + "-" + strings.Repeat("m", 19)
+	s.SetShown([]int{0})
+
+	if full, compact := diffstatWidth(s, false), diffstatWidth(s, true); compact >= full {
+		t.Fatalf("fixture diffstat: compact %d cells is not narrower than full %d (sweep would prove nothing)", compact, full)
+	}
+	if ticketWidth(s) == 0 {
+		t.Fatal("fixture head ref parses no ticket id; the ticket column would never be present to shed")
+	}
+
+	for w := 40; w <= 200; w++ {
+		for h := 10; h <= 60; h += 5 {
+			l := computeLayout(w, h)
+			diffW := 0
+			if l.ShowDiffstat {
+				diffW = diffstatWidth(s, l.CompactDiffstat)
+			}
+			tktW := 0
+			if l.ShowTicket {
+				tktW = ticketWidth(s)
+			}
+			innerW := l.ListWidth - 2 // renderList's row width: inside the pane border
+			row := s.RenderRow(0, RowOpts{
+				Width: innerW, NumWidth: columnWidths(s), DiffWidth: diffW, TicketWidth: tktW,
+				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,
+			})
+			if got := lipgloss.Width(row); got != innerW {
+				t.Fatalf("w=%d h=%d: row width %d, want exactly %d", w, h, got, innerW)
+			}
+			if !strings.Contains(stripANSIForTest(row), probe) {
+				t.Fatalf("w=%d h=%d: title starved (list=%d diffW=%d tktW=%d initials=%v): %q missing from %q",
+					w, h, l.ListWidth, diffW, tktW, l.InitialsAuthor, probe, stripANSIForTest(row))
+			}
+		}
 	}
 }
 
