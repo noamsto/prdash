@@ -2152,6 +2152,49 @@ func TestAdvanceSelectionFlatAllThenNone(t *testing.T) {
 	}
 }
 
+// TestVSelectsClusterThenCategoryThenAllThenNone guards the #88 cycle order:
+// cluster (author) → category → all → none. Review requested mixes alice's
+// two-PR cluster with bob's single PR so the cluster span is a strict subset
+// of the category span — a fixture where they coincide can't catch a
+// regression to the old group → all → none cycle.
+func TestVSelectsClusterThenCategoryThenAllThenNone(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setSections(
+		[]gh.PR{{Number: 10, Author: author("alice")}, {Number: 11, Author: author("alice")}, {Number: 12, Author: author("bob")}},
+		nil,
+		[]gh.PR{{Number: 20, Author: author("me")}, {Number: 21, Author: author("x")}},
+		"me",
+	)
+	ps := m.section.(*PRSection)
+	for i := 0; i < ps.Len(); i++ {
+		if ps.prAt(i).Author.Login == "alice" {
+			m.cursor = i
+			break
+		}
+	}
+
+	m.advanceSelection()
+	if got := m.sel.count(); got != 2 {
+		t.Fatalf("first V selected %d rows, want the 2-row alice cluster", got)
+	}
+
+	lo, hi := m.groupRange()
+	m.advanceSelection()
+	if got := m.sel.count(); got != hi-lo+1 {
+		t.Fatalf("second V selected %d rows, want the %d-row category", got, hi-lo+1)
+	}
+
+	m.advanceSelection()
+	if got := m.sel.count(); got != ps.Len() {
+		t.Fatalf("third V selected %d rows, want all %d", got, ps.Len())
+	}
+
+	m.advanceSelection()
+	if got := m.sel.count(); got != 0 {
+		t.Fatalf("fourth V left %d rows selected, want none", got)
+	}
+}
+
 func TestVKeyAdvancesSelection(t *testing.T) {
 	m := NewModel("/tmp", "is:open", nil)
 	m.width, m.height = 120, 40

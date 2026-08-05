@@ -85,6 +85,18 @@ func (s *PRSection) groupLabel(i int) string {
 	}
 	return p.Author.Login
 }
+
+// unitLabel is the tightest selectable unit a row belongs to: its author cluster
+// within its category. Distinct from groupLabel, which is the category (or the
+// author, on an uncategorized board).
+//
+// The NUL separator keeps a category named like an author from colliding with
+// one. #89 makes this return the stack for stacked rows.
+func (s *PRSection) unitLabel(i int) string {
+	p := s.prAt(i)
+	return s.groupLabel(i) + "\x00" + p.Author.Login
+}
+
 func (s *PRSection) Len() int           { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 

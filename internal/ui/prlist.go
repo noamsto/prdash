@@ -476,66 +476,80 @@ func (m Model) reviewedDetailCmd() tea.Cmd {
 	return m.batchDetailCmd(nums)
 }
 
-// groupRange returns the inclusive [lo, hi] shown-index span of the cursor's
-// group. When the board is ungrouped (or not a PR section), the whole shown
-// set is one group.
-func (m Model) groupRange() (lo, hi int) {
-	n := m.section.Len()
+// spanOf returns the inclusive [lo, hi] shown-index span around cur for which
+// label(i) is constant.
+func spanOf(n, cur int, label func(int) string) (lo, hi int) {
 	if n == 0 {
 		return 0, -1
 	}
-	ps, ok := m.section.(*PRSection)
-	if !ok || !ps.grouped {
-		return 0, n - 1
-	}
-	cur := m.cursor
-	if cur < 0 {
-		cur = 0
-	}
-	if cur >= n {
-		cur = n - 1
-	}
-	label := ps.groupLabel(cur)
+	cur = min(max(cur, 0), n-1)
+	want := label(cur)
 	lo, hi = cur, cur
-	for lo > 0 && ps.groupLabel(lo-1) == label {
+	for lo > 0 && label(lo-1) == want {
 		lo--
 	}
-	for hi+1 < n && ps.groupLabel(hi+1) == label {
+	for hi+1 < n && label(hi+1) == want {
 		hi++
 	}
 	return lo, hi
 }
 
-// advanceSelection cycles multi-select: Group → All → None, derived from the
-// current selection (no stored mode).
+// groupRange returns the inclusive [lo, hi] shown-index span of the cursor's
+// group. When the board is ungrouped (or not a PR section), the whole shown
+// set is one group.
+func (m Model) groupRange() (lo, hi int) {
+	n := m.section.Len()
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.grouped {
+		return 0, n - 1
+	}
+	return spanOf(n, m.cursor, ps.groupLabel)
+}
+
+// unitRange is the cursor's tightest selectable unit — its author cluster, or
+// (once #89 lands) its stack. Falls back to the whole shown set off a PR board.
+func (m Model) unitRange() (lo, hi int) {
+	n := m.section.Len()
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.grouped {
+		return 0, n - 1
+	}
+	return spanOf(n, m.cursor, ps.unitLabel)
+}
+
+// advanceSelection cycles multi-select: Cluster → Category → All → None,
+// derived from the current selection (no stored mode).
 func (m *Model) advanceSelection() {
 	n := m.section.Len()
 	if n == 0 {
 		return
 	}
-	lo, hi := m.groupRange()
-	groupFull := true
-	for i := lo; i <= hi; i++ {
-		if !m.sel.has(i) {
-			groupFull = false
-			break
+	full := func(lo, hi int) bool {
+		for i := lo; i <= hi; i++ {
+			if !m.sel.has(i) {
+				return false
+			}
 		}
+		return true
 	}
-	if !groupFull {
+	fill := func(lo, hi int) {
 		for i := lo; i <= hi; i++ {
 			if !m.sel.has(i) {
 				m.sel.toggle(i)
 			}
 		}
+	}
+
+	if lo, hi := m.unitRange(); !full(lo, hi) {
+		fill(lo, hi)
 		return
 	}
-	allFull := m.sel.count() == n
-	if !allFull {
-		for i := 0; i < n; i++ {
-			if !m.sel.has(i) {
-				m.sel.toggle(i)
-			}
-		}
+	if lo, hi := m.groupRange(); !full(lo, hi) {
+		fill(lo, hi)
+		return
+	}
+	if m.sel.count() != n {
+		fill(0, n-1)
 		return
 	}
 	m.sel.clear()
