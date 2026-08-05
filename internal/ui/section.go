@@ -155,7 +155,11 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	if o.DiffWidth > 0 {
 		diff = diffstat(p.Additions, p.Deletions)
 	}
-	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title, "",
+	ticket := ""
+	if o.TicketWidth > 0 {
+		ticket = ticketID(p.HeadRefName)
+	}
+	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title, ticket,
 		author, age, diff, status, review, auto)
 }
 
@@ -447,11 +451,17 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// title cell. Every optional column is carved out of this one number so the
 	// gap below never has to be floored — a floored gap is overflow, not slack.
 	//
-	// Neither the diffstat nor the tag is truncatable like the author (there's no
-	// useful partial rendering of "+412 -18", and " landed" clipped is a lie), so
-	// once even an empty author can't make room they drop out entirely rather
-	// than push the row past w — same responsive-ladder degradation the author
-	// gets above. diffExtra also reserves the diffstat's own "  " separator.
+	// Neither the diffstat, the ticket id, nor the tag is truncatable like the
+	// author (there's no useful partial rendering of "+412 -18", a half "ENG-77…"
+	// is worse than absent, and " landed" clipped is a lie), so once even an
+	// empty author can't make room they drop out entirely rather than push the
+	// row past w — same responsive-ladder degradation the author gets above.
+	// diffExtra/tktExtra also reserve their own "  " separator.
+	//
+	// The ticket id is reserved after the diffstat: Task 8 sheds it at a wider
+	// column (70 cells) than the diffstat (62), so on the way down the ticket is
+	// always the first of the two to go — reserving it last makes that the
+	// natural outcome instead of something a tie-break has to enforce.
 	//
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated.
@@ -464,9 +474,13 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	if o.DiffWidth > 0 && slack-tagW-2-o.DiffWidth >= 0 {
 		diffExtra = 2 + o.DiffWidth
 	}
-	authorCap := min(17, max(0, slack-tagW-diffExtra))
+	tktExtra := 0
+	if o.TicketWidth > 0 && slack-tagW-diffExtra-2-o.TicketWidth >= 0 {
+		tktExtra = 2 + o.TicketWidth
+	}
+	authorCap := min(17, max(0, slack-tagW-diffExtra-tktExtra))
 	right := ""
-	if o.TicketWidth > 0 {
+	if tktExtra > 0 {
 		right = sectionLabelStyle.Render(ticket) +
 			strings.Repeat(" ", o.TicketWidth-lipgloss.Width(ticket)) + "  "
 	}
@@ -549,6 +563,22 @@ func diffstatWidth(s Section) int {
 	w := 0
 	for _, i := range ps.shown {
 		w = max(w, lipgloss.Width(diffstat(ps.prs[i].Additions, ps.prs[i].Deletions)))
+	}
+	return w
+}
+
+// ticketWidth is the cell width of the ticket column: the widest parsed id
+// across the shown set, or 0 when none parse. Blank cells are common —
+// agents/… and cursor/… branches carry no id — so the column sits after the
+// title, where a gap lands against ragged text instead of reading as a hole.
+func ticketWidth(s Section) int {
+	ps, ok := s.(*PRSection)
+	if !ok {
+		return 0
+	}
+	w := 0
+	for _, i := range ps.shown {
+		w = max(w, len(ticketID(ps.prs[i].HeadRefName)))
 	}
 	return w
 }

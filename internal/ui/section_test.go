@@ -887,3 +887,72 @@ func TestDiffstatWiderThanItsColumnStillHoldsWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestTicketColumnSitsAfterTitleAndBlanksDontShiftAge(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{
+		{Number: 3087, Title: "has a ticket", State: "OPEN", HeadRefName: "eng-7726-x"},
+		{Number: 3065, Title: "has none", State: "OPEN", HeadRefName: "agents/spicedb-rel-migrate-88ee"},
+	})
+	// Both PRs tie on actionability rank, so groupByAuthor breaks the tie
+	// alphabetically: the login assigned to prs[0] must sort first, or its
+	// group — and RenderRow(0) — lands on prs[1] instead.
+	s.prs[0].Author.Login = "asaf-s-factify"
+	s.prs[1].Author.Login = "noamsto"
+	s.SetShown([]int{0, 1})
+
+	tw := ticketWidth(s)
+	if tw < len("ENG-7726") {
+		t.Fatalf("ticketWidth = %d, too narrow for ENG-7726", tw)
+	}
+	withID := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5, TicketWidth: tw})
+	without := s.RenderRow(1, RowOpts{Width: 120, NumWidth: 5, TicketWidth: tw})
+
+	if !strings.Contains(stripANSIForTest(withID), "ENG-7726") {
+		t.Errorf("ticket id missing:\n%s", withID)
+	}
+	// The id follows the title, so the number stays hard against the gutter.
+	plain := stripANSIForTest(withID)
+	if strings.Index(plain, "ENG-7726") < strings.Index(plain, "has a ticket") {
+		t.Error("ticket id renders before the title; it must follow it")
+	}
+	if lipgloss.Width(withID) != lipgloss.Width(without) {
+		t.Error("a blank ticket changes the row width")
+	}
+}
+
+// TestTicketColumnWidthIsStableAcrossRows pins the ticket column's own cell
+// width rather than its offset from the row's right edge: exact-fill means
+// the trailing gap absorbs any error in that width and holds every row at
+// Width regardless, so a right-anchored check alone can't catch a wrong
+// TicketWidth (confirmed by breaking ticketWidth to return a per-row width
+// and watching this check, not the total-width one, fail).
+func TestTicketColumnWidthIsStableAcrossRows(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{
+		{Number: 3087, Title: "short id", State: "OPEN", HeadRefName: "fix/213-x"},
+		{Number: 3065, Title: "long id", State: "OPEN", HeadRefName: "eng-7726-y"},
+	})
+	// Same tie-break as above: prs[0]'s login must sort first alphabetically.
+	s.prs[0].Author.Login = "asaf-s-factify"
+	s.prs[1].Author.Login = "noamsto"
+	s.SetShown([]int{0, 1})
+
+	tw := ticketWidth(s)
+	a := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5, TicketWidth: tw})
+	b := s.RenderRow(1, RowOpts{Width: 120, NumWidth: 5, TicketWidth: tw})
+
+	// The ticket field is left-aligned: ticket text, then pad to TicketWidth,
+	// then the "  " separator, then the author. So the cells between where the
+	// ticket text starts and where the author starts, minus that separator, is
+	// the column's own width — independent of the row's total width.
+	ticketColWidth := func(row, ticket, login string) int {
+		return cellOffset(t, row, login) - cellOffset(t, row, ticket) - 2
+	}
+	if got := ticketColWidth(a, "#213", "asaf-s-factify"); got != tw {
+		t.Errorf("short-id row: ticket column is %d cells, want tw=%d", got, tw)
+	}
+	if got := ticketColWidth(b, "ENG-7726", "noamsto"); got != tw {
+		t.Errorf("long-id row: ticket column is %d cells, want tw=%d", got, tw)
+	}
+}
