@@ -237,13 +237,21 @@ func (m Model) previewWidth() int {
 	return l.SideWidth - 2
 }
 
-// identityHeader is the side card's top block: number + title, then a dim
-// author · branch · age line. The branch anchors the copy/worktree actions.
-func identityHeader(pr gh.PR) string {
-	line1 := accentStyle.Render(fmt.Sprintf("#%d", pr.Number)) + " " + headerStyle.Render(pr.Title)
-	line2 := authorStyle(pr.Author.Login).Render(pr.Author.Login) +
-		dimStyle.Render(" · "+pr.HeadRefName+" · "+ageString(pr.UpdatedAt))
-	return line1 + "\n" + line2
+// identityHeader is the side card's top block: number + title, then author,
+// base <- head and age, then the label chips. Labels live here rather than on
+// the board row, and the base branch appears alongside the head so the merge
+// target is visible without opening the Diff tab.
+func identityHeader(pr gh.PR, w int) string {
+	lines := []string{
+		accentStyle.Render(fmt.Sprintf("#%d", pr.Number)) + " " + headerStyle.Render(pr.Title),
+		authorStyle(pr.Author.Login).Render(pr.Author.Login) + "  " +
+			dimStyle.Render(headBranchGlyph+" "+pr.BaseRefName+" "+baseArrowGlyph+" "+pr.HeadRefName) +
+			dimStyle.Render("  "+ageString(pr.UpdatedAt)),
+	}
+	if chips := renderChips(pr.Labels, w); chips != "" {
+		lines = append(lines, chips)
+	}
+	return strings.Join(lines, "\n")
 }
 
 const (
@@ -273,18 +281,12 @@ func previewDescriptionBody(pr gh.PR, viewer string, w int) string {
 		dimStyle.Render("· full text in Description tab")
 }
 
-// sectionRule is a section divider: an UPPERCASE sapphire label (distinct from
-// the body text) followed by a short rule — not the full pane width.
-func sectionRule(label string, w int) string {
-	name := sectionLabelStyle.Render(strings.ToUpper(label))
-	ruleLen := 6
-	if max := w - lipgloss.Width(name) - 1; ruleLen > max {
-		ruleLen = max
-	}
-	if ruleLen < 0 {
-		ruleLen = 0
-	}
-	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
+// sectionHeader is a preview section divider: a glyph plus a Title Case name,
+// underlined, in one accent. No rule and no uppercasing — the pane should paint
+// its content, not its scaffolding.
+func sectionHeader(glyph, label string, w int) string {
+	name := strings.ToUpper(label[:1]) + label[1:]
+	return sectionLabelStyle.Underline(true).Render(glyph + " " + name)
 }
 
 // previewPane renders the side pane as identity header + tab bar + the active
@@ -304,7 +306,7 @@ func (m Model) previewPane() string {
 	if !ok {
 		return ""
 	}
-	header := identityHeader(ps.prAt(m.cursor))
+	header := identityHeader(ps.prAt(m.cursor), w-2)
 	bar := renderTabBar(expandedTabs, m.expandedTab, w)
 	var body string
 	if m.expandedTab == tabOverview {
@@ -323,26 +325,26 @@ func (m Model) renderOverview(w int) string {
 		return ""
 	}
 	bw := w - 2
-	section := func(label, body string) string {
-		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
+	section := func(glyph, label, body string) string {
+		return sectionHeader(glyph, label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
 	}
 	d, cached := m.detail[v.Number]
 	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
 		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
-			blocks = append(blocks, section("description", body))
+			blocks = append(blocks, section(descriptionGlyph, "description", body))
 		}
 		tc := triage.Preliminary(pr, m.viewerLogin)
 		if cached {
 			tc = triage.Compute(pr, d, m.viewerLogin)
 		}
 		if card := renderCard(tc, bw); card != "" {
-			blocks = append(blocks, section("blocker", card))
+			blocks = append(blocks, section(blockerGlyph, "blocker", card))
 		}
 		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
 			if ci := ciLine(pr); ci != "" {
-				blocks = append(blocks, section("checks", ci))
+				blocks = append(blocks, section(checksGlyph, "checks", ci))
 			}
 		}
 	}
@@ -350,14 +352,14 @@ func (m Model) renderOverview(w int) string {
 		blocks = append(blocks, dimStyle.Render("  loading details…"))
 		return strings.Join(blocks, "\n\n")
 	}
-	blocks = append(blocks, section("review", reviewLine(d)))
+	blocks = append(blocks, section(reviewGlyph, "review", reviewLine(d)))
 	if ts := m.detail[v.Number].ReviewThreads; len(ts) > 0 {
 		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
 		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
-			blocks = append(blocks, section(label, body))
+			blocks = append(blocks, section(threadsGlyph, label, body))
 		}
 	}
-	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
+	blocks = append(blocks, section(latestGlyph, "latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
 	return strings.Join(blocks, "\n\n")
 }
 
@@ -375,7 +377,7 @@ func (m Model) issuePreviewPane(is *IssueSection, w, bw int) string {
 	if err != nil {
 		body = d.Body
 	}
-	blocks = append(blocks, sectionRule("body", w)+"\n"+indentLines(strings.TrimRight(body, "\n"), 2))
+	blocks = append(blocks, sectionHeader(descriptionGlyph, "body", w)+"\n"+indentLines(strings.TrimRight(body, "\n"), 2))
 	return strings.Join(blocks, "\n\n")
 }
 

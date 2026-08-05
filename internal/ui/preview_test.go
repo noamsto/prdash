@@ -56,11 +56,32 @@ func TestRenderTimelineKeepsCommentsCompact(t *testing.T) {
 func TestIdentityHeader(t *testing.T) {
 	pr := gh.PR{Number: 309, Title: "Add retry logic", HeadRefName: "feat/309-retry"}
 	pr.Author.Login = "bob"
-	out := identityHeader(pr)
+	out := identityHeader(pr, 80)
 	for _, want := range []string{"#309", "Add retry logic", "bob", "feat/309-retry"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("identity header missing %q: %q", want, out)
 		}
+	}
+}
+
+func TestIdentityHeaderCarriesBaseArrowAndLabels(t *testing.T) {
+	pr := gh.PR{
+		Number: 3087, Title: "fix(services): raise provenance contention",
+		HeadRefName: "eng-7726-same-value", BaseRefName: "main",
+		UpdatedAt: time.Now().Add(-2 * time.Hour),
+		Labels:    []gh.Label{{Name: "complexity:7", Color: "fab387"}},
+	}
+	pr.Author.Login = "noamsto"
+
+	got := stripANSIForTest(identityHeader(pr, 80))
+	if !strings.Contains(got, "main") || !strings.Contains(got, "eng-7726-same-value") {
+		t.Errorf("base and head must both appear:\n%s", got)
+	}
+	if !strings.Contains(got, "←") {
+		t.Errorf("base <- head arrow missing:\n%s", got)
+	}
+	if !strings.Contains(got, "complexity:7") {
+		t.Errorf("label chips must appear in the identity block:\n%s", got)
 	}
 }
 
@@ -143,13 +164,16 @@ func TestFlagGlyph(t *testing.T) {
 	}
 }
 
-func TestSectionRule(t *testing.T) {
-	r := sectionRule("blocker", 30)
-	if !strings.Contains(r, "BLOCKER") || !strings.Contains(r, "─") {
-		t.Fatalf("section rule should show the uppercased label and a rule: %q", r)
+func TestSectionHeaderHasNoRuleAndNoUppercasing(t *testing.T) {
+	got := stripANSIForTest(sectionHeader(blockerGlyph, "blocker", 60))
+	if strings.Contains(got, "─") {
+		t.Errorf("section header must not draw a rule: %q", got)
 	}
-	if strings.Contains(r, "\n") {
-		t.Fatalf("section rule is one line: %q", r)
+	if strings.Contains(got, "BLOCKER") {
+		t.Errorf("section header must not uppercase: %q", got)
+	}
+	if !strings.Contains(got, "Blocker") {
+		t.Errorf("section header should be Title Case: %q", got)
 	}
 }
 
@@ -269,11 +293,11 @@ func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
 		return ansi.ReplaceAllString(m.previewPane(), "")
 	}
 	// Blocker IS checks-failing → no redundant standalone "checks" section.
-	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, "\nCHECKS ─") {
+	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, checksGlyph+" Checks") {
 		t.Fatalf("checks section should be suppressed when the blocker is CI:\n%s", got)
 	}
 	// Blocker is a conflict that masks failing CI → checks section surfaces it.
-	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, "\nCHECKS ─") {
+	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, checksGlyph+" Checks") {
 		t.Fatalf("checks section should show when a conflict masks failing CI:\n%s", got)
 	}
 }
@@ -438,7 +462,7 @@ func TestPreviewPaneShowsDescriptionSection(t *testing.T) {
 	m.setPRs([]gh.PR{p})
 	m.renderList()
 	out := ansiRe.ReplaceAllString(m.previewPane(), "")
-	if !strings.Contains(out, "DESCRIPTION") || !strings.Contains(out, "does a cool thing") {
+	if !strings.Contains(out, descriptionGlyph+" Description") || !strings.Contains(out, "does a cool thing") {
 		t.Fatalf("preview should show the description section:\n%s", out)
 	}
 }

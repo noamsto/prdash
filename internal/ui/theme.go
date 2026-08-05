@@ -379,6 +379,19 @@ const (
 	selBarGlyph   = "▌" // U+258C left half block
 )
 
+// Preview section glyphs. One soft accent carries all of them; the glyph is what
+// distinguishes the sections, not a per-section hue.
+const (
+	blockerGlyph     = "⚠" // nerd: nf-oct-alert
+	checksGlyph      = "✓" // nerd: nf-oct-check_circle
+	reviewGlyph      = "◉" // nerd: nf-oct-code_review
+	threadsGlyph     = "≡" // nerd: nf-oct-comment_discussion
+	latestGlyph      = "◴" // nerd: nf-md-history
+	descriptionGlyph = "▤" // nerd: nf-oct-book
+	baseArrowGlyph   = "←" // base <- head
+	headBranchGlyph  = "⎇" // nerd: nf-oct-git_branch
+)
+
 // rateGlyph marks the API-budget segment in the header.
 const rateGlyph = "◔" // nerd: nf-md-gauge
 
