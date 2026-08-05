@@ -69,6 +69,12 @@ func computeLayout(w, h int) Layout {
 	if showSide {
 		listCol = list
 	}
+	if listCol-2 > listInnerMax {
+		listCol = listInnerMax + 2
+		if showSide {
+			side = w - listCol - gap // reclaimed width widens the preview
+		}
+	}
 	listInner := listCol - 2
 	pr := panelRowsFor(listInner)
 	cols := columnLadder(listInner)
@@ -89,9 +95,9 @@ func computeLayout(w, h int) Layout {
 		ch = 1
 	}
 	if !showSide {
-		return Layout{rowColumns: cols, ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ListInner: listInner, ContentHeight: ch}
+		return Layout{rowColumns: cols, ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: listCol, ListInner: listInner, ContentHeight: ch}
 	}
-	return Layout{rowColumns: cols, ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, ListInner: listInner, SideWidth: side, Gap: gap, ContentHeight: ch}
+	return Layout{rowColumns: cols, ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: listCol, ListInner: listInner, SideWidth: side, Gap: gap, ContentHeight: ch}
 }
 
 // Column breakpoints, in LIST INTERIOR cells — the width a row is handed, not
@@ -104,6 +110,12 @@ const (
 	ladderDropTicket  = 70 // below: ticket column goes
 	ladderDropDiff    = 62 // below: diffstat goes
 )
+
+// listInnerMax caps the list interior. Past it a wide window only stretches the
+// rows into a gap between the title and the right-hand columns — every column is
+// already present by ~92 cells. The surplus width goes to the preview when it's
+// shown; when it's hidden the list is left-aligned and the extra is right margin.
+const listInnerMax = 110
 
 // columnLadder decides which optional columns survive at a given row width.
 // Order is least-load-bearing first. It only ever asks for less than the row

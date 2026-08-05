@@ -33,6 +33,42 @@ func TestLayoutNarrowHidesSide(t *testing.T) {
 	}
 }
 
+func TestLayoutCapsListWidth(t *testing.T) {
+	// Preview shown, very wide: the list caps at listInnerMax and the reclaimed
+	// width widens the preview; the panes still tile the terminal exactly.
+	l := computeLayout(300, 40)
+	if !l.ShowSide {
+		t.Fatal("300 cols should show the side pane")
+	}
+	if l.ListInner != listInnerMax {
+		t.Errorf("wide list inner = %d, want capped at %d", l.ListInner, listInnerMax)
+	}
+	if l.ListWidth+l.Gap+l.SideWidth != 300 {
+		t.Errorf("panes must tile the terminal: %d + %d + %d != 300", l.ListWidth, l.Gap, l.SideWidth)
+	}
+	if l.SideWidth <= 300*55/100 {
+		t.Errorf("reclaimed width should widen the preview past its 55%% share: side=%d", l.SideWidth)
+	}
+
+	// Preview hidden (below sideThreshold) but still wide enough to cap: the list
+	// is left-aligned, so ListWidth sits below the terminal width, leaving margin.
+	off := computeLayout(118, 40)
+	if off.ShowSide {
+		t.Fatal("118 cols should hide the side pane")
+	}
+	if off.ListInner != listInnerMax {
+		t.Errorf("preview-off list inner = %d, want capped at %d", off.ListInner, listInnerMax)
+	}
+	if off.ListWidth != listInnerMax+2 {
+		t.Errorf("capped list width = %d, want %d (right margin)", off.ListWidth, listInnerMax+2)
+	}
+
+	// Normal width: below the cap, the list is untouched.
+	if n := computeLayout(160, 40); n.ListInner >= listInnerMax {
+		t.Errorf("at 160 the list should sit under the cap, got inner %d", n.ListInner)
+	}
+}
+
 func TestLayoutContentHeight(t *testing.T) {
 	// Tall terminal: the docked panel is reserved, so the main area is
 	// h - spacerRows(2) - panelRows.
