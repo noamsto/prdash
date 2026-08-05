@@ -2136,13 +2136,25 @@ func (m Model) renderInner() string {
 	return board
 }
 
+// contentWidth is the width of the filter bar and the list column below it. It
+// is the whole terminal until the preview is hidden and the list is capped, at
+// which point the filter bar narrows with the list rather than overhanging the
+// empty right margin.
+func (m Model) contentWidth() int {
+	l := computeLayout(m.width, m.height)
+	if !l.ShowSide {
+		return l.ListWidth
+	}
+	return m.width
+}
+
 // filterInputWidth is the textinput's own width budget: the box interior
 // minus the leading search glyph, its separator, the input's prompt, and
 // (conservatively, since it's shown for any non-empty query) the match-count
 // segment. Without this, bubbles renders the whole value unbounded and
 // filterBar's lipgloss.Width word-wraps it open past three rows.
 func (m Model) filterInputWidth() int {
-	inner := max(1, m.width-4)
+	inner := max(1, m.contentWidth()-4)
 	reserved := lipgloss.Width(filterGlyph) + 1 + lipgloss.Width(m.filterInput.Prompt)
 	if total := len(m.section.Haystacks()); total > 0 {
 		reserved += lipgloss.Width(fmt.Sprintf("%d→%d", total, total)) // total→total upper-bounds the real total→shown width
@@ -2154,7 +2166,8 @@ func (m Model) filterInputWidth() int {
 // state — the primary surface should not change height as it gains and loses
 // focus, and filterBarRows measures off this render so contentHeight follows.
 func (m Model) filterBar() string {
-	inner := max(1, m.width-4) // border (2) + one cell of padding each side
+	barW := m.contentWidth()
+	inner := max(1, barW-4) // border (2) + one cell of padding each side
 
 	var body string
 	switch {
@@ -2190,8 +2203,8 @@ func (m Model) filterBar() string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(theme.Rule)).
-		Width(m.width).
-		MaxWidth(m.width).
+		Width(barW).
+		MaxWidth(barW).
 		Padding(0, 1).
 		Render(body)
 }
