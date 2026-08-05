@@ -511,11 +511,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 		titleRoom = 1
 	}
 	titleSt := titleStyle
-	switch {
-	case o.Focused:
+	if o.Focused {
 		titleSt = titleSt.Bold(true) // the hovered row is always readable, even if draft
-	case o.Draft:
-		titleSt = dimStyle
 	}
 	tags := ""
 	if tagW > 0 {
@@ -528,8 +525,11 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 		gap = 1
 	}
 	line := left + titleTxt + strings.Repeat(" ", gap) + right
-	if o.Focused {
+	switch {
+	case o.Focused:
 		line = rowBgWrap(line, theme.RowBg)
+	case o.Draft:
+		line = faintWrap(line) // a draft recedes as a whole row, not just a gutter glyph
 	}
 	return line
 }
@@ -544,6 +544,17 @@ func rowBgWrap(line, bg string) string {
 	set := probe[:strings.Index(probe, "X")]
 	const reset = "\x1b[m"
 	return set + strings.ReplaceAll(line, reset, reset+set) + reset
+}
+
+// faintWrap dims a whole composed row with the SGR faint attribute. Like
+// rowBgWrap, it re-applies the attribute after each of lipgloss's resets so the
+// dimming survives every styled segment rather than clearing at the first one.
+func faintWrap(line string) string {
+	const (
+		reset = "\x1b[m"
+		faint = "\x1b[2m"
+	)
+	return faint + strings.ReplaceAll(line, reset, reset+faint) + reset
 }
 
 // abbrevCount renders a change count, shortening at 1000 so a 5-digit diff can't
@@ -769,10 +780,11 @@ func reviewDot(decision string) string {
 	}
 }
 
-// groupHeader is an author divider: the login (bold, in its hue) + a short rule
-// — never the full row width. Visual-only; never a selectable cursor target.
+// groupHeader is an author divider: the login (in its hue, not bold) + a short
+// rule — never the full row width. Kept light so the divider frames the cluster
+// without competing with the rows. Visual-only; never a selectable cursor target.
 func groupHeader(author string, width int) string {
-	name := authorStyle(author).Bold(true).Render(author)
+	name := authorStyle(author).Render(author)
 	ruleLen := 6
 	if max := width - lipgloss.Width(name) - 1; ruleLen > max {
 		ruleLen = max

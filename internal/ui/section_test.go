@@ -144,6 +144,32 @@ func TestDraftOverridesCIGlyphNotTitle(t *testing.T) {
 	}
 }
 
+func TestDraftRowRecedesWhenFaint(t *testing.T) {
+	const faint = "\x1b[2m"
+	mk := func() *PRSection {
+		s := NewPRSection("is:open")
+		s.SetPRs([]gh.PR{{Number: 42, Title: "wip", State: "OPEN", IsDraft: true}})
+		s.prs[0].Author.Login = "alice"
+		s.SetShown([]int{0})
+		return s
+	}
+	if row := mk().RenderRow(0, RowOpts{Width: 120, NumWidth: 5}); !strings.Contains(row, faint) {
+		t.Errorf("an unfocused draft row should be dimmed with the faint attribute:\n%s", row)
+	}
+	// The focused draft stays readable: the row background wins, no faint wrap.
+	if row := mk().RenderRow(0, RowOpts{Width: 120, NumWidth: 5, Focused: true}); strings.Contains(row, faint) {
+		t.Errorf("a focused draft must not be faint-wrapped:\n%s", row)
+	}
+	// A ready PR is never faint.
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{{Number: 43, Title: "ready", State: "OPEN"}})
+	s.prs[0].Author.Login = "alice"
+	s.SetShown([]int{0})
+	if row := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5}); strings.Contains(row, faint) {
+		t.Errorf("a ready PR must not be faint:\n%s", row)
+	}
+}
+
 func TestTerminalStateOverridesDraftGlyph(t *testing.T) {
 	// Draft is checked last in the switch so a merged or closed draft shows
 	// the terminal glyph, not the draft glyph. This test guards against
