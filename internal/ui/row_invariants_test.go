@@ -88,6 +88,29 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 		}
 	}
 
+	// Ticket dimension: absent (pre-Task-6 behavior), a short GitHub-issue-style
+	// id, and a long Linear-style one — same absent/small/large shape as diffs
+	// above, and for the same reason: short/long share one column width (the
+	// wider of the two) so the sweep also exercises the pad-when-shorter path.
+	tickets := []struct {
+		name   string
+		ticket string
+		width  int
+	}{
+		{"absent", "", 0},
+		{"short", "#213", 0},
+		{"long", "ENG-7726", 0},
+	}
+	tw := 0
+	for _, tc := range tickets[1:] {
+		tw = max(tw, len(tc.ticket))
+	}
+	for i := range tickets {
+		if tickets[i].name != "absent" {
+			tickets[i].width = tw
+		}
+	}
+
 	// renderItemRow floors its working width at 24 and reserves 3 cells for the
 	// tree slot, so 26 is the smallest width where exact-fill is a real contract
 	// for a 4-cell number column; below it the row is legitimately wider than w
@@ -101,74 +124,81 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 
 			for _, st := range states {
 				for _, dc := range diffs {
-					// Landed appends a " landed" tag inside the title's room; it is a
-					// dimension because that tag is drawn unconditionally, so a room
-					// calculation that ignores it overflows the row.
-					for _, landed := range []bool{false, true} {
-						for _, nc := range nums {
-							if w < 26+nc.width-4 {
-								continue
-							}
-							num := nc.num
-							opts := RowOpts{
-								Width:     w,
-								NumWidth:  nc.width,
-								Focused:   st.focused,
-								Selected:  st.selected,
-								Landed:    landed,
-								DiffWidth: dc.width,
-							}
-							// baseOffset pins invariant 4: the tree slot is a fixed-width
-							// reservation, so the #number's column must not move regardless
-							// of what's drawn into that slot.
-							var baseOffset int
-							for ti, tree := range trees {
-								opts.Tree = tree
-								row := renderItemRow(opts, accentStyle, num, title, login, age, dc.diff, ci, review, auto)
-
-								if got := lipgloss.Width(row); got != w {
-									t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s landed=%v num=%q: row width %d, want exactly %d",
-										login, len(login), w, tree, st.name, dc.name, landed, num, got, w)
+					// Ticket nests inside diffs, not beside it: section.go reserves the
+					// diffstat before the ticket out of the same slack, so this is the
+					// pairing that actually exercises that ordering (and, at the
+					// narrowest widths, the ticket's drop-out path).
+					for _, tc := range tickets {
+						// Landed appends a " landed" tag inside the title's room; it is a
+						// dimension because that tag is drawn unconditionally, so a room
+						// calculation that ignores it overflows the row.
+						for _, landed := range []bool{false, true} {
+							for _, nc := range nums {
+								if w < 26+nc.width-4 {
+									continue
 								}
-								if strings.Contains(row, "\n") {
-									t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s landed=%v num=%q: row is not a single line: %q",
-										login, len(login), w, tree, st.name, dc.name, landed, num, row)
+								num := nc.num
+								opts := RowOpts{
+									Width:       w,
+									NumWidth:    nc.width,
+									Focused:     st.focused,
+									Selected:    st.selected,
+									Landed:      landed,
+									DiffWidth:   dc.width,
+									TicketWidth: tc.width,
 								}
+								// baseOffset pins invariant 4: the tree slot is a fixed-width
+								// reservation, so the #number's column must not move regardless
+								// of what's drawn into that slot.
+								var baseOffset int
+								for ti, tree := range trees {
+									opts.Tree = tree
+									row := renderItemRow(opts, accentStyle, num, title, tc.ticket, login, age, dc.diff, ci, review, auto)
 
-								// Trap: strings.Index below returns a BYTE offset. Box-drawing
-								// glyphs (│, ├, ─) are 3 bytes each and 重/试 are 3 bytes but 2
-								// cells, so a byte offset fed straight into a "column" check
-								// would be garbage. Strip ANSI first, then convert the byte
-								// offset to a cell offset via lipgloss.Width on the prefix —
-								// that's the only combination that's actually correct.
-								plain := ansi.Strip(row)
+									if got := lipgloss.Width(row); got != w {
+										t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q: row width %d, want exactly %d",
+											login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, got, w)
+									}
+									if strings.Contains(row, "\n") {
+										t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q: row is not a single line: %q",
+											login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, row)
+									}
 
-								if !strings.Contains(plain, age) {
-									t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s landed=%v num=%q: age %q missing from row: %q",
-										login, len(login), w, tree, st.name, dc.name, landed, num, age, plain)
-								}
+									// Trap: strings.Index below returns a BYTE offset. Box-drawing
+									// glyphs (│, ├, ─) are 3 bytes each and 重/试 are 3 bytes but 2
+									// cells, so a byte offset fed straight into a "column" check
+									// would be garbage. Strip ANSI first, then convert the byte
+									// offset to a cell offset via lipgloss.Width on the prefix —
+									// that's the only combination that's actually correct.
+									plain := ansi.Strip(row)
 
-								idx := strings.Index(plain, num)
-								if idx < 0 {
-									t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s landed=%v: %q not found in row: %q",
-										login, len(login), w, tree, st.name, dc.name, landed, num, plain)
-								}
-								offset := lipgloss.Width(plain[:idx])
-								if ti == 0 {
-									baseOffset = offset
-								} else if offset != baseOffset {
-									t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s landed=%v num=%q: #number at col %d, want %d (tree slot must stay a fixed 3 cells)",
-										login, len(login), w, tree, st.name, dc.name, landed, num, offset, baseOffset)
-								}
+									if !strings.Contains(plain, age) {
+										t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q: age %q missing from row: %q",
+											login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, age, plain)
+									}
 
-								// Invariant 5, the actual pin for defect 2: the hue must come
-								// from the FULL login, not whatever truncate() left in the
-								// row. Comparing the raw (unstripped) row against the SGR
-								// prefix authorStyle(login) produces on the full login catches
-								// a regression to hashing the truncated display text instead.
-								if wantSGR != "" && !strings.Contains(row, wantSGR) {
-									t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s landed=%v num=%q: row missing author hue SGR %q for the full login (hue must not be derived from truncated display text)",
-										login, len(login), w, tree, st.name, dc.name, landed, num, wantSGR)
+									idx := strings.Index(plain, num)
+									if idx < 0 {
+										t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v: %q not found in row: %q",
+											login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, plain)
+									}
+									offset := lipgloss.Width(plain[:idx])
+									if ti == 0 {
+										baseOffset = offset
+									} else if offset != baseOffset {
+										t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q: #number at col %d, want %d (tree slot must stay a fixed 3 cells)",
+											login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, offset, baseOffset)
+									}
+
+									// Invariant 5, the actual pin for defect 2: the hue must come
+									// from the FULL login, not whatever truncate() left in the
+									// row. Comparing the raw (unstripped) row against the SGR
+									// prefix authorStyle(login) produces on the full login catches
+									// a regression to hashing the truncated display text instead.
+									if wantSGR != "" && !strings.Contains(row, wantSGR) {
+										t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q: row missing author hue SGR %q for the full login (hue must not be derived from truncated display text)",
+											login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, wantSGR)
+									}
 								}
 							}
 						}

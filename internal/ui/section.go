@@ -17,16 +17,17 @@ import (
 
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
-	Width     int
-	NumWidth  int // cell width for the right-aligned number column (0 = natural)
-	Focused   bool
-	Selected  bool
-	Draft     bool   // dim the title; drafts sort last (see prRank)
-	Landed    bool   // merged by prdash this session, held on the open board until ctrl+r
-	Commented bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
-	Flag      string // pre-rendered ! column glyph (conflict/behind), "" when unknown
-	Tree      string // stack chain glyph, rendered between the gutter and the number
-	DiffWidth int    // cell width of the diffstat column; 0 hides it
+	Width       int
+	NumWidth    int // cell width for the right-aligned number column (0 = natural)
+	Focused     bool
+	Selected    bool
+	Draft       bool   // dim the title; drafts sort last (see prRank)
+	Landed      bool   // merged by prdash this session, held on the open board until ctrl+r
+	Commented   bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
+	Flag        string // pre-rendered ! column glyph (conflict/behind), "" when unknown
+	Tree        string // stack chain glyph, rendered between the gutter and the number
+	DiffWidth   int    // cell width of the diffstat column; 0 hides it
+	TicketWidth int    // cell width of the ticket-id column; 0 hides it
 }
 
 type Section interface {
@@ -154,7 +155,7 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	if o.DiffWidth > 0 {
 		diff = diffstat(p.Additions, p.Deletions)
 	}
-	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
+	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title, "",
 		author, age, diff, status, review, auto)
 }
 
@@ -338,7 +339,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
-	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
+	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title, "",
 		is.Author.Login, ageString(is.UpdatedAt), "", "", "", "")
 }
 
@@ -395,7 +396,7 @@ const landedTag = " landed"
 // renderItemRow renders one dense row:
 //
 //	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
-func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, diff, ci, review, auto string) string {
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, author, age, diff, ci, review, auto string) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -464,7 +465,12 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 		diffExtra = 2 + o.DiffWidth
 	}
 	authorCap := min(17, max(0, slack-tagW-diffExtra))
-	right := authorStyle(author).Render(truncate(author, authorCap))
+	right := ""
+	if o.TicketWidth > 0 {
+		right = sectionLabelStyle.Render(ticket) +
+			strings.Repeat(" ", o.TicketWidth-lipgloss.Width(ticket)) + "  "
+	}
+	right += authorStyle(author).Render(truncate(author, authorCap))
 	if diffExtra > 0 {
 		// Clamp before padding: DiffWidth is the column, so a diffstat wider than
 		// it would render at natural width and push the row past w.
