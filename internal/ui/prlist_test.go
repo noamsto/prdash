@@ -518,6 +518,55 @@ func TestStatusBarHasTopRule(t *testing.T) {
 	}
 }
 
+func TestStatusBarShowsFocusedBranchWhenPreviewIsHidden(t *testing.T) {
+	// A distinct HeadRefName (not the fixture default of "") is required here:
+	// an empty branch makes strings.Contains trivially true regardless of what
+	// statusBar actually renders.
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "feature-branch"}})
+	// Below sideThreshold (120) so there's no preview pane, but wide enough that
+	// the base hint bar (~85 cells) still leaves the >8-cell room the segment requires.
+	m.width, m.height = 110, 30
+	if computeLayout(m.width, m.height).ShowSide {
+		t.Fatal("fixture width still shows the side pane")
+	}
+	v, ok := m.cursorVars()
+	if !ok {
+		t.Fatal("no cursor row")
+	}
+	if !strings.Contains(stripANSIForTest(m.statusBar()), v.HeadRefName) {
+		t.Errorf("status bar should carry the focused branch %q", v.HeadRefName)
+	}
+}
+
+func TestStatusBarOmitsBranchWhenPreviewIsShown(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "feature-branch"}})
+	m.width, m.height = 160, 40 // above sideThreshold: the preview pane already shows the branch
+	if !computeLayout(m.width, m.height).ShowSide {
+		t.Fatal("fixture width should show the side pane")
+	}
+	v, ok := m.cursorVars()
+	if !ok {
+		t.Fatal("no cursor row")
+	}
+	if strings.Contains(stripANSIForTest(m.statusBar()), v.HeadRefName) {
+		t.Errorf("status bar should not duplicate the branch when the preview pane already shows it")
+	}
+}
+
+func TestTruncateLeftKeepsTheTail(t *testing.T) {
+	got := truncateLeft("eng-7726-same-value-different-evidence", 20)
+	if lipgloss.Width(got) > 20 {
+		t.Fatalf("truncateLeft over budget: %q is %d cells", got, lipgloss.Width(got))
+	}
+	if !strings.HasSuffix(got, "evidence") {
+		t.Errorf("truncateLeft must keep the distinctive tail, got %q", got)
+	}
+}
+
 func TestAnyChecksRunningDetectsPending(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.setPRs([]gh.PR{

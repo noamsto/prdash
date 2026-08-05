@@ -2748,6 +2748,16 @@ func (m Model) statusBar() string {
 		parts = append(parts, accentStyle.Render("D")+statusBarStyle.Render(":")+drafts)
 	}
 	parts = append(parts, hint("q", "quit"))
+	// Below the preview threshold the branch has nowhere else to live, and it is
+	// what the copy and worktree actions operate on.
+	if !computeLayout(m.width, m.height).ShowSide {
+		if v, ok := m.cursorVars(); ok && v.HeadRefName != "" {
+			bar := strings.Join(parts, "  ")
+			if room := m.width - lipgloss.Width(bar) - 4; room > 8 {
+				parts = append(parts, dimStyle.Render(headBranchGlyph+" "+truncateLeft(v.HeadRefName, room)))
+			}
+		}
+	}
 	rule := sepStyle.Render(strings.Repeat("─", max(m.width, 1)))
 	return rule + "\n  " + strings.Join(parts, "  ")
 }

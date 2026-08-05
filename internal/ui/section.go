@@ -674,6 +674,25 @@ func truncate(s string, w int) string {
 	return b.String() + "…"
 }
 
+// truncateLeft shortens plain text to w cells by dropping the FRONT, prefixing
+// an ellipsis. Branch names share long prefixes (eng-7726-…) and differ in the
+// tail, so the tail is the part worth keeping.
+func truncateLeft(s string, w int) string {
+	if w < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	r := []rune(s)
+	for i := range r {
+		if cand := "…" + string(r[i:]); lipgloss.Width(cand) <= w {
+			return cand
+		}
+	}
+	return "…"
+}
+
 // renderChips renders labels as rounded color pills, packed into maxW cells and
 // summarised with a "+N" when they don't all fit. The total rendered width never
 // exceeds maxW — including the "+N" suffix, which is budgeted too (a caller that
