@@ -120,6 +120,39 @@ func TestColumnLadder(t *testing.T) {
 	}
 }
 
+// TestColumnLadderMeasuresThePaneInterior pins which width the rungs are named
+// for. computeLayout feeds columnLadder the pane interior, so below
+// sideThreshold — where the list takes the whole terminal — each rung fires two
+// terminal cells wider than its constant. Asserting the pairs either side of
+// every rung is what catches a regression to measuring the bordered column,
+// which TestColumnLadder above cannot see: it calls columnLadder directly.
+func TestColumnLadderMeasuresThePaneInterior(t *testing.T) {
+	for _, tc := range []struct {
+		w                               int
+		diff, compact, ticket, initials bool
+	}{
+		{94, true, false, true, false},
+		{93, true, true, true, false},
+		{82, true, true, true, false},
+		{81, true, true, true, true},
+		{72, true, true, true, true},
+		{71, true, true, false, true},
+		{64, true, true, false, true},
+		{63, false, true, false, true},
+	} {
+		l := computeLayout(tc.w, 40)
+		if l.ListInner != tc.w-2 {
+			t.Fatalf("computeLayout(%d,40).ListInner = %d, want %d (test would sweep the wrong dimension)", tc.w, l.ListInner, tc.w-2)
+		}
+		if l.ShowDiffstat != tc.diff || l.CompactDiffstat != tc.compact ||
+			l.ShowTicket != tc.ticket || l.InitialsAuthor != tc.initials {
+			t.Errorf("computeLayout(%d,40) = diff:%v compact:%v ticket:%v initials:%v, want %v %v %v %v",
+				tc.w, l.ShowDiffstat, l.CompactDiffstat, l.ShowTicket, l.InitialsAuthor,
+				tc.diff, tc.compact, tc.ticket, tc.initials)
+		}
+	}
+}
+
 // TestTitleNeverStarvesAcrossTheSweep is the ladder's whole reason to exist: at
 // every width the board can be handed, enough optional columns shed that the
 // title still gets a readable slice of the row.
@@ -162,7 +195,7 @@ func TestTitleNeverStarvesAcrossTheSweep(t *testing.T) {
 			if l.ShowTicket {
 				tktW = ticketWidth(s)
 			}
-			innerW := l.ListWidth - 2 // renderList's row width: inside the pane border
+			innerW := l.ListInner // renderList's row width
 			row := s.RenderRow(0, RowOpts{
 				Width: innerW, NumWidth: columnWidths(s), DiffWidth: diffW, TicketWidth: tktW,
 				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,

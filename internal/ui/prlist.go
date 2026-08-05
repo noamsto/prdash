@@ -574,7 +574,7 @@ type rowKey struct {
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
-	innerW := l.ListWidth - 2 // inside the pane's left/right border
+	innerW := l.ListInner
 	innerH := m.contentHeight(l) - 2
 	if innerW < 1 {
 		innerW = 1

@@ -42,6 +42,7 @@ type Layout struct {
 	ShowFooter    bool // false hides the footer entirely, reclaiming its row(s) for content
 	ShowPanel     bool // dock the keys/actions panel instead of the status bar (only when ShowFooter)
 	ListWidth     int
+	ListInner     int // ListWidth minus the pane border: the width a row actually gets
 	SideWidth     int
 	Gap           int // columns between list and side pane
 	PanelRows     int // outer height of the docked panel (0 when not shown)
@@ -59,15 +60,18 @@ func computeLayout(w, h int) Layout {
 	showSide := w >= sideThreshold
 	footer := showFooter(w, h)
 
-	// The list's own column: the whole terminal until the preview pane appears.
-	// Both the panel (which docks under it) and the row's column ladder measure
-	// against it, never against the terminal.
+	// The list pane's interior — its column minus the border, which is the whole
+	// terminal until the preview pane appears. Both the panel (which docks under
+	// it) and the row's column ladder measure against it, never against the
+	// terminal and never against the bordered column: a rung named for 70 cells
+	// that fires on a 68-cell row is a rung with the wrong name.
 	listCol := w
 	if showSide {
 		listCol = list
 	}
-	pr := panelRowsFor(listCol - 2)
-	cols := columnLadder(listCol)
+	listInner := listCol - 2
+	pr := panelRowsFor(listInner)
+	cols := columnLadder(listInner)
 	showPanel := footer && h-2-pr >= minMainRows
 
 	var ch int
@@ -85,14 +89,15 @@ func computeLayout(w, h int) Layout {
 		ch = 1
 	}
 	if !showSide {
-		return Layout{rowColumns: cols, ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch}
+		return Layout{rowColumns: cols, ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ListInner: listInner, ContentHeight: ch}
 	}
-	return Layout{rowColumns: cols, ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch}
+	return Layout{rowColumns: cols, ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, ListInner: listInner, SideWidth: side, Gap: gap, ContentHeight: ch}
 }
 
-// Column breakpoints, in LIST cells — not terminal cells. Once the preview pane
-// drops, the list gets the whole terminal, so the lower steps fire less often
-// than the numbers suggest.
+// Column breakpoints, in LIST INTERIOR cells — the width a row is handed, not
+// terminal cells and not the bordered column. Once the preview pane drops, the
+// list gets the whole terminal, so the lower steps fire less often than the
+// numbers suggest.
 const (
 	ladderCompactDiff = 92 // below: diffstat collapses to ±N
 	ladderInitials    = 80 // below: author collapses to initials
@@ -100,7 +105,7 @@ const (
 	ladderDropDiff    = 62 // below: diffstat goes
 )
 
-// columnLadder decides which optional columns survive at a given list width.
+// columnLadder decides which optional columns survive at a given row width.
 // Order is least-load-bearing first. It only ever asks for less than the row
 // could fit: renderItemRow still carves every column out of one slack budget and
 // drops what doesn't fit, so the ladder can never cause an overflow.
