@@ -463,9 +463,13 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// responsive ladder would do anyway.
 	//
 	// slack is the whole budget the title, author, diffstat and landed tag share:
-	// 5 = the "  NNN" age suffix, 2 = the title/right separators, 1 = a minimum
-	// title cell. Every optional column is carved out of this one number so the
-	// gap below never has to be floored — a floored gap is overflow, not slack.
+	// ageW = the age suffix, 2 = the title/right separators, 1 = a minimum title
+	// cell. Every optional column is carved out of this one number so the gap
+	// below never has to be floored — a floored gap is overflow, not slack.
+	//
+	// ageW must be measured, not a literal: ageString's days branch is unbounded,
+	// so the merged and closed views (which age from MergedAt/ClosedAt) reach 4
+	// and 5 cells, and a short reservation over-commits every gate below.
 	//
 	// Neither the diffstat, the ticket id, nor the tag is truncatable like the
 	// author (there's no useful partial rendering of "+412 -18", a half "ENG-77…"
@@ -482,7 +486,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	//
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated or cut to initials.
-	slack := w - leftW - 5 - 2 - 1
+	ageW := 2 + max(3, lipgloss.Width(age)) // matches the age suffix rendered below
+	slack := w - leftW - ageW - 2 - 1
 	tagW := 0
 	if o.Landed && slack-len(landedTag) >= 0 {
 		tagW = len(landedTag)

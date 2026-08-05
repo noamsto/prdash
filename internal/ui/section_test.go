@@ -913,6 +913,15 @@ func TestDiffstatColumnWidthIsStableAcrossRows(t *testing.T) {
 	s.prs[1].Author.Login = "rubytify"
 	s.SetShown([]int{0, 1})
 
+	// diffColWidth below hardcodes that suffix as 5 cells, which only holds while
+	// both ages fit the 3-cell field; the row reserves the age at its rendered
+	// width, so a wider one would silently move the column this test measures.
+	for _, i := range []int{0, 1} {
+		if got := lipgloss.Width(ageString(s.prs[i].UpdatedAt)); got > 3 {
+			t.Fatalf("fixture age %q is %d cells, want at most 3", ageString(s.prs[i].UpdatedAt), got)
+		}
+	}
+
 	dw := diffstatWidth(s, false)
 	a := s.RenderRow(0, RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw})
 	b := s.RenderRow(1, RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw})
