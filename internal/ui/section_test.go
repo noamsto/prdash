@@ -971,6 +971,26 @@ func TestDiffstatWiderThanItsColumnStillHoldsWidth(t *testing.T) {
 	}
 }
 
+// TestTicketWiderThanItsColumnStillHoldsWidth is the ticket column's half of
+// TestDiffstatWiderThanItsColumnStillHoldsWidth above. renderList can't produce
+// this pairing either — ticketWidth and TicketWidth come from one pass over the
+// same shown set — so it is constructed directly. Without the clamp the padding
+// asks strings.Repeat for a negative count and the row panics rather than
+// merely overflowing, which is the sibling column's failure mode.
+func TestTicketWiderThanItsColumnStillHoldsWidth(t *testing.T) {
+	const ticket = "ENG-7726"
+	for tw := 1; tw < len(ticket); tw++ {
+		for w := 30; w <= 120; w++ {
+			o := RowOpts{Width: w, NumWidth: 5, TicketWidth: tw}
+			row := renderItemRow(o, accentStyle, "#3087", "a title long enough to be truncated", ticket,
+				"noamsto-dev", "2d", "", ciGlyph("success"), reviewDot("APPROVED"), autoMergeGlyph(true))
+			if got := lipgloss.Width(row); got != w {
+				t.Fatalf("TicketWidth=%d w=%d: row width %d, want exactly %d", tw, w, got, w)
+			}
+		}
+	}
+}
+
 func TestTicketColumnSitsAfterTitleAndBlanksDontShiftAge(t *testing.T) {
 	s := NewPRSection("is:open")
 	s.SetPRs([]gh.PR{
