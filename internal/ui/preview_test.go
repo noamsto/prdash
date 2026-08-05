@@ -155,11 +155,12 @@ func TestSectionRule(t *testing.T) {
 
 func TestPrefetchNumbers(t *testing.T) {
 	ps := NewPRSection("is:open")
-	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}, {Number: 5}})
-	fresh := map[int]bool{2: true} // #2 already refreshed this session
+	// Board order is number descending, so the fixture is given already sorted.
+	ps.SetPRs([]gh.PR{{Number: 5}, {Number: 4}, {Number: 3}, {Number: 2}, {Number: 1}})
+	fresh := map[int]bool{4: true} // #4 already refreshed this session
 
 	got := prefetchNumbers(ps, 0, fresh, 3)
-	want := []int{1, 3, 4} // skips fresh #2, capped at window=3; cursor at top → only downward
+	want := []int{5, 3, 2} // skips fresh #4, capped at window=3; cursor at top → only downward
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -179,7 +180,8 @@ func TestPrefetchNumbers(t *testing.T) {
 // by distance, preferring below on ties.
 func TestPrefetchNumbersBidirectional(t *testing.T) {
 	ps := NewPRSection("is:open")
-	// Numbers 1..9 at shown indexes 0..8.
+	// Numbers 1..9 given ascending; the board's number-descending sort reverses
+	// them, so shown index i holds Number 9-i.
 	prs := make([]gh.PR, 9)
 	for i := range prs {
 		prs[i].Number = i + 1
@@ -187,8 +189,8 @@ func TestPrefetchNumbersBidirectional(t *testing.T) {
 	ps.SetPRs(prs)
 
 	got := prefetchNumbers(ps, 4, nil, 5) // cursor on #5 (index 4)
-	// distances: 0→#5, 1→#6 then #4, 2→#7 then #3
-	want := []int{5, 6, 4, 7, 3}
+	// distances: 0→#5, 1→below #4 then above #6, 2→below #3 then above #7
+	want := []int{5, 4, 6, 3, 7}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -201,6 +203,8 @@ func TestPrefetchNumbersBidirectional(t *testing.T) {
 
 func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 	ps := NewPRSection("is:open")
+	// Numbers 1..7 given ascending; reversed by the sort so shown index i holds
+	// Number 7-i.
 	prs := make([]gh.PR, 7)
 	for i := range prs {
 		prs[i].Number = i + 1
@@ -209,7 +213,7 @@ func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 	// Cursor #4 (index 3). Mark nearest neighbors fresh so the window reaches farther.
 	fresh := map[int]bool{4: true, 5: true, 3: true}
 	got := prefetchNumbers(ps, 3, fresh, 3)
-	want := []int{6, 2, 7} // dist 2 below, 2 above, 3 below
+	want := []int{2, 6, 1} // dist 2 below, 2 above, 3 below
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -222,9 +226,11 @@ func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 
 func TestPrefetchNumbersAtEndGoesUp(t *testing.T) {
 	ps := NewPRSection("is:open")
+	// Numbers 1..4 given ascending; reversed by the sort, so the last shown row
+	// (index 3) holds #1.
 	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}})
-	got := prefetchNumbers(ps, 3, nil, 3) // cursor on last row (#4)
-	want := []int{4, 3, 2}                // only upward after cursor
+	got := prefetchNumbers(ps, 3, nil, 3) // cursor on last row (#1)
+	want := []int{1, 2, 3}                // only upward (toward higher numbers) after cursor
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

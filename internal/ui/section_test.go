@@ -98,7 +98,10 @@ func TestPRSectionRenderRow(t *testing.T) {
 	}
 }
 
-func TestSetPRsSortsByActionability(t *testing.T) {
+func TestSetPRsSortsByNumberDraftsLast(t *testing.T) {
+	// Actionability (CI state, review decision) no longer decides position — see
+	// #62 — so a mix of ready/changes/failing/running/waiting PRs still sorts
+	// purely by number, drafts last.
 	s := NewPRSection("")
 	s.SetPRs([]gh.PR{
 		{Number: 1, IsDraft: true},
@@ -112,8 +115,7 @@ func TestSetPRsSortsByActionability(t *testing.T) {
 	for i := 0; i < s.Len(); i++ {
 		got = append(got, s.prAt(i).Number)
 	}
-	// ready(2) → changes(3) → fail(4) → running(5) → waiting(6) → draft(1)
-	want := []int{2, 3, 4, 5, 6, 1}
+	want := []int{6, 5, 4, 3, 2, 1}
 	if !slices.Equal(got, want) {
 		t.Fatalf("sort order = %v, want %v", got, want)
 	}
@@ -259,12 +261,12 @@ func TestGroupByAuthorMergedOrdersByNewestMerge(t *testing.T) {
 }
 
 func TestSetShownOrderedGroupsByAuthorWhenMultiple(t *testing.T) {
-	a := gh.PR{Number: 1, ReviewDecision: "REVIEW_REQUIRED"} // alice, rank waiting
+	a := gh.PR{Number: 1, ReviewDecision: "REVIEW_REQUIRED"} // alice
 	a.Author.Login = "alice"
-	b := gh.PR{Number: 2, ReviewDecision: "APPROVED", // bob, rank ready
+	b := gh.PR{Number: 2, ReviewDecision: "APPROVED", // bob
 		StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
 	b.Author.Login = "bob"
-	a2 := gh.PR{Number: 3, ReviewDecision: "CHANGES_REQUESTED"} // alice, rank changes
+	a2 := gh.PR{Number: 3, ReviewDecision: "CHANGES_REQUESTED"} // alice
 	a2.Author.Login = "alice"
 
 	s := NewPRSection("")
@@ -273,13 +275,13 @@ func TestSetShownOrderedGroupsByAuthorWhenMultiple(t *testing.T) {
 	if !s.grouped {
 		t.Fatal("two distinct authors should switch the section to grouped mode")
 	}
-	// bob's group leads (its best rank, ready=0, beats alice's best, changes=1).
-	// within alice's group, changes(#3) precedes waiting(#1).
+	// alice's group leads (highest number, #3, beats bob's #2); within alice's
+	// group, number descending: #3 then #1.
 	var got []int
 	for i := 0; i < s.Len(); i++ {
 		got = append(got, s.prAt(i).Number)
 	}
-	want := []int{2, 3, 1}
+	want := []int{3, 1, 2}
 	if !slices.Equal(got, want) {
 		t.Fatalf("grouped display order = %v, want %v", got, want)
 	}
@@ -298,9 +300,9 @@ func TestSetShownOrderedFlatWhenSingleAuthor(t *testing.T) {
 	if s.grouped {
 		t.Fatal("a single distinct author must stay flat (not grouped)")
 	}
-	// flat actionability order: ready(#1) before waiting(#2)
-	if s.prAt(0).Number != 1 || s.prAt(1).Number != 2 {
-		t.Fatalf("flat order = [%d %d], want [1 2]", s.prAt(0).Number, s.prAt(1).Number)
+	// flat order: number descending, regardless of actionability.
+	if s.prAt(0).Number != 2 || s.prAt(1).Number != 1 {
+		t.Fatalf("flat order = [%d %d], want [2 1]", s.prAt(0).Number, s.prAt(1).Number)
 	}
 }
 
@@ -504,7 +506,9 @@ func TestSetForceFlatSkipsGrouping(t *testing.T) {
 		{Number: 2, Author: author("b")},
 	}, map[int]string{1: "Mine", 2: "Others"}, []string{"Mine", "Others"})
 	s.SetForceFlat(true)
-	s.SetShown([]int{1, 0}) // fuzzy rank: #2 before #1
+	// s.prs is now number-sorted (#2, #1); category order would show #1 (Mine)
+	// before #2 (Others) — SetForceFlat must keep this raw idx order instead.
+	s.SetShown([]int{0, 1})
 	if s.grouped {
 		t.Fatal("grouped should be false under SetForceFlat")
 	}
@@ -954,5 +958,102 @@ func TestTicketColumnWidthIsStableAcrossRows(t *testing.T) {
 	}
 	if got := ticketColWidth(b, "ENG-7726", "noamsto"); got != tw {
 		t.Errorf("long-id row: ticket column is %d cells, want tw=%d", got, tw)
+	}
+}
+
+// The #62 regression: nothing may move because a check finished.
+//
+// The two PRs belong to different authors so the group-leader comparison is
+// exercised, and the deliberately "wrong" pairing (the higher PR number
+// belongs to the alphabetically later login) matters: under rank-based
+// sorting, PENDING (rank=running) forces rubytify's PR ahead of asaf's on its
+// own, but once it settles to SUCCESS both PRs tie at rank=waiting and the
+// old code's alphabetical tiebreak (asaf < rubytify) flips the leader. Number
+// descending never ties, so the leader can't move.
+func TestOrderIsUnchangedByCIState(t *testing.T) {
+	mk := func(ci string) []gh.PR {
+		prs := []gh.PR{
+			{Number: 3086, State: "OPEN", Title: "a"},
+			{Number: 3071, State: "OPEN", Title: "b"},
+		}
+		prs[0].Author.Login = "rubytify"       // higher number, alphabetically later
+		prs[1].Author.Login = "asaf-s-factify" // lower number, alphabetically first
+		// Flip the first PR's rollup between the two runs.
+		prs[0].StatusCheckRollup = []gh.Check{{Name: "build", State: ci, Conclusion: ci}}
+		return prs
+	}
+	order := func(prs []gh.PR) []int {
+		s := NewPRSection("is:open")
+		s.SetPRs(prs)
+		out := []int{}
+		for i := 0; i < s.Len(); i++ {
+			out = append(out, s.prAt(i).Number)
+		}
+		return out
+	}
+	before := order(mk("PENDING"))
+	after := order(mk("SUCCESS"))
+	if !slices.Equal(before, after) {
+		t.Fatalf("order changed when CI settled: %v -> %v", before, after)
+	}
+}
+
+func TestClustersAreContiguousLedByHighestNumber(t *testing.T) {
+	prs := []gh.PR{
+		{Number: 3015, State: "OPEN"}, {Number: 3086, State: "OPEN"},
+		{Number: 3084, State: "OPEN"}, {Number: 3071, State: "OPEN"},
+	}
+	prs[0].Author.Login = "asaf-s-factify"
+	prs[1].Author.Login = "asaf-s-factify"
+	prs[2].Author.Login = "rubytify"
+	prs[3].Author.Login = "asaf-s-factify"
+
+	s := NewPRSection("is:open")
+	s.SetPRs(prs)
+	got := []int{}
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	// asaf leads (3086 > 3084); within the cluster, number descending.
+	want := []int{3086, 3071, 3015, 3084}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func TestDraftsSinkWithinACluster(t *testing.T) {
+	prs := []gh.PR{
+		{Number: 3090, State: "OPEN", IsDraft: true},
+		{Number: 3021, State: "OPEN"},
+	}
+	prs[0].Author.Login = "rubytify"
+	prs[1].Author.Login = "rubytify"
+	s := NewPRSection("is:open")
+	s.SetPRs(prs)
+	if s.prAt(0).Number != 3021 {
+		t.Fatalf("draft did not sink: leading PR is #%d", s.prAt(0).Number)
+	}
+}
+
+func TestCategoriesClusterByAuthorInside(t *testing.T) {
+	prs := []gh.PR{
+		{Number: 3086, State: "OPEN"}, {Number: 3084, State: "OPEN"},
+		{Number: 3071, State: "OPEN"},
+	}
+	prs[0].Author.Login = "asaf-s-factify"
+	prs[1].Author.Login = "rubytify"
+	prs[2].Author.Login = "asaf-s-factify"
+
+	s := NewPRSection("is:open")
+	cats := map[int]string{3086: "Review requested", 3084: "Review requested", 3071: "Review requested"}
+	s.SetCategorized(prs, cats, []string{"Review requested"})
+
+	got := []int{}
+	for i := 0; i < s.Len(); i++ {
+		got = append(got, s.prAt(i).Number)
+	}
+	want := []int{3086, 3071, 3084} // asaf's two adjacent, then rubytify
+	if !slices.Equal(got, want) {
+		t.Fatalf("categorized order = %v, want %v — clusters must form inside a category", got, want)
 	}
 }

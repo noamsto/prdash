@@ -25,8 +25,8 @@ func TestSetPRsBuildsRows(t *testing.T) {
 	if got := m.section.Len(); got != 2 {
 		t.Fatalf("shown len = %d, want 2", got)
 	}
-	if !strings.Contains(m.section.RenderRow(0, RowOpts{Width: 80}), "#7") {
-		t.Fatalf("first row should render #7")
+	if !strings.Contains(m.section.RenderRow(0, RowOpts{Width: 80}), "#9") {
+		t.Fatalf("first row should render #9 (number descending)")
 	}
 }
 

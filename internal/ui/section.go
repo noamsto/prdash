@@ -21,7 +21,7 @@ type RowOpts struct {
 	NumWidth    int // cell width for the right-aligned number column (0 = natural)
 	Focused     bool
 	Selected    bool
-	Draft       bool   // dim the title; drafts sort last (see prRank)
+	Draft       bool   // dim the title; drafts sort last (see sortPRs)
 	Landed      bool   // merged by prdash this session, held on the open board until ctrl+r
 	Commented   bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
 	Flag        string // pre-rendered ! column glyph (conflict/behind), "" when unknown
@@ -101,9 +101,9 @@ func (s *PRSection) authorOf(number int) string {
 }
 
 // ApplyChecks replaces the rollup on the PRs named in checks. It deliberately
-// does not re-sort: the sort key ranks by actionability, which CI state feeds, so
-// re-sorting here would move rows under the user on a background beat. Order
-// settles on the next real fetch.
+// does not re-sort — the board sorts by PR number, which a CI update never
+// changes, but re-sorting on every background beat would still cost a full
+// re-render for nothing. Order settles on the next real fetch.
 func (s *PRSection) ApplyChecks(checks map[int][]gh.Check) {
 	for i := range s.prs {
 		if c, ok := checks[s.prs[i].Number]; ok {
@@ -210,8 +210,8 @@ func prRank(p gh.PR) int {
 }
 
 // sortPRs orders the board. Terminal states are chronological (newest event
-// first); the open board keeps the actionability rank, ties broken most-recently
-// updated. Rank is meaningless once a PR has landed/closed, so it's skipped there.
+// first). The open board sorts by PR number instead of actionability — see the
+// default arm below for why.
 func sortPRs(prs []gh.PR, state string) {
 	switch state {
 	case "merged":
@@ -219,25 +219,32 @@ func sortPRs(prs []gh.PR, state string) {
 	case "closed":
 		slices.SortStableFunc(prs, func(a, b gh.PR) int { return b.ClosedAt.Compare(a.ClosedAt) })
 	default:
+		// Number descending, drafts last. NOT actionability: ranking by CI state
+		// means a finishing check reorders rows under the cursor (#62). The
+		// categories already carry coarse urgency, and the gutter glyphs carry
+		// the rest.
 		slices.SortStableFunc(prs, func(a, b gh.PR) int {
-			if d := prRank(a) - prRank(b); d != 0 {
-				return d
+			if a.IsDraft != b.IsDraft {
+				if a.IsDraft {
+					return 1
+				}
+				return -1
 			}
-			return b.UpdatedAt.Compare(a.UpdatedAt)
+			return b.Number - a.Number
 		})
 	}
 }
 
 // setShownOrdered records the shown subset in display order and decides grouping.
-// idx arrives in actionability order (prs is rank-sorted; idx preserves it). With
+// idx arrives in number order (prs is number-sorted; idx preserves it). With
 // ≥2 distinct authors the rows are regrouped contiguously by author so the cursor
-// still walks them top-to-bottom; with one author the flat rank order stands.
+// still walks them top-to-bottom; with one author the flat number order stands.
 func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
 func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
 func (s *PRSection) SetForceFlat(v bool)  { s.forceFlat = v }
 
 // SetState records the view state so the next SetPRs/SetCategorized sorts by the
-// right key (merge/close time for terminal states, actionability for open).
+// right key (merge/close time for terminal states, number descending for open).
 func (s *PRSection) SetState(state string) { s.state = state }
 
 func (s *PRSection) setShownOrdered(idx []int) {
@@ -251,7 +258,7 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	}
 	if len(s.catOrder) > 0 {
 		s.grouped = true
-		s.shown = groupByCategory(s.prs, idx, s.cats, s.catOrder)
+		s.shown = groupByCategory(s.prs, idx, s.cats, s.catOrder, s.state)
 		return
 	}
 	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
@@ -263,15 +270,19 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	s.shown = idx
 }
 
-// groupByCategory reorders idx so rows cluster under their category in header order.
-func groupByCategory(prs []gh.PR, idx []int, cats map[int]string, order []string) []int {
+// groupByCategory reorders idx so rows cluster under their category in header
+// order, and clusters by author within each category. Composing the two keeps
+// one ordering concept rather than adding a third.
+func groupByCategory(prs []gh.PR, idx []int, cats map[int]string, order []string, state string) []int {
 	out := make([]int, 0, len(idx))
 	for _, cat := range order {
+		members := make([]int, 0, len(idx))
 		for _, i := range idx {
 			if cats[prs[i].Number] == cat {
-				out = append(out, i)
+				members = append(members, i)
 			}
 		}
+		out = append(out, groupByAuthor(prs, members, state)...)
 	}
 	return out
 }
@@ -286,8 +297,8 @@ func distinctAuthors(prs []gh.PR, idx []int) int {
 
 // groupByAuthor reorders idx so each author's rows are contiguous; within a group
 // the incoming order is preserved. Group order depends on state: the open board
-// leads with each author's best (lowest) member rank, ties by login. Terminal
-// boards (merged/closed) have no meaningful rank, so groups keep first-appearance
+// leads with each author's highest PR number, ties by login. Terminal boards
+// (merged/closed) have no meaningful rank, so groups keep first-appearance
 // order — and since idx arrives newest-event-first, that leads with whichever
 // author has the newest merge/close, extending newest-first across groups.
 func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
@@ -301,18 +312,17 @@ func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
 		groups[a] = append(groups[a], i)
 	}
 	if state != "merged" && state != "closed" {
+		// A cluster leads with its newest PR, so cluster position is fixed by
+		// numbers that never change — the whole point of #62.
 		best := map[string]int{}
 		for a, g := range groups {
-			best[a] = prRank(prs[g[0]])
 			for _, i := range g {
-				if r := prRank(prs[i]); r < best[a] {
-					best[a] = r
-				}
+				best[a] = max(best[a], prs[i].Number)
 			}
 		}
 		slices.SortStableFunc(authors, func(x, y string) int {
 			if best[x] != best[y] {
-				return best[x] - best[y]
+				return best[y] - best[x] // descending
 			}
 			return strings.Compare(x, y)
 		})
