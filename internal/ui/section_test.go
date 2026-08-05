@@ -224,17 +224,6 @@ func TestColumnWidthsUsesWidestNumber(t *testing.T) {
 	}
 }
 
-func TestPRRankApprovedFailingIsNotReady(t *testing.T) {
-	approvedFailing := gh.PR{ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "FAILURE"}}}
-	approvedPassing := gh.PR{ReviewDecision: "APPROVED", StatusCheckRollup: []gh.Check{{Conclusion: "SUCCESS"}}}
-	if got := prRank(approvedFailing); got != rankFail {
-		t.Errorf("approved+failing should rank as failing (%d), got %d", rankFail, got)
-	}
-	if got := prRank(approvedPassing); got != rankReady {
-		t.Errorf("approved+passing should rank as ready (%d), got %d", rankReady, got)
-	}
-}
-
 func TestGroupByAuthorMergedOrdersByNewestMerge(t *testing.T) {
 	ts := func(s string) time.Time { v, _ := time.Parse(time.RFC3339, s); return v }
 	a1 := gh.PR{Number: 1, State: "MERGED", MergedAt: ts("2026-07-05T00:00:00Z")}

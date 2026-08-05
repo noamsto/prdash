@@ -183,38 +183,6 @@ func (s *PRSection) Haystacks() []string {
 	return h
 }
 
-// Actionability ranks (lower sorts higher). Drafts always last.
-const (
-	rankReady = iota
-	rankChanges
-	rankFail
-	rankRunning
-	rankWaiting
-	rankDraft
-)
-
-// prRank scores a PR by how much it needs the author, using only signals that
-// are reliable from the bulk `gh pr list` (CI rollup, reviewDecision, isDraft).
-// It deliberately ignores mergeStateStatus/conflict — those are detail-derived
-// and would reshuffle the board as background prefetch lands.
-func prRank(p gh.PR) int {
-	ci := p.CIState()
-	switch {
-	case p.IsDraft:
-		return rankDraft
-	case p.ReviewDecision == "CHANGES_REQUESTED":
-		return rankChanges
-	case ci == "fail":
-		return rankFail
-	case ci == "pending":
-		return rankRunning
-	case p.ReviewDecision == "APPROVED":
-		return rankReady
-	default:
-		return rankWaiting
-	}
-}
-
 // sortPRs orders the board. Terminal states are chronological (newest event
 // first). The open board sorts by PR number instead of actionability — see the
 // default arm below for why.
@@ -303,10 +271,11 @@ func distinctAuthors(prs []gh.PR, idx []int) int {
 
 // groupByAuthor reorders idx so each author's rows are contiguous; within a group
 // the incoming order is preserved. Group order depends on state: the open board
-// leads with each author's highest PR number, ties by login. Terminal boards
-// (merged/closed) have no meaningful rank, so groups keep first-appearance
-// order — and since idx arrives newest-event-first, that leads with whichever
-// author has the newest merge/close, extending newest-first across groups.
+// leads with each author's highest PR number, ties by login. On terminal boards
+// (merged/closed) a highest-number lead would fight the chronology, so groups
+// keep first-appearance order — and since idx arrives newest-event-first, that
+// leads with whichever author has the newest merge/close, extending newest-first
+// across groups.
 func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
 	groups := map[string][]int{}
 	authors := make([]string, 0) // first-appearance order
