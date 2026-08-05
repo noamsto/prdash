@@ -244,7 +244,7 @@ func contrastRatio(a, b float64) float64 {
 }
 
 // chipOutlineMinContrast is the WCAG contrast ratio a label color needs against
-// the row backgrounds to read as plain colored text. 3:1 is the AA floor for UI
+// the pane background to read as plain colored text. 3:1 is the AA floor for UI
 // components and large text. Below it the chip falls back to a filled pill.
 //
 // A ratio, not a luminance gap: a saturated red like #FF2200 has low luminance
@@ -252,21 +252,21 @@ func contrastRatio(a, b float64) float64 {
 // by luminance distance alone wrongly filled it while #FF5500 stayed outlined.
 const chipOutlineMinContrast = 3.0
 
-// chipReadableAsText reports whether a label color contrasts enough with BOTH the
-// pane background and the focused-row background to render as an outline chip
-// (colored brackets + colored text, no fill) on either.
+// chipReadableAsText reports whether a label color contrasts enough with the
+// pane background to render as an outline chip (colored brackets + colored text,
+// no fill). Chips only ever paint in the preview and expanded panes, both on
+// theme.Base — never on a focused row — so the pane background is the only
+// ground to judge against.
 func chipReadableAsText(hex string) bool {
 	lc, ok := relativeLuminance(hex)
 	if !ok {
 		return false
 	}
-	base, ok1 := relativeLuminance(strings.TrimPrefix(theme.Base, "#"))
-	row, ok2 := relativeLuminance(strings.TrimPrefix(theme.RowBg, "#"))
-	if !ok1 || !ok2 {
+	base, ok := relativeLuminance(strings.TrimPrefix(theme.Base, "#"))
+	if !ok {
 		return false
 	}
-	return contrastRatio(lc, base) >= chipOutlineMinContrast &&
-		contrastRatio(lc, row) >= chipOutlineMinContrast
+	return contrastRatio(lc, base) >= chipOutlineMinContrast
 }
 
 // reviewApprovedGlyph marks an approved review. A badge, not a ✓: the CI column
