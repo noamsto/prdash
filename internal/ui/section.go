@@ -503,6 +503,10 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	authorCap := min(17, max(0, slack-tagW-diffExtra-tktExtra))
 	right := ""
 	if tktExtra > 0 {
+		// Clamp before padding, exactly as the diffstat does below: TicketWidth is
+		// the column, so a wider id would render at natural width and push the row
+		// past w — here it would ask strings.Repeat for a negative count first.
+		ticket = ansi.Truncate(ticket, o.TicketWidth, "")
 		right = sectionLabelStyle.Render(ticket) +
 			strings.Repeat(" ", o.TicketWidth-lipgloss.Width(ticket)) + "  "
 	}
@@ -631,7 +635,7 @@ func ticketWidth(s Section) int {
 	}
 	w := 0
 	for _, i := range ps.shown {
-		w = max(w, len(ticketID(ps.prs[i].HeadRefName)))
+		w = max(w, lipgloss.Width(ticketID(ps.prs[i].HeadRefName)))
 	}
 	return w
 }
