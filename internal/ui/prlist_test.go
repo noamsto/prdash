@@ -1533,8 +1533,8 @@ func TestFilterBarShowsCommittedQuery(t *testing.T) {
 	if got := lipgloss.Width(bar); got > m.width {
 		t.Fatalf("filter bar = %d cells, overflows width %d", got, m.width)
 	}
-	if got := m.filterBarRows(); got != 1 {
-		t.Fatalf("committed filter bar = %d rows, want 1", got)
+	if got := m.filterBarRows(); got != 3 {
+		t.Fatalf("committed filter bar = %d rows, want 3", got)
 	}
 
 	// esc clears it, and the bar falls back to the prompt hint.
@@ -1542,6 +1542,46 @@ func TestFilterBarShowsCommittedQuery(t *testing.T) {
 	m = u.(Model)
 	if bar := ansi.Strip(m.filterBar()); strings.Contains(bar, "flaky") {
 		t.Fatalf("after esc the bar still shows the query: %q", bar)
+	}
+}
+
+// TestFilterBarIsAlwaysThreeRows guards the boxed bar's whole purpose: the
+// primary surface must not change height as it gains and loses focus, in any
+// combination of filtering/query state.
+func TestFilterBarIsAlwaysThreeRows(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	for _, st := range []struct {
+		name      string
+		filtering bool
+		query     string
+	}{
+		{"blurred empty", false, ""},
+		{"blurred with query", false, "@asaf"},
+		{"focused", true, ""},
+		{"focused with query", true, "is:approved"},
+	} {
+		m.filtering = st.filtering
+		m.filterInput.SetValue(st.query)
+		if got := lipgloss.Height(m.filterBar()); got != 3 {
+			t.Errorf("%s: filterBar height = %d, want 3", st.name, got)
+		}
+		if got := m.filterBarRows(); got != 3 {
+			t.Errorf("%s: filterBarRows = %d, want 3", st.name, got)
+		}
+	}
+}
+
+// TestFilterBarShowsMatchCountWhenFiltered guards the live n->m count: it is
+// the signal that the board is narrowed, since the boxed bar no longer grows
+// a second row to say so.
+func TestFilterBarShowsMatchCountWhenFiltered(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width = 80
+	m.filtering = true
+	m.filterInput.SetValue("asaf")
+	m.applyFilter()
+	if !strings.Contains(stripANSIForTest(m.filterBar()), "→") {
+		t.Error("filtered bar should show an n→m match count")
 	}
 }
 
@@ -1562,10 +1602,9 @@ func TestStatusBarOmitsRetiredFilterKey(t *testing.T) {
 	}
 }
 
-// TestContentHeightFilteringNoPanel guards that focusing the always-visible
-// filter bar costs exactly one extra row — the omni syntax hint — with the
-// footer unaffected, so this is not a wash against a reclaimed footer the way
-// it was when filtering used to hide it.
+// TestContentHeightFilteringNoPanel guards that focusing the boxed filter bar
+// costs nothing: the box is a constant three rows in every state, so
+// contentHeight must not move when filtering toggles.
 func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m := newTestModelWithRows(t)
 	m.width = 80
@@ -1574,16 +1613,16 @@ func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m.filtering = true
 	m.filterInput.Focus()
 	m.filterInput.SetValue("")
-	if got := m.filterBarRows(); got != 2 {
-		t.Fatalf("filterBarRows while focused = %d, want 2 (input + hint)", got)
+	if got := m.filterBarRows(); got != 3 {
+		t.Fatalf("filterBarRows while focused = %d, want 3", got)
 	}
 
 	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
-	if want := base - 1; filtered != want {
-		t.Fatalf("contentHeight while filtering = %d, want %d (baseline - 1 hint row)", filtered, want)
+	if filtered != base {
+		t.Fatalf("contentHeight while filtering = %d, want %d (unchanged: bar height is constant)", filtered, base)
 	}
 }
 
@@ -1858,7 +1897,7 @@ func TestFilterBarAlwaysVisible(t *testing.T) {
 	// The status bar already has a "/:find" hint, so the check above alone is
 	// vacuous — assert on the actual filter-bar placeholder text as the real
 	// regression guard for "blurred but always rendered".
-	if !strings.Contains(ansi.Strip(m.render()), "filter (@user") {
+	if !strings.Contains(ansi.Strip(m.render()), "@user · is: · text") {
 		t.Fatalf("blurred board should show the filter-bar placeholder hint: %q", m.render())
 	}
 	// Focusing keeps it visible and accepts input.

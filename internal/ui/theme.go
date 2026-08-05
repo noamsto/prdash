@@ -381,3 +381,6 @@ const (
 
 // rateGlyph marks the API-budget segment in the header.
 const rateGlyph = "◔" // nerd: nf-md-gauge
+
+// filterGlyph marks the omni-filter box.
+const filterGlyph = "⌕" // nerd: nf-oct-search

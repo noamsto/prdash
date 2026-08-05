@@ -861,9 +861,10 @@ func (m Model) omniSuggestDropdown() string {
 }
 
 // omniDropdownY is the row the @-mention panel floats at: directly under the
-// omni input line it completes.
+// filter bar's box (3 rows: top border, input, bottom border), not the input
+// line itself — landing there would sit on top of the box's bottom border.
 func (m Model) omniDropdownY() int {
-	return lipgloss.Height(m.header()) + 1
+	return lipgloss.Height(m.header()) + 3
 }
 
 // prKey scopes the cached PR list by repo — the shared cache file holds every
@@ -2089,35 +2090,44 @@ func (m Model) render() string {
 	return board
 }
 
-// filterBar is the always-visible search row. When blurred it shows the query
-// still applied, or the prompt as a hint when there is none; when focused it
-// shows the live query plus the omni syntax hint. The @-suggestion panel is not
-// part of the bar — it floats over the list.
+// filterBar renders the omni-filter as a bordered box. It is three rows in every
+// state — the primary surface should not change height as it gains and loses
+// focus, and filterBarRows measures off this render so contentHeight follows.
 func (m Model) filterBar() string {
-	if m.filtering {
-		bar := m.filterInput.View()
-		if m.mode != "pr" {
-			return bar
-		}
-		if m.omniSuggestDropdown() != "" {
-			return bar + "\n" // the floating @-panel lands on this row; leave it clear
-		}
-		return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+	inner := max(1, m.width-4) // border (2) + one cell of padding each side
+
+	var body string
+	switch {
+	case m.filtering:
+		body = m.filterInput.View()
+	case m.filterInput.Value() != "":
+		body = accentStyle.Render(truncate(m.filterInput.Value(), inner)) +
+			dimStyle.Render("  esc clears")
+	default:
+		body = dimStyle.Render("filter — @user · is: · text")
 	}
-	// Blurred but still filtered: paint the query so the board can't read as an
-	// unfiltered one. Styles go on after truncate — it walks runes and would slice
-	// an escape sequence.
-	if q := m.filterInput.Value(); q != "" {
-		drop := "  esc clears"
-		if 1+lipgloss.Width(q)+lipgloss.Width(drop) > m.width {
-			drop = "" // too narrow for both: the query itself is what matters
+	body = accentStyle.Render(filterGlyph) + " " + body
+
+	// The match count is the lowest-priority element and drops first. Len() is
+	// post-filter (SetShown narrows it) and Haystacks() covers the whole set, so
+	// the pair is total→shown without storing anything on the model.
+	if m.filterInput.Value() != "" {
+		total, shown := len(m.section.Haystacks()), m.section.Len()
+		count := dimStyle.Render(fmt.Sprintf("%d→%d", total, shown))
+		if pad := inner - lipgloss.Width(body) - lipgloss.Width(count); pad > 0 {
+			body += strings.Repeat(" ", pad) + count
 		}
-		return dimStyle.Render("/") +
-			accentStyle.Render(truncate(q, max(1, m.width-1-lipgloss.Width(drop)))) +
-			dimStyle.Render(drop)
 	}
-	// Blurred: show the prompt + placeholder as a dim hint so the bar is always present.
-	return dimStyle.Render(truncate("/ filter (@user, is:, text)", max(1, m.width)))
+	// body is already styled, so it must NOT go through truncate — that walks
+	// runes and would slice an ANSI escape. lipgloss's Width + MaxWidth clamp
+	// styled content safely.
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(theme.Rule)).
+		Width(m.width).
+		MaxWidth(m.width).
+		Padding(0, 1).
+		Render(body)
 }
 
 // filterBarRows is the row-height of filterBar() in its current state, measured
