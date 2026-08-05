@@ -2431,7 +2431,7 @@ func (m Model) legendGroups() []legendGroup {
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand"})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "group"})
+	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "cluster"})
 	groups = append(groups, legendGroup{"navigation", nav})
 
 	filters := []keyHint{{"/", "filter (@user, is:, text)"}, {"s", "state"}}
@@ -2526,7 +2526,7 @@ type keyHint struct{ key, label string }
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
 		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
-		{"/", "find"}, {"space", "select"}, {"V", "group"}, {"q", "quit"},
+		{"/", "find"}, {"space", "select"}, {"V", "cluster"}, {"q", "quit"},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
