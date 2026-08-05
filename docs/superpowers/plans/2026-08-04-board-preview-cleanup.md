@@ -17,7 +17,24 @@ Issue: #88 · Closes #62
 - Never query a GraphQL **connection** for this work. Only leaf scalars on the search node are free. `additions`, `deletions`, `changedFiles`, `stack`, `stackEntry` are all leaves or objects-with-scalar-leaves.
 - Nerd Font glyphs are declared as named constants with a `// nerd: nf-...` comment naming the intended icon. Do NOT invent glyph codepoints — use the placeholder given in the task and leave the comment; the operator sets the real value.
 - The **title column and the glyph gutter never shed** under the responsive ladder.
+- **A rendered row is exactly `w` display cells** for every `w` at or above the
+  fixed-column total, in both focus states. Below that total the row cannot be `w`
+  cells and the existing sub-floor test asserts only "single line, non-empty" —
+  `renderItemRow` floors its working width at 24, and reserving the 3-cell tree
+  slot raised the smallest achievable exact-fill width from 24 to 26. That regime
+  is transient (pre-`WindowSizeMsg`) and the viewport clips it, so it is accepted,
+  not fixed. Do not "fix" it by weakening the ≥40 sweeps.
+- Any column added to `right` must be bounded, or the row grows *wider* than `w`
+  instead of shrinking once `titleRoom` and `gap` reach their `1` floors.
+  The exact-fill sweep must include a **39-character login** (GitHub's maximum):
+  every pre-existing fixture used a short one (`al`, `octocat-bot`), so an
+  unbounded author overflowed the row while CI stayed green.
+- **The `Tree` slot is clipped as well as padded** — a hard 3 cells. It exists to
+  freeze the column grid ahead of #89, so a 4-cell or double-width value must not
+  shift `#num`. `o.Tree` arrives styled, so clip with `ansi.Truncate`, never
+  `truncate` (which walks runes and would slice an SGR sequence).
 - Row rendering tests are differential, not golden (see the comment at the top of `internal/ui/gridhints_test.go`). Assert properties, not frozen strings.
+- **Never test a column by measuring an offset to its right.** Exact fill means the trailing gap absorbs any discrepancy to hold the row at `w`, so anything right-anchored sits at a structurally fixed offset whether or not the column under test is correct. Two such assertions were written for the diffstat and *both* were vacuous — one shipped in this plan, one was prescribed as its fix. Measure the column's **own** width (cells between its neighbours), and prove the assertion has teeth by breaking the producing function, watching it fail, then restoring it. A guard nobody has seen fail is indistinguishable from a tautology.
 - Run `go test ./...` from the repo root before every commit.
 - Commit messages use Conventional Commits with a scope, e.g. `feat(ui):`, `refactor(ui):`, `feat(gh):`.
 
@@ -392,8 +409,31 @@ In `internal/ui/section.go`, delete this field from `RowOpts`:
 In `internal/ui/section.go`, replace the whole body from the `// Two-line rows lead line 2 with the author; single-line keeps it beside age.` comment through the final `return line1 + "\n" + line2` with:
 
 ```go
-	right := authorStyle(author).Render(author) + dimStyle.Render(fmt.Sprintf("  %3s", age))
-	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
+	// The author must be bounded or rightW grows without limit and the row gets
+	// WIDER than w instead of shrinking: past w < leftW+rightW+2 both titleRoom
+	// and gap sit on their 1 floors. A 39-char login (GitHub's max) at innerW=50
+	// — a docked preview on a 120-col terminal — otherwise renders 65 cells, with
+	// the title collapsed to "…" and the age column gone. 17 is the author column
+	// width Task 8 settles on, so this does not fight the eventual design.
+	// truncate is safe here only because author is still plain text.
+	leftW := lipgloss.Width(left)
+
+	// The author gets what's LEFT after the fixed columns — never a fraction of w.
+	// A width-derived floor grants cells that may not exist, and the row then
+	// grows past w instead of shrinking (titleRoom and gap both bottom out at 1
+	// and nothing shrinks leftW/rightW back). 17 caps it at the column width
+	// Task 8 settles on. As w narrows the author shrinks toward empty — it only
+	// reaches empty below the internal 24-cell floor, so do NOT assume it
+	// disappears at any particular width; assume only that it never overflows.
+	//
+	// 5 = the "  NNN" age suffix, 2 = title/right separators, 1 = a minimum title.
+	//
+	// authorStyle takes the login (it hashes it to a stable hue); Render takes the
+	// text actually shown, so the truncation belongs inside Render.
+	authorCap := min(17, max(0, w-leftW-5-2-1))
+	right := authorStyle(author).Render(truncate(author, authorCap)) +
+		dimStyle.Render(fmt.Sprintf("  %3s", age))
+	rightW := lipgloss.Width(right)
 
 	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
 	if titleRoom < 1 {
@@ -448,13 +488,21 @@ In `renderItemRow`, change the `left` construction (currently
 ```go
 	// Tree slot: after the state glyphs, so a stacked row's ci/rv/auto/flag stay
 	// on the same columns as every other row's.
+	//
+	// Hard 3 cells, clipped as well as padded — the slot exists to freeze the
+	// column grid ahead of #89, and it shears the moment #89 passes a 4-cell
+	// string. o.Tree arrives styled, so truncate is wrong here (it walks runes and
+	// would slice an SGR sequence); ansi.Truncate is escape-aware.
 	const treeW = 3
-	tree := o.Tree
+	tree := ansi.Truncate(o.Tree, treeW, "")
 	if pad := treeW - lipgloss.Width(tree); pad > 0 {
 		tree += strings.Repeat(" ", pad)
 	}
 	left := gutter + tree + numStyle.Render(numCell) + " "
 ```
+
+Add `"github.com/charmbracelet/x/ansi"` to the file's imports — it is already a
+direct dependency at v0.11.7, so `go.mod` does not change.
 
 - [ ] **Step 6: Drop the now-unused params**
 
@@ -505,6 +553,57 @@ branch of renderItemRow.
 
 Refs #88"
 ```
+
+---
+
+### Task 3b: Standing row-invariant sweep
+
+Added mid-execution, after Task 3 needed two fix rounds for defects the whole
+suite passed. Both were invisible for the same structural reason: the guard did
+not exist yet, because the behaviour was introduced in the same commit. Tasks 5,
+6 and 8 all modify the same `renderItemRow` arithmetic, so the guard goes in
+first rather than being rediscovered three more times.
+
+**Files:**
+- Modify: `internal/ui/section_test.go` (or create `internal/ui/row_invariants_test.go`)
+
+**Test-only. No non-test code changes.**
+
+Sweep the cross-product and assert the row's structural invariants:
+
+| Dimension | Values |
+|---|---|
+| Login length | 0, 2, 11, 14, 19, 27, 39 (39 = GitHub max; 19 ≈ `github-actions[bot]`) |
+| Width | every integer 26–200 |
+| `RowOpts.Tree` | `""`, `" "`, `"│ "`, `"├─ "`, `"├── "`, `"重试"`, `"╰──── "` |
+| State | unfocused, focused, selected |
+
+Assertions:
+
+1. `lipgloss.Width(row) == w` exactly.
+2. Single line — no `\n`.
+3. The age string survives (losing it was defect 1's visible symptom).
+4. `#number` starts at the same **cell** offset for every `Tree` value.
+5. The row carries the hue derived from the **full** login, not the truncated
+   display text (pins defect 2).
+
+Two traps, both hit for real while validating Task 3:
+
+- **`strings.Index` returns byte offsets, not cells.** `│`, `├`, `─` are 3 bytes
+  each; `重` is 3 bytes and 2 cells. Measuring columns with byte offsets produces
+  phantom failures on assertion 4. Strip ANSI, find the byte index, then take
+  `lipgloss.Width(plain[:byteIdx])`.
+- **Start the width sweep at 26, not 24.** Exact fill is achievable only at or
+  above the fixed-column total, which the reserved tree slot raised from 24 to
+  26. The sub-floor regime is already covered by a test asserting only
+  single-line/non-empty. Do not weaken it.
+
+- [ ] **Step 1: Write the sweep**
+- [ ] **Step 2: Confirm it PASSES against current code** — this is a guard, not a
+      bug hunt. A failure means a real defect: stop and report it rather than
+      adjusting the test.
+- [ ] **Step 3: Run `go test ./...`**
+- [ ] **Step 4: Commit** with `test(ui):` scope
 
 ---
 
@@ -740,8 +839,18 @@ Add to `RowOpts` in `internal/ui/section.go`:
 In `renderItemRow`, add a `diff string` parameter after `age`, and build `right` from it. Replace the `right :=` line from Task 3 with:
 
 ```go
-	right := authorStyle(author).Render(author)
-	if o.DiffWidth > 0 {
+	// The diffstat's cells must come OUT of the author's budget, or the author
+	// claims cells the diffstat needs and the row overflows w. And unlike the
+	// author the diffstat is not truncatable — once authorCap has clamped to 0
+	// there is nothing left to shrink, so when it does not fit it drops out
+	// entirely, the same degradation tier the author already has.
+	diffExtra := 0
+	if o.DiffWidth > 0 && w-leftW-5-2-1-2-o.DiffWidth >= 0 {
+		diffExtra = 2 + o.DiffWidth // its own "  " separator plus the column
+	}
+	authorCap := min(17, max(0, w-leftW-5-2-1-diffExtra))
+	right := authorStyle(author).Render(truncate(author, authorCap))
+	if diffExtra > 0 {
 		pad := o.DiffWidth - lipgloss.Width(diff)
 		if pad < 0 {
 			pad = 0
@@ -749,6 +858,7 @@ In `renderItemRow`, add a `diff string` parameter after `age`, and build `right`
 		right += "  " + strings.Repeat(" ", pad) + diff // right-aligned in a fixed column
 	}
 	right += dimStyle.Render(fmt.Sprintf("  %3s", age))
+	rightW := lipgloss.Width(right)
 ```
 
 In `PRSection.RenderRow`, pass it:

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -326,6 +327,28 @@ func TestRenderMainBordersListPane(t *testing.T) {
 	}
 	if !strings.Contains(out, "· 1") {
 		t.Fatalf("list pane should be titled: %q", out)
+	}
+}
+
+func TestOuterFrameWrapsBoard(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.SetOuterFrame(true)
+	m.InitTheme()
+	u, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = u.(Model)
+	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
+	m.renderList()
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, "prdash") {
+		t.Fatalf("outer frame should title the border with prdash:\n%s", out)
+	}
+	if !strings.Contains(out, "╭") || !strings.Contains(out, "╯") {
+		t.Fatalf("outer frame should be rounded:\n%s", out)
+	}
+	// Inner content size is terminal − 2; without the frame the board would be 100 wide.
+	if m.width != 98 || m.height != 28 {
+		t.Fatalf("inner size = %dx%d, want 98x28", m.width, m.height)
 	}
 }
 
