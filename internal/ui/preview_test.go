@@ -85,64 +85,113 @@ func TestIdentityHeaderCarriesBaseArrowAndLabels(t *testing.T) {
 	}
 }
 
-func TestReviewersLine(t *testing.T) {
-	got := reviewersLine(nil)
-	if !strings.Contains(got, "no reviewers") {
-		t.Fatalf("empty reviewers should warn: %q", got)
+// hasReviewer reports whether the roster has a line naming this login with this
+// status label. Spacing between them varies with alignment padding, so it checks
+// co-occurrence on one line rather than an exact substring.
+func hasReviewer(roster, login, label string) bool {
+	for _, line := range strings.Split(roster, "\n") {
+		if strings.Contains(line, login) && strings.Contains(line, label) {
+			return true
+		}
 	}
-	got = reviewersLine([]gh.ReviewRequest{{Login: "alice"}, {Login: "bob"}})
-	if !strings.Contains(got, "alice") || !strings.Contains(got, "bob") {
-		t.Fatalf("should list reviewers: %q", got)
+	return false
+}
+
+func TestReviewRosterEmpty(t *testing.T) {
+	if got := reviewRoster(gh.PRDetail{}); !strings.Contains(got, "no reviewers") {
+		t.Fatalf("no reviewers or requests should warn: %q", got)
 	}
 }
 
-func TestReviewLineNamesWho(t *testing.T) {
+func TestReviewRosterNamesWho(t *testing.T) {
 	mk := func(state string) gh.PRDetail {
 		var r gh.Review
 		r.Author.Login = "alice"
 		r.State = state
 		return gh.PRDetail{LatestReviews: []gh.Review{r}}
 	}
-	if got := reviewLine(mk("CHANGES_REQUESTED")); !strings.Contains(got, "changes requested by @alice") {
-		t.Fatalf("should name who requested changes: %q", got)
-	}
-	if got := reviewLine(mk("APPROVED")); !strings.Contains(got, "approved by @alice") {
-		t.Fatalf("should name who approved: %q", got)
-	}
-	if got := reviewLine(mk("COMMENTED")); !strings.Contains(got, "commented by @alice") {
-		t.Fatalf("should name who commented: %q", got)
-	}
-	if got := reviewLine(mk("DISMISSED")); !strings.Contains(got, "dismissed: @alice") {
-		t.Fatalf("should name whose review was dismissed: %q", got)
-	}
-	if got := reviewLine(gh.PRDetail{ReviewRequests: []gh.ReviewRequest{{Login: "bob"}}}); !strings.Contains(got, "bob") {
-		t.Fatalf("with no reviews, should fall back to pending reviewers: %q", got)
+	for state, label := range map[string]string{
+		"CHANGES_REQUESTED": "changes requested",
+		"APPROVED":          "approved",
+		"COMMENTED":         "commented",
+		"DISMISSED":         "dismissed",
+	} {
+		if got := reviewRoster(mk(state)); !hasReviewer(got, "@alice", label) {
+			t.Fatalf("state %s: want @alice %q in %q", state, label, got)
+		}
 	}
 }
 
-func TestReviewLineShowsEveryState(t *testing.T) {
+// A requested reviewer who has not reviewed shows as pending — even when others
+// have already reviewed, which the old fallback-only path hid.
+func TestReviewRosterShowsPendingAlongsideReviews(t *testing.T) {
+	var bot gh.Review
+	bot.Author.Login = "app/cursor"
+	bot.State = "COMMENTED"
+	d := gh.PRDetail{
+		LatestReviews:  []gh.Review{bot},
+		ReviewRequests: []gh.ReviewRequest{{Login: "carol"}},
+	}
+	got := reviewRoster(d)
+	if !hasReviewer(got, "@carol", "pending") {
+		t.Fatalf("pending reviewer must show alongside a bot comment: %q", got)
+	}
+	if !hasReviewer(got, "@app/cursor", "commented") {
+		t.Fatalf("the comment must still show: %q", got)
+	}
+}
+
+// A re-requested reviewer with a stale prior review counts as pending, not by
+// the old review's state.
+func TestReviewRosterReRequestOverridesStaleReview(t *testing.T) {
+	var stale gh.Review
+	stale.Author.Login = "bob"
+	stale.State = "APPROVED"
+	d := gh.PRDetail{
+		LatestReviews:  []gh.Review{stale},
+		ReviewRequests: []gh.ReviewRequest{{Login: "bob"}},
+	}
+	got := reviewRoster(d)
+	if strings.Contains(got, "approved") {
+		t.Fatalf("re-requested reviewer must not show the stale approval: %q", got)
+	}
+	if !hasReviewer(got, "@bob", "pending") {
+		t.Fatalf("re-requested reviewer must show pending: %q", got)
+	}
+}
+
+func TestReviewRosterShowsEveryState(t *testing.T) {
 	rv := func(login, state string) gh.Review {
 		var r gh.Review
 		r.Author.Login = login
 		r.State = state
 		return r
 	}
-	d := gh.PRDetail{LatestReviews: []gh.Review{
-		rv("alice", "CHANGES_REQUESTED"),
-		rv("bob", "APPROVED"),
-		rv("carol", "COMMENTED"),
-		rv("dave", "DISMISSED"),
-	}}
-	got := reviewLine(d)
-	for _, want := range []string{
-		"changes requested by @alice",
-		"approved by @bob",
-		"commented by @carol",
-		"dismissed: @dave",
+	d := gh.PRDetail{
+		LatestReviews: []gh.Review{
+			rv("alice", "CHANGES_REQUESTED"),
+			rv("bob", "APPROVED"),
+			rv("carol", "COMMENTED"),
+			rv("dave", "DISMISSED"),
+		},
+		ReviewRequests: []gh.ReviewRequest{{Login: "erin"}},
+	}
+	got := reviewRoster(d)
+	for _, want := range []struct{ login, label string }{
+		{"@alice", "changes requested"},
+		{"@bob", "approved"},
+		{"@carol", "commented"},
+		{"@dave", "dismissed"},
+		{"@erin", "pending"},
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("review line should surface every state, missing %q: %q", want, got)
+		if !hasReviewer(got, want.login, want.label) {
+			t.Fatalf("roster should surface every state, missing %s %q: %q", want.login, want.label, got)
 		}
+	}
+	// most-actionable first: changes requested precedes pending precedes approved.
+	if idx := strings.Index; !(idx(got, "changes requested") < idx(got, "pending") &&
+		idx(got, "pending") < idx(got, "approved")) {
+		t.Fatalf("roster order should rank by actionability: %q", got)
 	}
 }
 

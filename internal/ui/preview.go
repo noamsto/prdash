@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -352,7 +353,7 @@ func (m Model) renderOverview(w int) string {
 		blocks = append(blocks, dimStyle.Render("  loading details…"))
 		return strings.Join(blocks, "\n\n")
 	}
-	blocks = append(blocks, section(reviewGlyph, "review", reviewLine(d)))
+	blocks = append(blocks, section(reviewGlyph, "review", reviewRoster(d)))
 	if ts := m.detail[v.Number].ReviewThreads; len(ts) > 0 {
 		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
 		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
@@ -452,56 +453,72 @@ func ciLine(pr gh.PR) string {
 	}
 }
 
-// reviewLine summarises the review state, one line per state present, ordered
-// most-actionable first: changes requested, approved, commented, dismissed. The
-// decisive states carry sentiment color; comments and dismissals stay dim. With
-// no reviews it falls back to the pending requested reviewers.
-func reviewLine(d gh.PRDetail) string {
-	var changed, approved, commented, dismissed []string
+// reviewState maps a review state to its roster glyph, label, style, and sort
+// rank. Ranked most-actionable first: changes requested, pending, commented,
+// approved, dismissed. "PENDING" is our own marker for a requested reviewer who
+// has not submitted — GitHub has no such review state.
+var reviewState = map[string]struct {
+	rank  int
+	glyph string
+	label string
+	style lipgloss.Style
+}{
+	"CHANGES_REQUESTED": {0, "✗", "changes requested", failStyle},
+	"PENDING":           {1, "○", "pending", pendStyle},
+	"COMMENTED":         {2, "◐", "commented", dimStyle},
+	"APPROVED":          {3, "✓", "approved", passStyle},
+	"DISMISSED":         {4, "·", "dismissed", dimStyle},
+}
+
+// reviewRoster lists every reviewer on one line with a status glyph, merging
+// those who have reviewed with those still requested. A person re-requested
+// after reviewing counts as pending — GitHub treats the prior review as stale —
+// so an outstanding request overrides any latest review from the same login.
+func reviewRoster(d gh.PRDetail) string {
+	pending := map[string]bool{}
+	for _, r := range d.ReviewRequests {
+		if r.Login != "" {
+			pending[r.Login] = true
+		}
+	}
+	type entry struct{ login, state string }
+	var entries []entry
+	seen := map[string]bool{}
 	for _, r := range d.LatestReviews {
-		switch r.State {
-		case "CHANGES_REQUESTED":
-			changed = append(changed, "@"+r.Author.Login)
-		case "APPROVED":
-			approved = append(approved, "@"+r.Author.Login)
-		case "COMMENTED":
-			commented = append(commented, "@"+r.Author.Login)
-		case "DISMISSED":
-			dismissed = append(dismissed, "@"+r.Author.Login)
+		login := r.Author.Login
+		if login == "" || pending[login] || seen[login] {
+			continue
+		}
+		seen[login] = true
+		entries = append(entries, entry{login, r.State})
+	}
+	added := map[string]bool{}
+	for _, r := range d.ReviewRequests {
+		if r.Login == "" || added[r.Login] {
+			continue
+		}
+		added[r.Login] = true
+		entries = append(entries, entry{r.Login, "PENDING"})
+	}
+	if len(entries) == 0 {
+		return pendStyle.Render("○ no reviewers")
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return reviewState[entries[i].state].rank < reviewState[entries[j].state].rank
+	})
+	loginW := 0
+	for _, e := range entries {
+		if w := len(e.login) + 1; w > loginW {
+			loginW = w
 		}
 	}
 	var lines []string
-	if len(changed) > 0 {
-		lines = append(lines, failStyle.Render("✗ changes requested by "+strings.Join(changed, ", ")))
-	}
-	if len(approved) > 0 {
-		lines = append(lines, passStyle.Render("✓ approved by "+strings.Join(approved, ", ")))
-	}
-	if len(commented) > 0 {
-		lines = append(lines, dimStyle.Render("· commented by "+strings.Join(commented, ", ")))
-	}
-	if len(dismissed) > 0 {
-		lines = append(lines, dimStyle.Render("· dismissed: "+strings.Join(dismissed, ", ")))
-	}
-	if len(lines) == 0 {
-		return reviewersLine(d.ReviewRequests)
+	for _, e := range entries {
+		s := reviewState[e.state]
+		login := fmt.Sprintf("%-*s", loginW, "@"+e.login)
+		lines = append(lines, s.style.Render(s.glyph+" "+login+"  "+s.label))
 	}
 	return strings.Join(lines, "\n")
-}
-
-// reviewersLine summarises requested reviewers for the quick window. Team
-// requests have no login and are skipped.
-func reviewersLine(reqs []gh.ReviewRequest) string {
-	var logins []string
-	for _, r := range reqs {
-		if r.Login != "" {
-			logins = append(logins, r.Login)
-		}
-	}
-	if len(logins) == 0 {
-		return pendStyle.Render(warnGlyph + " no reviewers")
-	}
-	return dimStyle.Render("reviewers: " + strings.Join(logins, ", "))
 }
 
 // flagGlyph is the board's ! column: a conflict (red) or behind-base (yellow)
