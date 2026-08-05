@@ -3,10 +3,12 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
@@ -15,21 +17,26 @@ import (
 
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
-	Width     int
-	NumWidth  int // cell width for the right-aligned number column (0 = natural)
-	Focused   bool
-	Selected  bool
-	Draft     bool   // dim the title; drafts sort last (see prRank)
-	Landed    bool   // merged by prdash this session, held on the open board until ctrl+r
-	Commented bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
-	Flag      string // pre-rendered ! column glyph (conflict/behind), "" when unknown
-	TwoLine   bool   // render labels + branch on an indented second line
+	Width       int
+	NumWidth    int // cell width for the right-aligned number column (0 = natural)
+	Focused     bool
+	Selected    bool
+	Draft       bool   // dim the title; drafts sort last (see sortPRs)
+	Landed      bool   // merged by prdash this session, held on the open board until ctrl+r
+	Commented   bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
+	Flag        string // pre-rendered ! column glyph (conflict/behind), "" when unknown
+	Tree        string // stack chain glyph, rendered between the gutter and the number
+	DiffWidth   int    // cell width of the diffstat column; 0 hides it
+	TicketWidth int    // cell width of the ticket-id column; 0 hides it
+	AuthorWidth int    // fixed cell width for the author column; 0 = natural width (no padding)
+	CompactDiff bool   // render ±N instead of +N -N
+	Initials    bool   // 2-char author initials instead of the login
 }
 
 type Section interface {
 	Kind() string
 	Filter() string
-	RenderRow(i int, o RowOpts) string // render shown-row i as a dense row (single or two lines when two-line mode is enabled)
+	RenderRow(i int, o RowOpts) string // render shown-row i as a dense single-line row
 	Len() int
 	VarsAt(i int) action.Vars
 	Haystacks() []string
@@ -79,6 +86,18 @@ func (s *PRSection) groupLabel(i int) string {
 	}
 	return p.Author.Login
 }
+
+// unitLabel is the tightest selectable unit a row belongs to: its author cluster
+// within its category. Distinct from groupLabel, which is the category (or the
+// author, on an uncategorized board).
+//
+// The NUL separator keeps a category named like an author from colliding with
+// one. #89 makes this return the stack for stacked rows.
+func (s *PRSection) unitLabel(i int) string {
+	p := s.prAt(i)
+	return s.groupLabel(i) + "\x00" + p.Author.Login
+}
+
 func (s *PRSection) Len() int           { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
@@ -97,9 +116,9 @@ func (s *PRSection) authorOf(number int) string {
 }
 
 // ApplyChecks replaces the rollup on the PRs named in checks. It deliberately
-// does not re-sort: the sort key ranks by actionability, which CI state feeds, so
-// re-sorting here would move rows under the user on a background beat. Order
-// settles on the next real fetch.
+// does not re-sort — the board sorts by PR number, which a CI update never
+// changes, but re-sorting on every background beat would still cost a full
+// re-render for nothing. Order settles on the next real fetch.
 func (s *PRSection) ApplyChecks(checks map[int][]gh.Check) {
 	for i := range s.prs {
 		if c, ok := checks[s.prs[i].Number]; ok {
@@ -133,6 +152,11 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		status, age = mergedMark(), ageString(p.MergedAt)
 	case p.State == "CLOSED":
 		status, age = closedMark(), ageString(p.ClosedAt)
+	case p.IsDraft:
+		// A draft's CI rollup is the least interesting thing about it, and every
+		// other indicator on this row is a gutter glyph. Costs the CI mark; the
+		// preview still has it.
+		status = draftMark()
 	}
 	auto := autoMergeGlyph(p.AutoMergeEnabled())
 	// A commented-by-me PR keeps the pending color but swaps the dot for ◐:
@@ -141,15 +165,21 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	if o.Commented {
 		review = pendStyle.Render(reviewCommentedGlyph)
 	}
-	// A PR's author only appears on line 2 (two-line mode); it stays off the dense
-	// single-line row, and off author-grouped boards where the header carries it.
-	byAuthor := s.grouped && len(s.catOrder) == 0
-	author := ""
-	if o.TwoLine && !byAuthor {
-		author = p.Author.Login
+	author := p.Author.Login
+	diff := ""
+	if o.DiffWidth > 0 {
+		if o.CompactDiff {
+			diff = diffstatCompact(p.Additions, p.Deletions)
+		} else {
+			diff = diffstat(p.Additions, p.Deletions)
+		}
 	}
-	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title,
-		author, age, status, review, auto, p.HeadRefName, p.Labels)
+	ticket := ""
+	if o.TicketWidth > 0 {
+		ticket = ticketID(p.HeadRefName)
+	}
+	return renderItemRow(o, accentStyle, fmt.Sprintf("#%d", p.Number), p.Title, ticket,
+		author, age, diff, status, review, auto)
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
@@ -166,41 +196,9 @@ func (s *PRSection) Haystacks() []string {
 	return h
 }
 
-// Actionability ranks (lower sorts higher). Drafts always last.
-const (
-	rankReady = iota
-	rankChanges
-	rankFail
-	rankRunning
-	rankWaiting
-	rankDraft
-)
-
-// prRank scores a PR by how much it needs the author, using only signals that
-// are reliable from the bulk `gh pr list` (CI rollup, reviewDecision, isDraft).
-// It deliberately ignores mergeStateStatus/conflict — those are detail-derived
-// and would reshuffle the board as background prefetch lands.
-func prRank(p gh.PR) int {
-	ci := p.CIState()
-	switch {
-	case p.IsDraft:
-		return rankDraft
-	case p.ReviewDecision == "CHANGES_REQUESTED":
-		return rankChanges
-	case ci == "fail":
-		return rankFail
-	case ci == "pending":
-		return rankRunning
-	case p.ReviewDecision == "APPROVED":
-		return rankReady
-	default:
-		return rankWaiting
-	}
-}
-
 // sortPRs orders the board. Terminal states are chronological (newest event
-// first); the open board keeps the actionability rank, ties broken most-recently
-// updated. Rank is meaningless once a PR has landed/closed, so it's skipped there.
+// first). The open board sorts by PR number instead of actionability — see the
+// default arm below for why.
 func sortPRs(prs []gh.PR, state string) {
 	switch state {
 	case "merged":
@@ -208,25 +206,32 @@ func sortPRs(prs []gh.PR, state string) {
 	case "closed":
 		slices.SortStableFunc(prs, func(a, b gh.PR) int { return b.ClosedAt.Compare(a.ClosedAt) })
 	default:
+		// Number descending, drafts last. NOT actionability: ranking by CI state
+		// means a finishing check reorders rows under the cursor (#62). The
+		// categories already carry coarse urgency, and the gutter glyphs carry
+		// the rest.
 		slices.SortStableFunc(prs, func(a, b gh.PR) int {
-			if d := prRank(a) - prRank(b); d != 0 {
-				return d
+			if a.IsDraft != b.IsDraft {
+				if a.IsDraft {
+					return 1
+				}
+				return -1
 			}
-			return b.UpdatedAt.Compare(a.UpdatedAt)
+			return b.Number - a.Number
 		})
 	}
 }
 
 // setShownOrdered records the shown subset in display order and decides grouping.
-// idx arrives in actionability order (prs is rank-sorted; idx preserves it). With
+// idx arrives in number order (prs is number-sorted; idx preserves it). With
 // ≥2 distinct authors the rows are regrouped contiguously by author so the cursor
-// still walks them top-to-bottom; with one author the flat rank order stands.
+// still walks them top-to-bottom; with one author the flat number order stands.
 func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
 func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
 func (s *PRSection) SetForceFlat(v bool)  { s.forceFlat = v }
 
 // SetState records the view state so the next SetPRs/SetCategorized sorts by the
-// right key (merge/close time for terminal states, actionability for open).
+// right key (merge/close time for terminal states, number descending for open).
 func (s *PRSection) SetState(state string) { s.state = state }
 
 func (s *PRSection) setShownOrdered(idx []int) {
@@ -240,7 +245,7 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	}
 	if len(s.catOrder) > 0 {
 		s.grouped = true
-		s.shown = groupByCategory(s.prs, idx, s.cats, s.catOrder)
+		s.shown = groupByCategory(s.prs, idx, s.cats, s.catOrder, s.state)
 		return
 	}
 	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
@@ -252,15 +257,19 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	s.shown = idx
 }
 
-// groupByCategory reorders idx so rows cluster under their category in header order.
-func groupByCategory(prs []gh.PR, idx []int, cats map[int]string, order []string) []int {
+// groupByCategory reorders idx so rows cluster under their category in header
+// order, and clusters by author within each category. Composing the two keeps
+// one ordering concept rather than adding a third.
+func groupByCategory(prs []gh.PR, idx []int, cats map[int]string, order []string, state string) []int {
 	out := make([]int, 0, len(idx))
 	for _, cat := range order {
+		members := make([]int, 0, len(idx))
 		for _, i := range idx {
 			if cats[prs[i].Number] == cat {
-				out = append(out, i)
+				members = append(members, i)
 			}
 		}
+		out = append(out, groupByAuthor(prs, members, state)...)
 	}
 	return out
 }
@@ -275,10 +284,11 @@ func distinctAuthors(prs []gh.PR, idx []int) int {
 
 // groupByAuthor reorders idx so each author's rows are contiguous; within a group
 // the incoming order is preserved. Group order depends on state: the open board
-// leads with each author's best (lowest) member rank, ties by login. Terminal
-// boards (merged/closed) have no meaningful rank, so groups keep first-appearance
-// order — and since idx arrives newest-event-first, that leads with whichever
-// author has the newest merge/close, extending newest-first across groups.
+// leads with each author's highest PR number, ties by login. On terminal boards
+// (merged/closed) a highest-number lead would fight the chronology, so groups
+// keep first-appearance order — and since idx arrives newest-event-first, that
+// leads with whichever author has the newest merge/close, extending newest-first
+// across groups.
 func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
 	groups := map[string][]int{}
 	authors := make([]string, 0) // first-appearance order
@@ -290,18 +300,17 @@ func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
 		groups[a] = append(groups[a], i)
 	}
 	if state != "merged" && state != "closed" {
+		// A cluster leads with its newest PR, so cluster position is fixed by
+		// numbers that never change — the whole point of #62.
 		best := map[string]int{}
 		for a, g := range groups {
-			best[a] = prRank(prs[g[0]])
 			for _, i := range g {
-				if r := prRank(prs[i]); r < best[a] {
-					best[a] = r
-				}
+				best[a] = max(best[a], prs[i].Number)
 			}
 		}
 		slices.SortStableFunc(authors, func(x, y string) int {
 			if best[x] != best[y] {
-				return best[x] - best[y]
+				return best[y] - best[x] // descending
 			}
 			return strings.Compare(x, y)
 		})
@@ -332,8 +341,8 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]
-	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title,
-		is.Author.Login, ageString(is.UpdatedAt), "", "", "", "", is.Labels)
+	return renderItemRow(o, issueAccentStyle, fmt.Sprintf("#%d", is.Number), is.Title, "",
+		is.Author.Login, ageString(is.UpdatedAt), "", "", "", "")
 }
 
 func (s *IssueSection) VarsAt(i int) action.Vars {
@@ -382,14 +391,59 @@ func oneCell(s string) string {
 	return s
 }
 
-// renderItemRow renders a single-line or two-line row.
+// landedTag suffixes the title of a PR merged during this session; without it a
+// merge glyph on the open board reads as a live PR. ASCII, so len is its width.
+const landedTag = " landed"
+
+// renderItemRow renders one dense row:
 //
-// Single-line (default): ‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+//	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
 //
-// Two-line (when o.TwoLine is set and the row has labels or a sub value):
-// Line 1: same single-line layout above.
-// Line 2: label chips and dim secondary (branch) indented under the title.
-func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, ci, review, auto, sub string, labels []gh.Label) string {
+// authorColMax caps the author column so one long login can't starve the title.
+const authorColMax = 17
+
+// rightCols holds the reserved cell widths of a row's right-hand columns —
+// including each column's leading "  " separator for diff/ticket, and the "  "
+// prefix for age. The data row and the column-header row both lay out from these
+// widths, so the header aligns with every row by construction rather than by a
+// second copy of the arithmetic.
+type rightCols struct {
+	tag, diff, ticket, author, age int
+}
+
+// reserveRightCols carves the optional right-hand columns out of one slack
+// budget so the gap between title and columns never has to be floored — a
+// floored gap is overflow, not slack. Order matters: the ticket is reserved
+// after the diffstat because columnLadder sheds it at a wider column, so on the
+// way down the ticket goes first without a tie-break.
+//
+// authorW is the requested author column: 0 means auto (take the leftover slack,
+// capped — the natural-width behaviour), a positive value means a fixed column
+// sized to the widest shown author so every row's columns land at the same cell.
+// Either way the author is the last to be carved and shrinks toward empty before
+// the fixed columns drop, so the title never starves.
+func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW int, landed bool) rightCols {
+	slack := w - leftW - ageW - 2 - 1
+	c := rightCols{age: ageW}
+	if landed && slack-len(landedTag) >= 0 {
+		c.tag = len(landedTag)
+	}
+	if diffW > 0 && slack-c.tag-2-diffW >= 0 {
+		c.diff = 2 + diffW
+	}
+	if tktW > 0 && slack-c.tag-c.diff-2-tktW >= 0 {
+		c.ticket = 2 + tktW
+	}
+	avail := max(0, slack-c.tag-c.diff-c.ticket)
+	if authorW > 0 {
+		c.author = min(authorW, avail)
+	} else {
+		c.author = min(authorColMax, avail)
+	}
+	return c
+}
+
+func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, author, age, diff, ci, review, auto string) string {
 	w := o.Width
 	if w < 24 {
 		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
@@ -416,43 +470,95 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 		numCell = padNum(num, o.NumWidth)
 	}
 	gutter := bar + ci + " " + review + " " + auto + " " + flag + " "
-	left := gutter + numStyle.Render(numCell) + " "
-	// Two-line rows lead line 2 with the author; single-line keeps it beside age.
-	right := dimStyle.Render(fmt.Sprintf("  %3s", age))
-	if !o.TwoLine {
-		right = authorStyle(author).Render(author) + right
+	// Tree slot: after the state glyphs, so a stacked row's ci/rv/auto/flag stay
+	// on the same columns as every other row's.
+	const treeW = 3
+	// Clip before padding: the slot only freezes the grid if it is a hard 3 cells.
+	// ansi.Truncate, not truncate — o.Tree arrives styled.
+	tree := ansi.Truncate(o.Tree, treeW, "")
+	if pad := treeW - lipgloss.Width(tree); pad > 0 {
+		tree += strings.Repeat(" ", pad)
 	}
-	leftW, rightW := lipgloss.Width(left), lipgloss.Width(right)
+	left := gutter + tree + numStyle.Render(numCell) + " "
+	leftW := lipgloss.Width(left)
 
-	// The title owns the whole flexible middle; chips live on line 2, not here.
-	titleRoom := w - leftW - rightW - 2 // -2: title/right separators
+	// The author gets what's left after the fixed columns, never a fixed
+	// fraction of w: a width-derived floor grants cells that may not exist and
+	// the row then grows past w instead of shrinking (both floors below sit at
+	// 1 and nothing shrinks leftW/rightW back). 17 caps the full-login column. At
+	// very narrow widths the author drops out entirely, which is what the
+	// responsive ladder would do anyway.
+	//
+	// slack is the whole budget the title, author, diffstat and landed tag share:
+	// ageW = the age suffix, 2 = the title/right separators, 1 = a minimum title
+	// cell. Every optional column is carved out of this one number so the gap
+	// below never has to be floored — a floored gap is overflow, not slack.
+	//
+	// ageW must be measured, not a literal: ageString's days branch is unbounded,
+	// so the merged and closed views (which age from MergedAt/ClosedAt) reach 4
+	// and 5 cells, and a short reservation over-commits every gate below.
+	//
+	// Neither the diffstat, the ticket id, nor the tag is truncatable like the
+	// author (there's no useful partial rendering of "+412 -18", a half "ENG-77…"
+	// is worse than absent, and " landed" clipped is a lie), so once even an
+	// empty author can't make room they drop out entirely rather than push the
+	// row past w — same responsive-ladder degradation the author gets above.
+	// diffExtra/tktExtra also reserve their own "  " separator.
+	//
+	// The ticket id is reserved after the diffstat: columnLadder sheds it at a
+	// wider column (ladderDropTicket) than the diffstat (ladderDropDiff), so on
+	// the way down the ticket is always the first of the two to go — reserving it
+	// last makes that the natural outcome instead of something a tie-break has to
+	// enforce.
+	//
+	// authorStyle hashes the login for a stable per-person hue, so it must see
+	// the FULL login; only the rendered text is truncated or cut to initials.
+	ageW := 2 + max(3, lipgloss.Width(age)) // matches the age suffix rendered below
+	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, o.Landed)
+	tagW, diffExtra, tktExtra, authorCap := cols.tag, cols.diff, cols.ticket, cols.author
+	right := ""
+	if tktExtra > 0 {
+		// Clamp before padding, exactly as the diffstat does below: TicketWidth is
+		// the column, so a wider id would render at natural width and push the row
+		// past w — here it would ask strings.Repeat for a negative count first.
+		ticket = ansi.Truncate(ticket, o.TicketWidth, "")
+		right = sectionLabelStyle.Render(ticket) +
+			strings.Repeat(" ", o.TicketWidth-lipgloss.Width(ticket)) + "  "
+	}
+	authorTxt := author
+	if o.Initials {
+		authorTxt = authorInitials(author)
+	}
+	// authorStyle sees the full login for a stable hue; only the rendered text is
+	// truncated. With a fixed AuthorWidth the slot is right-padded so the ticket,
+	// diffstat and age land at the same cell on every row and the column header
+	// lines up; in auto mode the author keeps its natural width.
+	authorTxt = truncate(authorTxt, authorCap)
+	right += authorStyle(author).Render(authorTxt)
+	if o.AuthorWidth > 0 {
+		right += strings.Repeat(" ", authorCap-lipgloss.Width(authorTxt))
+	}
+	if diffExtra > 0 {
+		// Clamp before padding: DiffWidth is the column, so a diffstat wider than
+		// it would render at natural width and push the row past w.
+		// ansi.Truncate, not truncate — diff arrives styled.
+		diff = ansi.Truncate(diff, o.DiffWidth, "")
+		right += "  " + strings.Repeat(" ", o.DiffWidth-lipgloss.Width(diff)) + diff // right-aligned in a fixed column
+	}
+	right += dimStyle.Render(fmt.Sprintf("  %3s", age))
+	rightW := lipgloss.Width(right)
+
+	titleRoom := w - leftW - rightW - 2 - tagW // -2: title/right separators
 	if titleRoom < 1 {
 		titleRoom = 1
 	}
 	titleSt := titleStyle
-	switch {
-	case o.Focused:
+	if o.Focused {
 		titleSt = titleSt.Bold(true) // the hovered row is always readable, even if draft
-	case o.Draft:
-		titleSt = dimStyle
 	}
-	// A draft dims the whole row but paints its tag in the draft accent (peach),
-	// so the one thing that stands out on a receded row is what it is.
 	tags := ""
-	if o.Draft {
-		const tag = " [draft]"
-		tags = draftTagStyle.Render(tag)
-		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
-			titleRoom = 1
-		}
-	}
-	// Without the tag, a merge glyph on the open board reads as a live PR.
-	if o.Landed {
-		const tag = " landed"
-		tags += dimStyle.Render(tag)
-		if titleRoom -= lipgloss.Width(tag); titleRoom < 1 {
-			titleRoom = 1
-		}
+	if tagW > 0 {
+		tags = dimStyle.Render(landedTag)
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
 
@@ -460,58 +566,56 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, author, age, 
 	if gap < 1 {
 		gap = 1
 	}
-	line1 := left + titleTxt + strings.Repeat(" ", gap) + right
+	line := left + titleTxt + strings.Repeat(" ", gap) + right
+	switch {
+	case o.Focused:
+		line = rowBgWrap(line, theme.RowBg)
+	case o.Draft:
+		line = faintWrap(line) // a draft recedes as a whole row, not just a gutter glyph
+	}
+	return line
+}
 
-	// Single-line mode, or a row with nothing to show below, stays one dense line.
-	if !o.TwoLine || (author == "" && len(labels) == 0 && sub == "") {
-		if o.Focused {
-			line1 = rowBgWrap(line1, theme.RowBg)
-		}
-		return line1
+// columnHeader is the sticky label row above the board. It lays out from the
+// same reserveRightCols widths the data rows use, so each label sits over its
+// column. ageW is fixed at the common 3-cell age; a row with a wider age or a
+// landed tag can drift by a cell, which muted labels tolerate. leftW mirrors
+// renderItemRow's left block: a 9-cell gutter, a 3-cell tree slot, the number
+// column, and one separating space.
+func columnHeader(w, numW, diffW, tktW, authorW int) string {
+	const gutterW, treeW, ageW = 9, 3, 5
+	leftW := gutterW + treeW + numW + 1
+	cols := reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, false)
+
+	// Each glyph aligns the way its column's data does: the author and ticket are
+	// left-aligned, the diffstat and age are right-aligned.
+	leftGlyph := func(g string, width int) string {
+		return g + strings.Repeat(" ", max(0, width-lipgloss.Width(g)))
+	}
+	rightGlyph := func(g string, width int) string {
+		return strings.Repeat(" ", max(0, width-lipgloss.Width(g))) + g
 	}
 
-	// Two-line mode: author, label chips, and the dim head branch on their own
-	// line, indented under line 1's #number. Author and branch are bounded (and
-	// glyph-prefixed) so chips get the remaining width.
-	indent := lipgloss.Width(gutter)
-	avail := w - indent
-	authorTxt := ""
-	if author != "" {
-		authorTxt = authorStyle(author).Render(authorGlyph + " " + truncate(author, max(0, avail/3)))
+	// Gutter: a status glyph over the CI cell (cell 2, after the focus bar); the
+	// rest of the gutter and the tree slot stay blank. Then "#" over the number.
+	left := " " + statusHeadGlyph + strings.Repeat(" ", gutterW-2+treeW) +
+		"#" + strings.Repeat(" ", numW-1) + " "
+	right := ""
+	if cols.ticket > 0 {
+		right = leftGlyph(issueHeadGlyph, tktW) + "  "
 	}
-	subTxt := ""
-	if sub != "" {
-		subTxt = dimStyle.Render(branchGlyph + " " + truncate(sub, max(0, avail/3)))
+	right += leftGlyph(authorHeadGlyph, cols.author)
+	if cols.diff > 0 {
+		right += "  " + rightGlyph(deltaHeadGlyph, diffW)
 	}
-	authorW, subW := lipgloss.Width(authorTxt), lipgloss.Width(subTxt)
-	// Plain two-space gaps between segments (author / chips / branch); the glyphs
-	// and bracketed chips carry the structure, so no separator glyph is needed.
-	const sep, sepW = "  ", 2
-	chips := ""
-	if budget := avail - authorW - subW - sepW*2; budget >= 3 {
-		chips = renderChips(labels, budget)
-	}
-	parts := make([]string, 0, 3)
-	if authorW > 0 {
-		parts = append(parts, authorTxt)
-	}
-	if chips != "" {
-		parts = append(parts, chips)
-	}
-	if subW > 0 {
-		parts = append(parts, subTxt)
-	}
-	body := strings.Join(parts, sep)
-	pad := avail - lipgloss.Width(body)
-	if pad < 0 {
-		pad = 0
-	}
-	line2 := strings.Repeat(" ", indent) + body + strings.Repeat(" ", pad)
-	if o.Focused {
-		line1 = rowBgWrap(line1, theme.RowBg)
-		line2 = rowBgWrap(line2, theme.RowBg)
-	}
-	return line1 + "\n" + line2
+	right += "  " + rightGlyph(ageHeadGlyph, 3)
+
+	// The title column carries no glyph — a row of titles needs no marker; the gap
+	// between the number and the first right-hand glyph is the title's span.
+	rightW := lipgloss.Width(right)
+	gap := max(1, w-leftW-rightW)
+	line := left + strings.Repeat(" ", gap) + right
+	return dimStyle.Render(ansi.Truncate(line, w, ""))
 }
 
 // rowBgWrap fills a composed row with a background. lipgloss ends each styled
@@ -524,6 +628,112 @@ func rowBgWrap(line, bg string) string {
 	set := probe[:strings.Index(probe, "X")]
 	const reset = "\x1b[m"
 	return set + strings.ReplaceAll(line, reset, reset+set) + reset
+}
+
+// faintWrap dims a whole composed row with the SGR faint attribute. Like
+// rowBgWrap, it re-applies the attribute after each of lipgloss's resets so the
+// dimming survives every styled segment rather than clearing at the first one.
+func faintWrap(line string) string {
+	const (
+		reset = "\x1b[m"
+		faint = "\x1b[2m"
+	)
+	return faint + strings.ReplaceAll(line, reset, reset+faint) + reset
+}
+
+// abbrevCount renders a change count, shortening at 1000 so a 5-digit diff can't
+// blow the column: 999 -> "999", 1000 -> "1k", 1600 -> "1.6k".
+func abbrevCount(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	v := float64(n) / 1000
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	s = strings.TrimSuffix(s, ".0")
+	return s + "k"
+}
+
+// diffstat renders "+412 -18" with colour on the numbers only — the signs and
+// the space stay unstyled so the pair reads as one value.
+func diffstat(add, del int) string {
+	return passStyle.Render("+"+abbrevCount(add)) + " " + failStyle.Render("-"+abbrevCount(del))
+}
+
+// diffstatCompact is the narrow form: one signed magnitude instead of a pair.
+func diffstatCompact(add, del int) string {
+	return passStyle.Render("±" + abbrevCount(add+del))
+}
+
+// authorInitials is the narrow form of the author column. Two letters can
+// collide (asaf-s-factify and alex-smith both give "AS"), which is why the full
+// login is preferred wherever it fits — here the alternative is no author.
+func authorInitials(login string) string {
+	parts := strings.FieldsFunc(strings.TrimPrefix(login, "app/"), func(r rune) bool {
+		return r == '-' || r == '/' || r == '_'
+	})
+	out := make([]rune, 0, 2)
+	for _, p := range parts {
+		if len(out) == 2 {
+			break
+		}
+		out = append(out, []rune(strings.ToUpper(p))[0])
+	}
+	return string(out)
+}
+
+// diffstatWidth is the cell width of the diffstat column: the widest rendering
+// across the shown set, so the age column never shifts between rows. It must
+// measure whichever form the row will draw, hence compact.
+func diffstatWidth(s Section, compact bool) int {
+	ps, ok := s.(*PRSection)
+	if !ok {
+		return 0
+	}
+	render := diffstat
+	if compact {
+		render = diffstatCompact
+	}
+	w := 0
+	for _, i := range ps.shown {
+		w = max(w, lipgloss.Width(render(ps.prs[i].Additions, ps.prs[i].Deletions)))
+	}
+	return w
+}
+
+// ticketWidth is the cell width of the ticket column: the widest parsed id
+// across the shown set, or 0 when none parse. Blank cells are common —
+// agents/… and cursor/… branches carry no id — so the column sits after the
+// title, where a gap lands against ragged text instead of reading as a hole.
+func ticketWidth(s Section) int {
+	ps, ok := s.(*PRSection)
+	if !ok {
+		return 0
+	}
+	w := 0
+	for _, i := range ps.shown {
+		w = max(w, lipgloss.Width(ticketID(ps.prs[i].HeadRefName)))
+	}
+	return w
+}
+
+// authorColWidth is the fixed author column: the widest rendered author across
+// the shown set (initials or full login, per the layout), capped at authorColMax.
+// Feeds RowOpts.AuthorWidth and columnHeader so the board's author column and its
+// header label share one width.
+func authorColWidth(s Section, initials bool) int {
+	ps, ok := s.(*PRSection)
+	if !ok {
+		return 0
+	}
+	w := 0
+	for _, i := range ps.shown {
+		a := ps.prs[i].Author.Login
+		if initials {
+			a = authorInitials(a)
+		}
+		w = max(w, lipgloss.Width(a))
+	}
+	return min(authorColMax, w)
 }
 
 // padNum right-aligns a plain "#123" string to w cells; never truncates.
@@ -577,6 +787,25 @@ func truncate(s string, w int) string {
 		used += cw
 	}
 	return b.String() + "…"
+}
+
+// truncateLeft shortens plain text to w cells by dropping the FRONT, prefixing
+// an ellipsis. Branch names share long prefixes (eng-7726-…) and differ in the
+// tail, so the tail is the part worth keeping.
+func truncateLeft(s string, w int) string {
+	if w < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	r := []rune(s)
+	for i := range r {
+		if cand := "…" + string(r[i:]); lipgloss.Width(cand) <= w {
+			return cand
+		}
+	}
+	return "…"
 }
 
 // renderChips renders labels as rounded color pills, packed into maxW cells and
@@ -655,10 +884,11 @@ func reviewDot(decision string) string {
 	}
 }
 
-// groupHeader is an author divider: the login (bold, in its hue) + a short rule
-// — never the full row width. Visual-only; never a selectable cursor target.
+// groupHeader is an author divider: the login (in its hue, not bold) + a short
+// rule — never the full row width. Kept light so the divider frames the cluster
+// without competing with the rows. Visual-only; never a selectable cursor target.
 func groupHeader(author string, width int) string {
-	name := authorStyle(author).Bold(true).Render(author)
+	name := authorStyle(author).Render(author)
 	ruleLen := 6
 	if max := width - lipgloss.Width(name) - 1; ruleLen > max {
 		ruleLen = max

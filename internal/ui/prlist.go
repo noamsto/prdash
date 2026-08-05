@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -55,10 +56,11 @@ type Model struct {
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
+	listColHeader     string               // sticky column-label row above the board; "" hides it (empty/non-PR views)
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
-	cursorRows        int // display height of the cursor row (2 in two-line mode)
+	cursorRows        int // display height of the cursor row
 	cursorTop         int // topmost line to keep visible for the cursor (its group header, if any)
 	previewOffset     int // alt+j/k scroll position within the side preview
 	width             int
@@ -478,66 +480,80 @@ func (m Model) reviewedDetailCmd() tea.Cmd {
 	return m.batchDetailCmd(nums)
 }
 
-// groupRange returns the inclusive [lo, hi] shown-index span of the cursor's
-// group. When the board is ungrouped (or not a PR section), the whole shown
-// set is one group.
-func (m Model) groupRange() (lo, hi int) {
-	n := m.section.Len()
+// spanOf returns the inclusive [lo, hi] shown-index span around cur for which
+// label(i) is constant.
+func spanOf(n, cur int, label func(int) string) (lo, hi int) {
 	if n == 0 {
 		return 0, -1
 	}
-	ps, ok := m.section.(*PRSection)
-	if !ok || !ps.grouped {
-		return 0, n - 1
-	}
-	cur := m.cursor
-	if cur < 0 {
-		cur = 0
-	}
-	if cur >= n {
-		cur = n - 1
-	}
-	label := ps.groupLabel(cur)
+	cur = min(max(cur, 0), n-1)
+	want := label(cur)
 	lo, hi = cur, cur
-	for lo > 0 && ps.groupLabel(lo-1) == label {
+	for lo > 0 && label(lo-1) == want {
 		lo--
 	}
-	for hi+1 < n && ps.groupLabel(hi+1) == label {
+	for hi+1 < n && label(hi+1) == want {
 		hi++
 	}
 	return lo, hi
 }
 
-// advanceSelection cycles multi-select: Group → All → None, derived from the
-// current selection (no stored mode).
+// groupRange returns the inclusive [lo, hi] shown-index span of the cursor's
+// group. When the board is ungrouped (or not a PR section), the whole shown
+// set is one group.
+func (m Model) groupRange() (lo, hi int) {
+	n := m.section.Len()
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.grouped {
+		return 0, n - 1
+	}
+	return spanOf(n, m.cursor, ps.groupLabel)
+}
+
+// unitRange is the cursor's tightest selectable unit — its author cluster, or
+// (once #89 lands) its stack. Falls back to the whole shown set off a PR board.
+func (m Model) unitRange() (lo, hi int) {
+	n := m.section.Len()
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.grouped {
+		return 0, n - 1
+	}
+	return spanOf(n, m.cursor, ps.unitLabel)
+}
+
+// advanceSelection cycles multi-select: Cluster → Category → All → None,
+// derived from the current selection (no stored mode).
 func (m *Model) advanceSelection() {
 	n := m.section.Len()
 	if n == 0 {
 		return
 	}
-	lo, hi := m.groupRange()
-	groupFull := true
-	for i := lo; i <= hi; i++ {
-		if !m.sel.has(i) {
-			groupFull = false
-			break
+	full := func(lo, hi int) bool {
+		for i := lo; i <= hi; i++ {
+			if !m.sel.has(i) {
+				return false
+			}
 		}
+		return true
 	}
-	if !groupFull {
+	fill := func(lo, hi int) {
 		for i := lo; i <= hi; i++ {
 			if !m.sel.has(i) {
 				m.sel.toggle(i)
 			}
 		}
+	}
+
+	if lo, hi := m.unitRange(); !full(lo, hi) {
+		fill(lo, hi)
 		return
 	}
-	allFull := m.sel.count() == n
-	if !allFull {
-		for i := 0; i < n; i++ {
-			if !m.sel.has(i) {
-				m.sel.toggle(i)
-			}
-		}
+	if lo, hi := m.groupRange(); !full(lo, hi) {
+		fill(lo, hi)
+		return
+	}
+	if m.sel.count() != n {
+		fill(0, n-1)
 		return
 	}
 	m.sel.clear()
@@ -566,18 +582,18 @@ func (m *Model) moveCursor(delta int) {
 // re-styling the row — so a cursor move re-renders only the two rows whose focus
 // flipped, not all of them. gen invalidates the whole cache on a content change.
 type rowKey struct {
-	gen, w, numW      int
-	focused, selected bool
-	flag              string
-	twoLine           bool
-	landed            bool
-	commented         bool
+	gen, w, numW, diffW, tktW, authorW int
+	focused, selected                  bool
+	flag                               string
+	landed                             bool
+	commented                          bool
+	compactDiff, initials              bool
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
 	l := computeLayout(m.width, m.height)
-	innerW := l.ListWidth - 2 // inside the pane's left/right border
+	innerW := l.ListInner
 	innerH := m.contentHeight(l) - 2
 	if innerW < 1 {
 		innerW = 1
@@ -586,6 +602,15 @@ func (m *Model) renderList() {
 		innerH = 1
 	}
 	numW := columnWidths(m.section)
+	diffW := 0
+	if l.ShowDiffstat {
+		diffW = diffstatWidth(m.section, l.CompactDiffstat)
+	}
+	tktW := 0
+	if l.ShowTicket {
+		tktW = ticketWidth(m.section)
+	}
+	authorW := authorColWidth(m.section, l.InitialsAuthor)
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
 	n := m.section.Len()
@@ -616,10 +641,11 @@ func (m *Model) renderList() {
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, twoLine: l.TwoLine, landed: landed, commented: commented}
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, authorW: authorW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, Focused: key.focused, Selected: key.selected, Flag: flag, TwoLine: l.TwoLine, Landed: landed, Commented: commented,
+				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
+				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,
 			})
 			m.rowSig[i] = key
 		}
@@ -656,6 +682,14 @@ func (m *Model) renderList() {
 			hint = fmt.Sprintf("No %s %s.", m.state, noun)
 		}
 		content = dimStyle.Render(hint)
+	}
+	m.listColHeader = ""
+	if isPR && n > 0 {
+		m.listColHeader = columnHeader(innerW, numW, diffW, tktW, authorW)
+		innerH-- // the sticky header takes one interior row, above the viewport
+		if innerH < 1 {
+			innerH = 1
+		}
 	}
 	m.vp.SetWidth(innerW)
 	m.vp.SetHeight(innerH)
@@ -855,9 +889,10 @@ func (m Model) omniSuggestDropdown() string {
 }
 
 // omniDropdownY is the row the @-mention panel floats at: directly under the
-// omni input line it completes.
+// filter bar's box (3 rows: top border, input, bottom border), not the input
+// line itself — landing there would sit on top of the box's bottom border.
 func (m Model) omniDropdownY() int {
-	return lipgloss.Height(m.header()) + 1
+	return lipgloss.Height(m.header()) + 3
 }
 
 // prKey scopes the cached PR list by repo — the shared cache file holds every
@@ -1739,7 +1774,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.width = max(1, msg.Width-2)
 			m.height = max(1, msg.Height-2)
 		}
-		m.repaintActive() // reflow whichever view owns the viewport to the new size
+		m.filterInput.SetWidth(m.filterInputWidth()) // keep the box's own View() from wrapping open
+		m.repaintActive()                            // reflow whichever view owns the viewport to the new size
 		return m, nil
 	case tea.KeyMsg:
 		if m.logView {
@@ -2100,35 +2136,64 @@ func (m Model) renderInner() string {
 	return board
 }
 
-// filterBar is the always-visible search row. When blurred it shows the query
-// still applied, or the prompt as a hint when there is none; when focused it
-// shows the live query plus the omni syntax hint. The @-suggestion panel is not
-// part of the bar — it floats over the list.
+// filterInputWidth is the textinput's own width budget: the box interior
+// minus the leading search glyph, its separator, the input's prompt, and
+// (conservatively, since it's shown for any non-empty query) the match-count
+// segment. Without this, bubbles renders the whole value unbounded and
+// filterBar's lipgloss.Width word-wraps it open past three rows.
+func (m Model) filterInputWidth() int {
+	inner := max(1, m.width-4)
+	reserved := lipgloss.Width(filterGlyph) + 1 + lipgloss.Width(m.filterInput.Prompt)
+	if total := len(m.section.Haystacks()); total > 0 {
+		reserved += lipgloss.Width(fmt.Sprintf("%d→%d", total, total)) // total→total upper-bounds the real total→shown width
+	}
+	return max(1, inner-reserved)
+}
+
+// filterBar renders the omni-filter as a bordered box. It is three rows in every
+// state — the primary surface should not change height as it gains and loses
+// focus, and filterBarRows measures off this render so contentHeight follows.
 func (m Model) filterBar() string {
-	if m.filtering {
-		bar := m.filterInput.View()
-		if m.mode != "pr" {
-			return bar
-		}
-		if m.omniSuggestDropdown() != "" {
-			return bar + "\n" // the floating @-panel lands on this row; leave it clear
-		}
-		return bar + "\n" + dimStyle.Render(truncate("@user · is: · text", max(1, m.width)))
+	inner := max(1, m.width-4) // border (2) + one cell of padding each side
+
+	var body string
+	switch {
+	case m.filtering:
+		body = m.filterInput.View()
+	case m.filterInput.Value() != "":
+		body = accentStyle.Render(truncate(m.filterInput.Value(), inner)) +
+			dimStyle.Render("  esc clears")
+	default:
+		body = dimStyle.Render("filter — @user · is: · text")
 	}
-	// Blurred but still filtered: paint the query so the board can't read as an
-	// unfiltered one. Styles go on after truncate — it walks runes and would slice
-	// an escape sequence.
-	if q := m.filterInput.Value(); q != "" {
-		drop := "  esc clears"
-		if 1+lipgloss.Width(q)+lipgloss.Width(drop) > m.width {
-			drop = "" // too narrow for both: the query itself is what matters
+	body = accentStyle.Render(filterGlyph) + " " + body
+
+	// body is already styled, so clamping it must use ansi.Truncate, not
+	// truncate — that walks runes and would slice an ANSI escape. This is the
+	// hard guarantee behind the three-row invariant: filterInputWidth bounds
+	// the common case, but this clamp holds even when it's stale or unset
+	// (e.g. a model built without ever seeing a WindowSizeMsg).
+	body = ansi.Truncate(body, inner, "")
+
+	// The match count is the lowest-priority element and drops first. Len() is
+	// post-filter (SetShown narrows it) and Haystacks() covers the whole set, so
+	// the pair is total→shown without storing anything on the model.
+	if m.filterInput.Value() != "" {
+		total, shown := len(m.section.Haystacks()), m.section.Len()
+		count := dimStyle.Render(fmt.Sprintf("%d→%d", total, shown))
+		if pad := inner - lipgloss.Width(body) - lipgloss.Width(count); pad > 0 {
+			body += strings.Repeat(" ", pad) + count
 		}
-		return dimStyle.Render("/") +
-			accentStyle.Render(truncate(q, max(1, m.width-1-lipgloss.Width(drop)))) +
-			dimStyle.Render(drop)
 	}
-	// Blurred: show the prompt + placeholder as a dim hint so the bar is always present.
-	return dimStyle.Render(truncate("/ filter (@user, is:, text)", max(1, m.width)))
+	// lipgloss's Width + MaxWidth clamp the final line safely; body is already
+	// bounded to inner above so this can't trigger a word-wrap.
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(theme.Rule)).
+		Width(m.width).
+		MaxWidth(m.width).
+		Padding(0, 1).
+		Render(body)
 }
 
 // filterBarRows is the row-height of filterBar() in its current state, measured
@@ -2384,11 +2449,11 @@ type legendGroup struct {
 func (m Model) legendGroups() []legendGroup {
 	groups := []legendGroup{
 		{"glyphs", []keyHint{
-			{"✓", "CI pass"}, {"✗", "CI fail"}, {ciRunningGlyph, "CI running"}, {"·", "no CI"},
-			{mergedGlyph, "merged"}, {closedGlyph, "closed"},
+			{"✓", "CI pass"}, {"✗", "checks failed"}, {ciRunningGlyph, "CI running"}, {"·", "no CI"},
+			{mergedGlyph, "merged"}, {closedGlyph, "closed"}, {draftGlyph, "draft"},
 			{warnGlyph, "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
-			{"●", "review required"}, {reviewCommentedGlyph, "commented by me"},
-			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"}, {"[draft]", "dimmed"},
+			{"●", "review required"}, {"✗", "changes requested"}, {reviewCommentedGlyph, "commented by me"},
+			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"},
 		}},
 	}
 
@@ -2396,7 +2461,7 @@ func (m Model) legendGroups() []legendGroup {
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand"})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "group"})
+	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "cluster"})
 	groups = append(groups, legendGroup{"navigation", nav})
 
 	filters := []keyHint{{"/", "filter (@user, is:, text)"}, {"s", "state"}}
@@ -2491,7 +2556,7 @@ type keyHint struct{ key, label string }
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
 		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
-		{"/", "find"}, {"space", "select"}, {"V", "group"}, {"q", "quit"},
+		{"/", "find"}, {"space", "select"}, {"V", "cluster"}, {"q", "quit"},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
@@ -2713,12 +2778,24 @@ func (m Model) statusBar() string {
 		parts = append(parts, accentStyle.Render("D")+statusBarStyle.Render(":")+drafts)
 	}
 	parts = append(parts, hint("q", "quit"))
+	// Below the preview threshold the branch has nowhere else to live, and it is
+	// what the copy and worktree actions operate on.
+	if !computeLayout(m.width, m.height).ShowSide {
+		if v, ok := m.cursorVars(); ok && v.HeadRefName != "" {
+			bar := strings.Join(parts, "  ")
+			if room := m.width - lipgloss.Width(bar) - 4; room > 8 {
+				parts = append(parts, dimStyle.Render(headBranchGlyph+" "+truncateLeft(v.HeadRefName, room)))
+			}
+		}
+	}
 	rule := sepStyle.Render(strings.Repeat("─", max(m.width, 1)))
 	return rule + "\n  " + strings.Join(parts, "  ")
 }
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
-const schemaVer = "v4"
+// v5 adds additions/deletions/changedFiles and the stack fields; a v4 cache
+// entry has none of them and would paint "+0 -0".
+const schemaVer = "v5"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.

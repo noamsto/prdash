@@ -57,7 +57,7 @@ func TestRenderTimelineKeepsCommentsCompact(t *testing.T) {
 func TestIdentityHeader(t *testing.T) {
 	pr := gh.PR{Number: 309, Title: "Add retry logic", HeadRefName: "feat/309-retry"}
 	pr.Author.Login = "bob"
-	out := identityHeader(pr)
+	out := identityHeader(pr, 80)
 	for _, want := range []string{"#309", "Add retry logic", "bob", "feat/309-retry"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("identity header missing %q: %q", want, out)
@@ -65,64 +65,134 @@ func TestIdentityHeader(t *testing.T) {
 	}
 }
 
-func TestReviewersLine(t *testing.T) {
-	got := reviewersLine(nil)
-	if !strings.Contains(got, "no reviewers") {
-		t.Fatalf("empty reviewers should warn: %q", got)
+func TestIdentityHeaderCarriesBaseArrowAndLabels(t *testing.T) {
+	pr := gh.PR{
+		Number: 3087, Title: "fix(services): raise provenance contention",
+		HeadRefName: "eng-7726-same-value", BaseRefName: "main",
+		UpdatedAt: time.Now().Add(-2 * time.Hour),
+		Labels:    []gh.Label{{Name: "complexity:7", Color: "fab387"}},
 	}
-	got = reviewersLine([]gh.ReviewRequest{{Login: "alice"}, {Login: "bob"}})
-	if !strings.Contains(got, "alice") || !strings.Contains(got, "bob") {
-		t.Fatalf("should list reviewers: %q", got)
+	pr.Author.Login = "noamsto"
+
+	got := stripANSIForTest(identityHeader(pr, 80))
+	if !strings.Contains(got, "main") || !strings.Contains(got, "eng-7726-same-value") {
+		t.Errorf("base and head must both appear:\n%s", got)
+	}
+	if !strings.Contains(got, "←") {
+		t.Errorf("base <- head arrow missing:\n%s", got)
+	}
+	if !strings.Contains(got, "complexity:7") {
+		t.Errorf("label chips must appear in the identity block:\n%s", got)
 	}
 }
 
-func TestReviewLineNamesWho(t *testing.T) {
+// hasReviewer reports whether the roster has a line naming this login with this
+// status label. Spacing between them varies with alignment padding, so it checks
+// co-occurrence on one line rather than an exact substring.
+func hasReviewer(roster, login, label string) bool {
+	for _, line := range strings.Split(roster, "\n") {
+		if strings.Contains(line, login) && strings.Contains(line, label) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestReviewRosterEmpty(t *testing.T) {
+	if got := reviewRoster(gh.PRDetail{}); !strings.Contains(got, "no reviewers") {
+		t.Fatalf("no reviewers or requests should warn: %q", got)
+	}
+}
+
+func TestReviewRosterNamesWho(t *testing.T) {
 	mk := func(state string) gh.PRDetail {
 		var r gh.Review
 		r.Author.Login = "alice"
 		r.State = state
 		return gh.PRDetail{LatestReviews: []gh.Review{r}}
 	}
-	if got := reviewLine(mk("CHANGES_REQUESTED")); !strings.Contains(got, "changes requested by @alice") {
-		t.Fatalf("should name who requested changes: %q", got)
-	}
-	if got := reviewLine(mk("APPROVED")); !strings.Contains(got, "approved by @alice") {
-		t.Fatalf("should name who approved: %q", got)
-	}
-	if got := reviewLine(mk("COMMENTED")); !strings.Contains(got, "commented by @alice") {
-		t.Fatalf("should name who commented: %q", got)
-	}
-	if got := reviewLine(mk("DISMISSED")); !strings.Contains(got, "dismissed: @alice") {
-		t.Fatalf("should name whose review was dismissed: %q", got)
-	}
-	if got := reviewLine(gh.PRDetail{ReviewRequests: []gh.ReviewRequest{{Login: "bob"}}}); !strings.Contains(got, "bob") {
-		t.Fatalf("with no reviews, should fall back to pending reviewers: %q", got)
+	for state, label := range map[string]string{
+		"CHANGES_REQUESTED": "changes requested",
+		"APPROVED":          "approved",
+		"COMMENTED":         "commented",
+		"DISMISSED":         "dismissed",
+	} {
+		if got := reviewRoster(mk(state)); !hasReviewer(got, "@alice", label) {
+			t.Fatalf("state %s: want @alice %q in %q", state, label, got)
+		}
 	}
 }
 
-func TestReviewLineShowsEveryState(t *testing.T) {
+// A requested reviewer who has not reviewed shows as pending — even when others
+// have already reviewed, which the old fallback-only path hid.
+func TestReviewRosterShowsPendingAlongsideReviews(t *testing.T) {
+	var bot gh.Review
+	bot.Author.Login = "app/cursor"
+	bot.State = "COMMENTED"
+	d := gh.PRDetail{
+		LatestReviews:  []gh.Review{bot},
+		ReviewRequests: []gh.ReviewRequest{{Login: "carol"}},
+	}
+	got := reviewRoster(d)
+	if !hasReviewer(got, "@carol", "pending") {
+		t.Fatalf("pending reviewer must show alongside a bot comment: %q", got)
+	}
+	if !hasReviewer(got, "@app/cursor", "commented") {
+		t.Fatalf("the comment must still show: %q", got)
+	}
+}
+
+// A re-requested reviewer with a stale prior review counts as pending, not by
+// the old review's state.
+func TestReviewRosterReRequestOverridesStaleReview(t *testing.T) {
+	var stale gh.Review
+	stale.Author.Login = "bob"
+	stale.State = "APPROVED"
+	d := gh.PRDetail{
+		LatestReviews:  []gh.Review{stale},
+		ReviewRequests: []gh.ReviewRequest{{Login: "bob"}},
+	}
+	got := reviewRoster(d)
+	if strings.Contains(got, "approved") {
+		t.Fatalf("re-requested reviewer must not show the stale approval: %q", got)
+	}
+	if !hasReviewer(got, "@bob", "pending") {
+		t.Fatalf("re-requested reviewer must show pending: %q", got)
+	}
+}
+
+func TestReviewRosterShowsEveryState(t *testing.T) {
 	rv := func(login, state string) gh.Review {
 		var r gh.Review
 		r.Author.Login = login
 		r.State = state
 		return r
 	}
-	d := gh.PRDetail{LatestReviews: []gh.Review{
-		rv("alice", "CHANGES_REQUESTED"),
-		rv("bob", "APPROVED"),
-		rv("carol", "COMMENTED"),
-		rv("dave", "DISMISSED"),
-	}}
-	got := reviewLine(d)
-	for _, want := range []string{
-		"changes requested by @alice",
-		"approved by @bob",
-		"commented by @carol",
-		"dismissed: @dave",
+	d := gh.PRDetail{
+		LatestReviews: []gh.Review{
+			rv("alice", "CHANGES_REQUESTED"),
+			rv("bob", "APPROVED"),
+			rv("carol", "COMMENTED"),
+			rv("dave", "DISMISSED"),
+		},
+		ReviewRequests: []gh.ReviewRequest{{Login: "erin"}},
+	}
+	got := reviewRoster(d)
+	for _, want := range []struct{ login, label string }{
+		{"@alice", "changes requested"},
+		{"@bob", "approved"},
+		{"@carol", "commented"},
+		{"@dave", "dismissed"},
+		{"@erin", "pending"},
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("review line should surface every state, missing %q: %q", want, got)
+		if !hasReviewer(got, want.login, want.label) {
+			t.Fatalf("roster should surface every state, missing %s %q: %q", want.login, want.label, got)
 		}
+	}
+	// most-actionable first: changes requested precedes pending precedes approved.
+	if idx := strings.Index; !(idx(got, "changes requested") < idx(got, "pending") &&
+		idx(got, "pending") < idx(got, "approved")) {
+		t.Fatalf("roster order should rank by actionability: %q", got)
 	}
 }
 
@@ -144,23 +214,27 @@ func TestFlagGlyph(t *testing.T) {
 	}
 }
 
-func TestSectionRule(t *testing.T) {
-	r := sectionRule("blocker", 30)
-	if !strings.Contains(r, "BLOCKER") || !strings.Contains(r, "─") {
-		t.Fatalf("section rule should show the uppercased label and a rule: %q", r)
+func TestSectionHeaderHasNoRuleAndNoUppercasing(t *testing.T) {
+	got := stripANSIForTest(sectionHeader(blockerGlyph, "blocker", 60))
+	if strings.Contains(got, "─") {
+		t.Errorf("section header must not draw a rule: %q", got)
 	}
-	if strings.Contains(r, "\n") {
-		t.Fatalf("section rule is one line: %q", r)
+	if strings.Contains(got, "BLOCKER") {
+		t.Errorf("section header must not uppercase: %q", got)
+	}
+	if !strings.Contains(got, "Blocker") {
+		t.Errorf("section header should be Title Case: %q", got)
 	}
 }
 
 func TestPrefetchNumbers(t *testing.T) {
 	ps := NewPRSection("is:open")
-	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}, {Number: 5}})
-	fresh := map[int]bool{2: true} // #2 already refreshed this session
+	// Board order is number descending, so the fixture is given already sorted.
+	ps.SetPRs([]gh.PR{{Number: 5}, {Number: 4}, {Number: 3}, {Number: 2}, {Number: 1}})
+	fresh := map[int]bool{4: true} // #4 already refreshed this session
 
 	got := prefetchNumbers(ps, 0, fresh, 3)
-	want := []int{1, 3, 4} // skips fresh #2, capped at window=3; cursor at top → only downward
+	want := []int{5, 3, 2} // skips fresh #4, capped at window=3; cursor at top → only downward
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -180,7 +254,8 @@ func TestPrefetchNumbers(t *testing.T) {
 // by distance, preferring below on ties.
 func TestPrefetchNumbersBidirectional(t *testing.T) {
 	ps := NewPRSection("is:open")
-	// Numbers 1..9 at shown indexes 0..8.
+	// Numbers 1..9 given ascending; the board's number-descending sort reverses
+	// them, so shown index i holds Number 9-i.
 	prs := make([]gh.PR, 9)
 	for i := range prs {
 		prs[i].Number = i + 1
@@ -188,8 +263,8 @@ func TestPrefetchNumbersBidirectional(t *testing.T) {
 	ps.SetPRs(prs)
 
 	got := prefetchNumbers(ps, 4, nil, 5) // cursor on #5 (index 4)
-	// distances: 0→#5, 1→#6 then #4, 2→#7 then #3
-	want := []int{5, 6, 4, 7, 3}
+	// distances: 0→#5, 1→below #4 then above #6, 2→below #3 then above #7
+	want := []int{5, 4, 6, 3, 7}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -202,6 +277,8 @@ func TestPrefetchNumbersBidirectional(t *testing.T) {
 
 func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 	ps := NewPRSection("is:open")
+	// Numbers 1..7 given ascending; reversed by the sort so shown index i holds
+	// Number 7-i.
 	prs := make([]gh.PR, 7)
 	for i := range prs {
 		prs[i].Number = i + 1
@@ -210,7 +287,7 @@ func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 	// Cursor #4 (index 3). Mark nearest neighbors fresh so the window reaches farther.
 	fresh := map[int]bool{4: true, 5: true, 3: true}
 	got := prefetchNumbers(ps, 3, fresh, 3)
-	want := []int{6, 2, 7} // dist 2 below, 2 above, 3 below
+	want := []int{2, 6, 1} // dist 2 below, 2 above, 3 below
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -223,9 +300,11 @@ func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 
 func TestPrefetchNumbersAtEndGoesUp(t *testing.T) {
 	ps := NewPRSection("is:open")
+	// Numbers 1..4 given ascending; reversed by the sort, so the last shown row
+	// (index 3) holds #1.
 	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}})
-	got := prefetchNumbers(ps, 3, nil, 3) // cursor on last row (#4)
-	want := []int{4, 3, 2}                // only upward after cursor
+	got := prefetchNumbers(ps, 3, nil, 3) // cursor on last row (#1)
+	want := []int{1, 2, 3}                // only upward (toward higher numbers) after cursor
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -286,11 +365,11 @@ func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
 		return ansi.ReplaceAllString(m.previewPane(), "")
 	}
 	// Blocker IS checks-failing → no redundant standalone "checks" section.
-	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, "\nCHECKS ─") {
+	if got := render(gh.PRDetail{MergeStateStatus: "BLOCKED"}); strings.Contains(got, checksGlyph+" Checks") {
 		t.Fatalf("checks section should be suppressed when the blocker is CI:\n%s", got)
 	}
 	// Blocker is a conflict that masks failing CI → checks section surfaces it.
-	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, "\nCHECKS ─") {
+	if got := render(gh.PRDetail{MergeStateStatus: "DIRTY"}); !strings.Contains(got, checksGlyph+" Checks") {
 		t.Fatalf("checks section should show when a conflict masks failing CI:\n%s", got)
 	}
 }
@@ -455,7 +534,7 @@ func TestPreviewPaneShowsDescriptionSection(t *testing.T) {
 	m.setPRs([]gh.PR{p})
 	m.renderList()
 	out := ansiRe.ReplaceAllString(m.previewPane(), "")
-	if !strings.Contains(out, "DESCRIPTION") || !strings.Contains(out, "does a cool thing") {
+	if !strings.Contains(out, descriptionGlyph+" Description") || !strings.Contains(out, "does a cool thing") {
 		t.Fatalf("preview should show the description section:\n%s", out)
 	}
 }

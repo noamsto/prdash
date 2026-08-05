@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -237,13 +238,21 @@ func (m Model) previewWidth() int {
 	return l.SideWidth - 2
 }
 
-// identityHeader is the side card's top block: number + title, then a dim
-// author · branch · age line. The branch anchors the copy/worktree actions.
-func identityHeader(pr gh.PR) string {
-	line1 := accentStyle.Render(fmt.Sprintf("#%d", pr.Number)) + " " + headerStyle.Render(pr.Title)
-	line2 := authorStyle(pr.Author.Login).Render(pr.Author.Login) +
-		dimStyle.Render(" · "+pr.HeadRefName+" · "+ageString(pr.UpdatedAt))
-	return line1 + "\n" + line2
+// identityHeader is the side card's top block: number + title, then author,
+// base <- head and age, then the label chips. Labels live here rather than on
+// the board row, and the base branch appears alongside the head so the merge
+// target is visible without opening the Diff tab.
+func identityHeader(pr gh.PR, w int) string {
+	lines := []string{
+		accentStyle.Render(fmt.Sprintf("#%d", pr.Number)) + " " + headerStyle.Render(pr.Title),
+		authorStyle(pr.Author.Login).Render(pr.Author.Login) + "  " +
+			dimStyle.Render(headBranchGlyph+" "+pr.BaseRefName+" "+baseArrowGlyph+" "+pr.HeadRefName) +
+			dimStyle.Render("  "+ageString(pr.UpdatedAt)),
+	}
+	if chips := renderChips(pr.Labels, w); chips != "" {
+		lines = append(lines, chips)
+	}
+	return strings.Join(lines, "\n")
 }
 
 const (
@@ -273,18 +282,12 @@ func previewDescriptionBody(pr gh.PR, viewer string, w int) string {
 		dimStyle.Render("· full text in Description tab")
 }
 
-// sectionRule is a section divider: an UPPERCASE sapphire label (distinct from
-// the body text) followed by a short rule — not the full pane width.
-func sectionRule(label string, w int) string {
-	name := sectionLabelStyle.Render(strings.ToUpper(label))
-	ruleLen := 6
-	if max := w - lipgloss.Width(name) - 1; ruleLen > max {
-		ruleLen = max
-	}
-	if ruleLen < 0 {
-		ruleLen = 0
-	}
-	return name + " " + sepStyle.Render(strings.Repeat("─", ruleLen))
+// sectionHeader is a preview section divider: a glyph plus a Title Case name,
+// underlined, in one accent. No rule and no uppercasing — the pane should paint
+// its content, not its scaffolding.
+func sectionHeader(glyph, label string, w int) string {
+	name := strings.ToUpper(label[:1]) + label[1:]
+	return sectionLabelStyle.Underline(true).Render(glyph + " " + name)
 }
 
 // previewPane renders the side pane as identity header + tab bar + the active
@@ -304,7 +307,7 @@ func (m Model) previewPane() string {
 	if !ok {
 		return ""
 	}
-	header := identityHeader(ps.prAt(m.cursor))
+	header := identityHeader(ps.prAt(m.cursor), w-2)
 	bar := renderTabBar(expandedTabs, m.expandedTab, w)
 	var body string
 	if m.expandedTab == tabOverview {
@@ -323,26 +326,26 @@ func (m Model) renderOverview(w int) string {
 		return ""
 	}
 	bw := w - 2
-	section := func(label, body string) string {
-		return sectionRule(label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
+	section := func(glyph, label, body string) string {
+		return sectionHeader(glyph, label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
 	}
 	d, cached := m.detail[v.Number]
 	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
 		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
-			blocks = append(blocks, section("description", body))
+			blocks = append(blocks, section(descriptionGlyph, "description", body))
 		}
 		tc := triage.Preliminary(pr, m.viewerLogin)
 		if cached {
 			tc = triage.Compute(pr, d, m.viewerLogin)
 		}
 		if card := renderCard(tc, bw); card != "" {
-			blocks = append(blocks, section("blocker", card))
+			blocks = append(blocks, section(blockerGlyph, "blocker", card))
 		}
 		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
 			if ci := ciLine(pr); ci != "" {
-				blocks = append(blocks, section("checks", ci))
+				blocks = append(blocks, section(checksGlyph, "checks", ci))
 			}
 		}
 	}
@@ -350,14 +353,14 @@ func (m Model) renderOverview(w int) string {
 		blocks = append(blocks, dimStyle.Render("  loading details…"))
 		return strings.Join(blocks, "\n\n")
 	}
-	blocks = append(blocks, section("review", reviewLine(d)))
+	blocks = append(blocks, section(reviewGlyph, "review", reviewRoster(d)))
 	if ts := m.detail[v.Number].ReviewThreads; len(ts) > 0 {
 		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
 		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
-			blocks = append(blocks, section(label, body))
+			blocks = append(blocks, section(threadsGlyph, label, body))
 		}
 	}
-	blocks = append(blocks, section("latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
+	blocks = append(blocks, section(latestGlyph, "latest", renderTimeline(preview.Timeline(d), m.previewN, bw, m.previewExpanded)))
 	return strings.Join(blocks, "\n\n")
 }
 
@@ -375,7 +378,7 @@ func (m Model) issuePreviewPane(is *IssueSection, w, bw int) string {
 	if err != nil {
 		body = d.Body
 	}
-	blocks = append(blocks, sectionRule("body", w)+"\n"+indentLines(strings.TrimRight(body, "\n"), 2))
+	blocks = append(blocks, sectionHeader(descriptionGlyph, "body", w)+"\n"+indentLines(strings.TrimRight(body, "\n"), 2))
 	return strings.Join(blocks, "\n\n")
 }
 
@@ -450,56 +453,76 @@ func ciLine(pr gh.PR) string {
 	}
 }
 
-// reviewLine summarises the review state, one line per state present, ordered
-// most-actionable first: changes requested, approved, commented, dismissed. The
-// decisive states carry sentiment color; comments and dismissals stay dim. With
-// no reviews it falls back to the pending requested reviewers.
-func reviewLine(d gh.PRDetail) string {
-	var changed, approved, commented, dismissed []string
+// reviewState maps a review state to its roster glyph, label, style, and sort
+// rank. Ranked most-actionable first: changes requested, pending, commented,
+// approved, dismissed. "PENDING" is our own marker for a requested reviewer who
+// has not submitted — GitHub has no such review state.
+var reviewState = map[string]struct {
+	rank  int
+	glyph string
+	label string
+	style lipgloss.Style
+}{
+	"CHANGES_REQUESTED": {0, "✗", "changes requested", failStyle},
+	"PENDING":           {1, "○", "pending", pendStyle},
+	"COMMENTED":         {2, "◐", "commented", dimStyle},
+	"APPROVED":          {3, "✓", "approved", passStyle},
+	"DISMISSED":         {4, "·", "dismissed", dimStyle},
+}
+
+// reviewRoster lists every reviewer on one line with a status glyph, merging
+// those who have reviewed with those still requested. A person re-requested
+// after reviewing counts as pending — GitHub treats the prior review as stale —
+// so an outstanding request overrides any latest review from the same login.
+func reviewRoster(d gh.PRDetail) string {
+	pending := map[string]bool{}
+	for _, r := range d.ReviewRequests {
+		if r.Login != "" {
+			pending[r.Login] = true
+		}
+	}
+	type entry struct{ login, state string }
+	var entries []entry
+	seen := map[string]bool{}
 	for _, r := range d.LatestReviews {
-		switch r.State {
-		case "CHANGES_REQUESTED":
-			changed = append(changed, "@"+r.Author.Login)
-		case "APPROVED":
-			approved = append(approved, "@"+r.Author.Login)
-		case "COMMENTED":
-			commented = append(commented, "@"+r.Author.Login)
-		case "DISMISSED":
-			dismissed = append(dismissed, "@"+r.Author.Login)
+		login := r.Author.Login
+		if login == "" || pending[login] || seen[login] {
+			continue
+		}
+		seen[login] = true
+		entries = append(entries, entry{login, r.State})
+	}
+	added := map[string]bool{}
+	for _, r := range d.ReviewRequests {
+		if r.Login == "" || added[r.Login] {
+			continue
+		}
+		added[r.Login] = true
+		entries = append(entries, entry{r.Login, "PENDING"})
+	}
+	if len(entries) == 0 {
+		return pendStyle.Render("○ no reviewers")
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return reviewState[entries[i].state].rank < reviewState[entries[j].state].rank
+	})
+	loginW := 0
+	for _, e := range entries {
+		if w := len(e.login) + 1; w > loginW {
+			loginW = w
 		}
 	}
 	var lines []string
-	if len(changed) > 0 {
-		lines = append(lines, failStyle.Render("✗ changes requested by "+strings.Join(changed, ", ")))
-	}
-	if len(approved) > 0 {
-		lines = append(lines, passStyle.Render("✓ approved by "+strings.Join(approved, ", ")))
-	}
-	if len(commented) > 0 {
-		lines = append(lines, dimStyle.Render("· commented by "+strings.Join(commented, ", ")))
-	}
-	if len(dismissed) > 0 {
-		lines = append(lines, dimStyle.Render("· dismissed: "+strings.Join(dismissed, ", ")))
-	}
-	if len(lines) == 0 {
-		return reviewersLine(d.ReviewRequests)
+	for _, e := range entries {
+		s := reviewState[e.state]
+		// The login carries its author hue — the same hash the board's Author column
+		// uses (keyed on the raw login, not the "@" display text) — so a reviewer
+		// reads as the same colour here as in the list. The glyph and label keep the
+		// review-status colour.
+		login := authorStyle(e.login).Render(fmt.Sprintf("%-*s", loginW, "@"+e.login))
+		lines = append(lines, s.style.Render(s.glyph+" ")+login+s.style.Render("  "+s.label))
 	}
 	return strings.Join(lines, "\n")
-}
-
-// reviewersLine summarises requested reviewers for the quick window. Team
-// requests have no login and are skipped.
-func reviewersLine(reqs []gh.ReviewRequest) string {
-	var logins []string
-	for _, r := range reqs {
-		if r.Login != "" {
-			logins = append(logins, r.Login)
-		}
-	}
-	if len(logins) == 0 {
-		return pendStyle.Render(warnGlyph + " no reviewers")
-	}
-	return dimStyle.Render("reviewers: " + strings.Join(logins, ", "))
 }
 
 // flagGlyph is the board's ! column: a conflict (red) or behind-base (yellow)
@@ -527,7 +550,7 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 func (m Model) renderDocked(l Layout) string {
 	tint := accentFor(m.mode)
 	ch := max(1, l.ContentHeight-m.filterBarRows())
-	list := titledBoxTinted(m.vp.View(), l.ListWidth, ch, m.listTitle(), tint)
+	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	panel := m.keysActionsPanel(l.ListWidth)
 	left := lipgloss.JoinVertical(lipgloss.Left, list, panel)
 
@@ -537,6 +560,16 @@ func (m Model) renderDocked(l Layout) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
 }
 
+// listBody is the list pane's interior: the scrolling viewport, with the sticky
+// column-header row pinned above it when the board shows one. The header lives
+// outside the viewport so it never scrolls and never enters the cursor math.
+func (m Model) listBody() string {
+	if m.listColHeader == "" {
+		return m.vp.View()
+	}
+	return m.listColHeader + "\n" + m.vp.View()
+}
+
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	ch := m.contentHeight(l)
@@ -544,7 +577,7 @@ func (m Model) renderMain() string {
 	if m.previewMax {
 		return titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle(), tint)
 	}
-	list := titledBoxTinted(m.vp.View(), l.ListWidth, ch, m.listTitle(), tint)
+	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	if !l.ShowSide {
 		return list
 	}

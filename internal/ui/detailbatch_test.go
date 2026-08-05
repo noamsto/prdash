@@ -65,8 +65,9 @@ func TestDetailWindowSkipsFresh(t *testing.T) {
 
 	ps := m.section.(*PRSection)
 	got := m.detailWindow(ps)
-	want := []int{1, 3}
-	if len(got) != len(want) || got[0] != 1 || got[1] != 3 {
+	// Shown order is number descending: 3, 2, 1. PR 2 is fresh, so it's skipped.
+	want := []int{3, 1}
+	if len(got) != len(want) || got[0] != 3 || got[1] != 1 {
 		t.Errorf("detailWindow = %v, want %v (PR 2 is fresh)", got, want)
 	}
 }

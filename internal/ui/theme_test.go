@@ -85,8 +85,8 @@ func TestChipReadableAsText(t *testing.T) {
 			t.Errorf("#%s should render as an outline chip", hex)
 		}
 	}
-	if chipReadableAsText("313244") { // == RowBg, no contrast
-		t.Error("a label matching the row background must fall back to a filled chip")
+	if chipReadableAsText("313244") { // dark surface, no contrast against the base
+		t.Error("a near-background dark color must fall back to a filled chip")
 	}
 	if chipReadableAsText("zzz") {
 		t.Error("invalid color must not render as an outline chip")

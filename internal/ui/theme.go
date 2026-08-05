@@ -244,7 +244,7 @@ func contrastRatio(a, b float64) float64 {
 }
 
 // chipOutlineMinContrast is the WCAG contrast ratio a label color needs against
-// the row backgrounds to read as plain colored text. 3:1 is the AA floor for UI
+// the pane background to read as plain colored text. 3:1 is the AA floor for UI
 // components and large text. Below it the chip falls back to a filled pill.
 //
 // A ratio, not a luminance gap: a saturated red like #FF2200 has low luminance
@@ -252,29 +252,22 @@ func contrastRatio(a, b float64) float64 {
 // by luminance distance alone wrongly filled it while #FF5500 stayed outlined.
 const chipOutlineMinContrast = 3.0
 
-// chipReadableAsText reports whether a label color contrasts enough with BOTH the
-// pane background and the focused-row background to render as an outline chip
-// (colored brackets + colored text, no fill) on either.
+// chipReadableAsText reports whether a label color contrasts enough with the
+// pane background to render as an outline chip (colored brackets + colored text,
+// no fill). Chips only ever paint in the preview and expanded panes, both on
+// theme.Base — never on a focused row — so the pane background is the only
+// ground to judge against.
 func chipReadableAsText(hex string) bool {
 	lc, ok := relativeLuminance(hex)
 	if !ok {
 		return false
 	}
-	base, ok1 := relativeLuminance(strings.TrimPrefix(theme.Base, "#"))
-	row, ok2 := relativeLuminance(strings.TrimPrefix(theme.RowBg, "#"))
-	if !ok1 || !ok2 {
+	base, ok := relativeLuminance(strings.TrimPrefix(theme.Base, "#"))
+	if !ok {
 		return false
 	}
-	return contrastRatio(lc, base) >= chipOutlineMinContrast &&
-		contrastRatio(lc, row) >= chipOutlineMinContrast
+	return contrastRatio(lc, base) >= chipOutlineMinContrast
 }
-
-// Line-2 property glyphs: a person before the author, a branch before the head
-// ref. Set to whatever your Nerd Font maps if these render as tofu.
-const (
-	authorGlyph = "\uF415" // nerd: nf-oct-person
-	branchGlyph = "\uF418" // nerd: nf-oct-git_branch
-)
 
 // reviewApprovedGlyph marks an approved review. A badge, not a ✓: the CI column
 // sits right beside it and already uses the plain check, so a second one read as
@@ -361,6 +354,14 @@ const closedGlyph = "✗"
 
 func closedMark() string { return dimStyle.Render(closedGlyph) }
 
+// draftGlyph marks a draft PR in gutter cell 1, overriding the CI mark the same
+// way mergedGlyph/closedGlyph do for terminal states.
+const draftGlyph = "◌" // nerd: nf-oct-git_pull_request_draft
+
+// draftMark is the dim draft indicator. Dim, not peach: the row as a whole is
+// receding, and cell 1 is a state column rather than an accent.
+func draftMark() string { return dimStyle.Render(draftGlyph) }
+
 // warnGlyph is the conflict/behind flag. An Octicon, matching prGlyph/issueGlyph
 // and the other row markers — not U+26A0, which many terminals draw as a 2-cell
 // emoji (with or without a VS15 selector) while lipgloss measures 1, shifting the
@@ -378,5 +379,32 @@ const (
 	selBarGlyph   = "▌" // U+258C left half block
 )
 
+// Preview section glyphs. One soft accent carries all of them; the glyph is what
+// distinguishes the sections, not a per-section hue.
+const (
+	blockerGlyph     = "⚠" // nerd: nf-oct-alert
+	checksGlyph      = "✓" // nerd: nf-oct-check_circle
+	reviewGlyph      = "◉" // nerd: nf-oct-code_review
+	threadsGlyph     = "≡" // nerd: nf-oct-comment_discussion
+	latestGlyph      = "◴" // nerd: nf-md-history
+	descriptionGlyph = "▤" // nerd: nf-oct-book
+	baseArrowGlyph   = "←" // base <- head
+	headBranchGlyph  = "⎇" // nerd: nf-oct-git_branch
+)
+
+// Board column-header glyphs — the markers in the sticky label row above the
+// list. If any renders as tofu, swap it for your Nerd Font's variant; the label
+// row tolerates any single-cell glyph.
+var (
+	statusHeadGlyph = "◉"        // nerd: nf-oct-pulse — the gutter status column (CI/review/auto/flag)
+	issueHeadGlyph  = issueGlyph // nerd: nf-oct-issue_opened — the ticket-id column
+	authorHeadGlyph = "@"        // the author column — a handle sigil
+	deltaHeadGlyph  = "Δ"        // the diffstat column
+	ageHeadGlyph    = "◴"        // nerd: nf-md-history — the age column
+)
+
 // rateGlyph marks the API-budget segment in the header.
 const rateGlyph = "◔" // nerd: nf-md-gauge
+
+// filterGlyph marks the omni-filter box.
+const filterGlyph = "⌕" // nerd: nf-oct-search

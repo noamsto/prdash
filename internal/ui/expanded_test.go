@@ -338,8 +338,8 @@ func TestRenderOverviewShowsBlockerAndLatest(t *testing.T) {
 	m.detail[1] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	m.renderList()
 	out := ansi.Strip(m.renderOverview(60))
-	if !strings.Contains(out, "LATEST") {
-		t.Fatalf("overview missing LATEST section:\n%s", out)
+	if !strings.Contains(out, latestGlyph+" Latest") {
+		t.Fatalf("overview missing Latest section:\n%s", out)
 	}
 }
 

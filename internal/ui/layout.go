@@ -20,28 +20,33 @@ const (
 	footerMinWidth  = 70
 )
 
-// twoLineMinRows is the list content height at or above which rows render
-// two lines (title, then labels + branch). Below it, rows stay single-line
-// and drop labels — there isn't the vertical room to spend on a second line.
-const twoLineMinRows = 20
-
 // showFooter is the one threshold every view (board, expanded, log) calls to
 // decide whether to render its always-on keybinding footer.
 func showFooter(w, h int) bool {
 	return w >= footerMinWidth && h >= footerMinHeight
 }
 
+// rowColumns is which optional board-row columns survive at a given list width.
+// The title and the glyph gutter are absent here on purpose: they never shed.
+type rowColumns struct {
+	ShowDiffstat    bool
+	CompactDiffstat bool // "±430" instead of "+412 -18"
+	ShowTicket      bool
+	InitialsAuthor  bool // 2-char initials instead of the full login
+}
+
 // Layout is the computed geometry for one frame.
 type Layout struct {
+	rowColumns
 	ShowSide      bool
 	ShowFooter    bool // false hides the footer entirely, reclaiming its row(s) for content
 	ShowPanel     bool // dock the keys/actions panel instead of the status bar (only when ShowFooter)
 	ListWidth     int
+	ListInner     int // ListWidth minus the pane border: the width a row actually gets
 	SideWidth     int
 	Gap           int // columns between list and side pane
 	PanelRows     int // outer height of the docked panel (0 when not shown)
 	ContentHeight int // rows available for the list/side bodies
-	TwoLine       bool
 }
 
 // computeLayout derives pane geometry from the terminal size. The panel is
@@ -55,11 +60,18 @@ func computeLayout(w, h int) Layout {
 	showSide := w >= sideThreshold
 	footer := showFooter(w, h)
 
-	panelCol := w // narrow: panel spans the whole width
+	// The list pane's interior — its column minus the border, which is the whole
+	// terminal until the preview pane appears. Both the panel (which docks under
+	// it) and the row's column ladder measure against it, never against the
+	// terminal and never against the bordered column: a rung named for 70 cells
+	// that fires on a 68-cell row is a rung with the wrong name.
+	listCol := w
 	if showSide {
-		panelCol = list // wide: panel sits under the list only
+		listCol = list
 	}
-	pr := panelRowsFor(panelCol - 2)
+	listInner := listCol - 2
+	pr := panelRowsFor(listInner)
+	cols := columnLadder(listInner)
 	showPanel := footer && h-2-pr >= minMainRows
 
 	var ch int
@@ -76,11 +88,42 @@ func computeLayout(w, h int) Layout {
 	if ch < 1 {
 		ch = 1
 	}
-	twoLine := ch >= twoLineMinRows
 	if !showSide {
-		return Layout{ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ContentHeight: ch, TwoLine: twoLine}
+		return Layout{rowColumns: cols, ShowSide: false, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: w, ListInner: listInner, ContentHeight: ch}
 	}
-	return Layout{ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, SideWidth: side, Gap: gap, ContentHeight: ch, TwoLine: twoLine}
+	return Layout{rowColumns: cols, ShowSide: true, ShowFooter: footer, ShowPanel: showPanel, PanelRows: pr, ListWidth: list, ListInner: listInner, SideWidth: side, Gap: gap, ContentHeight: ch}
+}
+
+// Column breakpoints, in LIST INTERIOR cells — the width a row is handed, not
+// terminal cells and not the bordered column. Once the preview pane drops, the
+// list gets the whole terminal, so the lower steps fire less often than the
+// numbers suggest.
+const (
+	ladderCompactDiff = 92 // below: diffstat collapses to ±N
+	ladderInitials    = 80 // below: author collapses to initials
+	ladderDropTicket  = 70 // below: ticket column goes
+	ladderDropDiff    = 62 // below: diffstat goes
+)
+
+// columnLadder decides which optional columns survive at a given row width.
+// Order is least-load-bearing first. It only ever asks for less than the row
+// could fit: renderItemRow still carves every column out of one slack budget and
+// drops what doesn't fit, so the ladder can never cause an overflow.
+func columnLadder(listCells int) rowColumns {
+	c := rowColumns{ShowDiffstat: true, ShowTicket: true}
+	if listCells < ladderCompactDiff {
+		c.CompactDiffstat = true
+	}
+	if listCells < ladderInitials {
+		c.InitialsAuthor = true
+	}
+	if listCells < ladderDropTicket {
+		c.ShowTicket = false
+	}
+	if listCells < ladderDropDiff {
+		c.ShowDiffstat = false
+	}
+	return c
 }
 
 const (

@@ -225,11 +225,12 @@ func TestBatchCopyJoinsSelectedRows(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
 	m.setPRs([]gh.PR{{Number: 1, URL: "u1"}, {Number: 2, URL: "u2"}, {Number: 3, URL: "u3"}})
+	// Shown order is number descending: #3, #2, #1. Rows 0 and 2 are #3 and #1.
 	m.sel.toggle(0)
 	m.sel.toggle(2)
 
-	if got := m.copyPayload("copy-url"); got != "u1\nu3" {
-		t.Fatalf("batch copy = %q, want %q", got, "u1\nu3")
+	if got := m.copyPayload("copy-url"); got != "u3\nu1" {
+		t.Fatalf("batch copy = %q, want %q", got, "u3\nu1")
 	}
 }
 

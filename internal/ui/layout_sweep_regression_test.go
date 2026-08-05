@@ -35,6 +35,15 @@ func sweepPRs() []gh.PR {
 	}
 }
 
+// maxLoginPR carries a login at GitHub's 39-character maximum — the worst case
+// for the author segment, which sits on the row's right edge and so eats into the
+// title's budget. sweepPRs is left untouched (other tests pin details by number).
+func maxLoginPR() gh.PR {
+	p := gh.PR{Number: 99, Title: "widest possible author login", ReviewDecision: "APPROVED"}
+	p.Author.Login = strings.Repeat("l", 39)
+	return p
+}
+
 // TestDenseRowFillsWidthAcrossWidthSweep locks the core board invariant: every
 // dense row is one line and fills exactly the target width, across a sweep of
 // widths (not the single 80-col point the existing single-line test checks). An
@@ -44,7 +53,7 @@ func sweepPRs() []gh.PR {
 // (a degenerate terminal), so exact-fill is not promised there — see
 // TestDenseRowDegradesWithoutCrashAtNarrowWidths for that regime.
 func TestDenseRowFillsWidthAcrossWidthSweep(t *testing.T) {
-	prs := sweepPRs()
+	prs := append(sweepPRs(), maxLoginPR())
 	ps := NewPRSection("is:open")
 	ps.SetPRs(prs)
 	if got := ps.Len(); got != len(prs) {
@@ -66,6 +75,33 @@ func TestDenseRowFillsWidthAcrossWidthSweep(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestDenseRowTreeSlotIsHardThreeCells pins the tree slot's whole purpose: it
+// freezes the column grid ahead of the stacked-PR feature, so an over-wide value
+// must be clipped rather than shift the number column. Covers a multi-cell ASCII
+// prefix, a double-width (CJK) one, and a styled zero-width value.
+func TestDenseRowTreeSlotIsHardThreeCells(t *testing.T) {
+	ps := NewPRSection("is:open")
+	ps.SetPRs([]gh.PR{{Number: 7, Title: "tree slot row"}})
+	nw := columnWidths(ps)
+
+	numColumn := func(t *testing.T, tree string) int {
+		t.Helper()
+		plain := ansi.Strip(ps.RenderRow(0, RowOpts{Width: 80, NumWidth: nw, Tree: tree}))
+		idx := strings.Index(plain, "#")
+		if idx < 0 {
+			t.Fatalf("tree=%q: no number cell in row %q", tree, plain)
+		}
+		return lipgloss.Width(plain[:idx])
+	}
+
+	want := numColumn(t, "")
+	for _, tree := range []string{" ", "│ ", "├─ ", "├── ", "重试", "└──── ", dimStyle.Render("")} {
+		if got := numColumn(t, tree); got != want {
+			t.Errorf("tree=%q: number column starts at %d, want %d (tree slot must be exactly 3 cells)", tree, got, want)
 		}
 	}
 }
@@ -99,10 +135,9 @@ func TestDenseRowDegradesWithoutCrashAtNarrowWidths(t *testing.T) {
 }
 
 // TestDenseRowFillsWidthWithLabels is TestDenseRowFillsWidthAcrossWidthSweep's
-// labeled-row counterpart: on a single-line row, labels are dropped and the
-// title alone must still fill exactly the target width, focused and
-// unfocused. sweepPRs is left untouched (other tests rely on it carrying no
-// labels).
+// labeled-row counterpart: labels never reach the row, so the title alone must
+// still fill exactly the target width, focused and unfocused. sweepPRs is left
+// untouched (other tests rely on it carrying no labels).
 func TestDenseRowFillsWidthWithLabels(t *testing.T) {
 	ps := NewPRSection("is:open")
 	ps.SetPRs([]gh.PR{labeledPR()})
@@ -115,48 +150,6 @@ func TestDenseRowFillsWidthWithLabels(t *testing.T) {
 			}
 			if got := lipgloss.Width(row); got != w {
 				t.Errorf("w=%d focused=%v labeled row width %d, want %d", w, focused, got, w)
-			}
-		}
-	}
-}
-
-// TestRenderRowTwoLineFillsWidthAcrossSweep is TestDenseRowFillsWidthWithLabels's
-// two-line counterpart: line 1 (title) and line 2 (chips/branch, when present)
-// must each fill exactly the target width across the same width sweep. Three
-// fixtures exercise the asymmetric cases — labels+branch, labels only, and
-// branch only (no labels) — since each takes a different path through the
-// line-2 layout. Line count is not asserted; only that every line present is
-// exactly w wide.
-func TestRenderRowTwoLineFillsWidthAcrossSweep(t *testing.T) {
-	fixtures := map[string]gh.PR{
-		"labels+branch": func() gh.PR {
-			p := labeledPR()
-			p.HeadRefName = "feat/some-branch"
-			return p
-		}(),
-		"labels only": func() gh.PR {
-			p := labeledPR()
-			p.HeadRefName = ""
-			return p
-		}(),
-		"branch only": func() gh.PR {
-			p := labeledPR()
-			p.Labels = nil
-			p.HeadRefName = "feat/some-branch"
-			return p
-		}(),
-	}
-
-	for name, pr := range fixtures {
-		s := NewPRSection("is:open")
-		s.SetPRs([]gh.PR{pr})
-		nw := columnWidths(s)
-		for _, w := range []int{40, 52, 64, 80, 100, 120, 160, 200} {
-			row := s.RenderRow(0, RowOpts{Width: w, NumWidth: nw, TwoLine: true})
-			for _, ln := range strings.Split(row, "\n") {
-				if got := lipgloss.Width(ln); got != w {
-					t.Errorf("fixture %q w=%d: line width %d, want %d: %q", name, w, got, w, ln)
-				}
 			}
 		}
 	}

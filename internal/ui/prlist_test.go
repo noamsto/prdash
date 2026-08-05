@@ -25,8 +25,8 @@ func TestSetPRsBuildsRows(t *testing.T) {
 	if got := m.section.Len(); got != 2 {
 		t.Fatalf("shown len = %d, want 2", got)
 	}
-	if !strings.Contains(m.section.RenderRow(0, RowOpts{Width: 80}), "#7") {
-		t.Fatalf("first row should render #7")
+	if !strings.Contains(m.section.RenderRow(0, RowOpts{Width: 80}), "#9") {
+		t.Fatalf("first row should render #9 (number descending)")
 	}
 }
 
@@ -415,9 +415,13 @@ func TestListViewportSizedForBorder(t *testing.T) {
 		t.Fatalf("viewport width = %d, want ListWidth-2 = %d", got, l.ListWidth-2)
 	}
 	// contentHeight(l), not the raw l.ContentHeight, since the always-visible
-	// filter bar now reserves a row out of the layout's content budget.
-	if want := m.contentHeight(l) - 2; m.vp.Height() != want {
-		t.Fatalf("viewport height = %d, want contentHeight(l)-2 = %d", m.vp.Height(), want)
+	// filter bar reserves a row out of the layout's content budget; minus one
+	// more for the sticky column-header row, which sits above the viewport.
+	if want := m.contentHeight(l) - 2 - 1; m.vp.Height() != want {
+		t.Fatalf("viewport height = %d, want contentHeight(l)-3 = %d", m.vp.Height(), want)
+	}
+	if m.listColHeader == "" {
+		t.Fatal("a non-empty board should render a column header")
 	}
 }
 
@@ -515,6 +519,55 @@ func TestStatusBarHasTopRule(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
 	if !strings.Contains(m.statusBar(), "─") {
 		t.Fatalf("status bar should have a top rule separating it: %q", m.statusBar())
+	}
+}
+
+func TestStatusBarShowsFocusedBranchWhenPreviewIsHidden(t *testing.T) {
+	// A distinct HeadRefName (not the fixture default of "") is required here:
+	// an empty branch makes strings.Contains trivially true regardless of what
+	// statusBar actually renders.
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "feature-branch"}})
+	// Below sideThreshold (120) so there's no preview pane, but wide enough that
+	// the base hint bar (~85 cells) still leaves the >8-cell room the segment requires.
+	m.width, m.height = 110, 30
+	if computeLayout(m.width, m.height).ShowSide {
+		t.Fatal("fixture width still shows the side pane")
+	}
+	v, ok := m.cursorVars()
+	if !ok {
+		t.Fatal("no cursor row")
+	}
+	if !strings.Contains(stripANSIForTest(m.statusBar()), v.HeadRefName) {
+		t.Errorf("status bar should carry the focused branch %q", v.HeadRefName)
+	}
+}
+
+func TestStatusBarOmitsBranchWhenPreviewIsShown(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "feature-branch"}})
+	m.width, m.height = 160, 40 // above sideThreshold: the preview pane already shows the branch
+	if !computeLayout(m.width, m.height).ShowSide {
+		t.Fatal("fixture width should show the side pane")
+	}
+	v, ok := m.cursorVars()
+	if !ok {
+		t.Fatal("no cursor row")
+	}
+	if strings.Contains(stripANSIForTest(m.statusBar()), v.HeadRefName) {
+		t.Errorf("status bar should not duplicate the branch when the preview pane already shows it")
+	}
+}
+
+func TestTruncateLeftKeepsTheTail(t *testing.T) {
+	got := truncateLeft("eng-7726-same-value-different-evidence", 20)
+	if lipgloss.Width(got) > 20 {
+		t.Fatalf("truncateLeft over budget: %q is %d cells", got, lipgloss.Width(got))
+	}
+	if !strings.HasSuffix(got, "evidence") {
+		t.Errorf("truncateLeft must keep the distinctive tail, got %q", got)
 	}
 }
 
@@ -1533,8 +1586,8 @@ func TestFilterBarShowsCommittedQuery(t *testing.T) {
 	if got := lipgloss.Width(bar); got > m.width {
 		t.Fatalf("filter bar = %d cells, overflows width %d", got, m.width)
 	}
-	if got := m.filterBarRows(); got != 1 {
-		t.Fatalf("committed filter bar = %d rows, want 1", got)
+	if got := m.filterBarRows(); got != 3 {
+		t.Fatalf("committed filter bar = %d rows, want 3", got)
 	}
 
 	// esc clears it, and the bar falls back to the prompt hint.
@@ -1542,6 +1595,80 @@ func TestFilterBarShowsCommittedQuery(t *testing.T) {
 	m = u.(Model)
 	if bar := ansi.Strip(m.filterBar()); strings.Contains(bar, "flaky") {
 		t.Fatalf("after esc the bar still shows the query: %q", bar)
+	}
+}
+
+// TestFilterBarIsAlwaysThreeRows guards the boxed bar's whole purpose: the
+// primary surface must not change height as it gains and loses focus, in any
+// combination of filtering/query state.
+func TestFilterBarIsAlwaysThreeRows(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	longQuery := "is:pr repo:factify-inc/mono is:open author:@me label:complexity:6 -label:blocked"
+	hugeQuery := strings.Repeat("x", 200)
+	for _, st := range []struct {
+		name      string
+		filtering bool
+		query     string
+	}{
+		{"blurred empty", false, ""},
+		{"blurred with query", false, "@asaf"},
+		{"focused", true, ""},
+		{"focused with query", true, "is:approved"},
+		{"blurred with long query", false, longQuery},
+		{"focused with long query", true, longQuery},
+		{"blurred with huge query", false, hugeQuery},
+		{"focused with huge query", true, hugeQuery},
+	} {
+		m.filtering = st.filtering
+		m.filterInput.SetValue(st.query)
+		if got := lipgloss.Height(m.filterBar()); got != 3 {
+			t.Errorf("%s: filterBar height = %d, want 3", st.name, got)
+		}
+		if got := m.filterBarRows(); got != 3 {
+			t.Errorf("%s: filterBarRows = %d, want 3", st.name, got)
+		}
+		if bar, rows := lipgloss.Height(m.filterBar()), m.filterBarRows(); bar != rows {
+			t.Errorf("%s: filterBar height = %d, filterBarRows = %d, must agree", st.name, bar, rows)
+		}
+	}
+}
+
+// TestFilterInputKeepsCursorVisible guards that once the box clamps the
+// textinput's own width (so it can't wrap the box open), typing past the
+// visible window still scrolls to keep the cursor in view instead of hiding
+// behind the truncated end of the value.
+func TestFilterInputKeepsCursorVisible(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	u, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = u.(Model)
+	m.filtering = true
+	m.filterInput.Focus()
+
+	long := strings.Repeat("a", 40) + "END"
+	for _, r := range long {
+		u, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = u.(Model)
+	}
+
+	if got := lipgloss.Height(m.filterBar()); got != 3 {
+		t.Fatalf("filterBar height = %d, want 3", got)
+	}
+	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "END") {
+		t.Fatalf("filter bar hides the cursor end of a long value: %q", bar)
+	}
+}
+
+// TestFilterBarShowsMatchCountWhenFiltered guards the live n->m count: it is
+// the signal that the board is narrowed, since the boxed bar no longer grows
+// a second row to say so.
+func TestFilterBarShowsMatchCountWhenFiltered(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width = 80
+	m.filtering = true
+	m.filterInput.SetValue("asaf")
+	m.applyFilter()
+	if !strings.Contains(stripANSIForTest(m.filterBar()), "→") {
+		t.Error("filtered bar should show an n→m match count")
 	}
 }
 
@@ -1562,10 +1689,9 @@ func TestStatusBarOmitsRetiredFilterKey(t *testing.T) {
 	}
 }
 
-// TestContentHeightFilteringNoPanel guards that focusing the always-visible
-// filter bar costs exactly one extra row — the omni syntax hint — with the
-// footer unaffected, so this is not a wash against a reclaimed footer the way
-// it was when filtering used to hide it.
+// TestContentHeightFilteringNoPanel guards that focusing the boxed filter bar
+// costs nothing: the box is a constant three rows in every state, so
+// contentHeight must not move when filtering toggles.
 func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m := newTestModelWithRows(t)
 	m.width = 80
@@ -1574,16 +1700,16 @@ func TestContentHeightFilteringNoPanel(t *testing.T) {
 	m.filtering = true
 	m.filterInput.Focus()
 	m.filterInput.SetValue("")
-	if got := m.filterBarRows(); got != 2 {
-		t.Fatalf("filterBarRows while focused = %d, want 2 (input + hint)", got)
+	if got := m.filterBarRows(); got != 3 {
+		t.Fatalf("filterBarRows while focused = %d, want 3", got)
 	}
 
 	l := Layout{ShowFooter: true, ShowPanel: false, ContentHeight: 40}
 	filtered := m.contentHeight(l)
 	m.filtering = false
 	base := m.contentHeight(l)
-	if want := base - 1; filtered != want {
-		t.Fatalf("contentHeight while filtering = %d, want %d (baseline - 1 hint row)", filtered, want)
+	if filtered != base {
+		t.Fatalf("contentHeight while filtering = %d, want %d (unchanged: bar height is constant)", filtered, base)
 	}
 }
 
@@ -1787,26 +1913,19 @@ func TestMainViewTabsAreProOnly(t *testing.T) {
 	}
 }
 
-func TestRenderListTwoLineRowHeight(t *testing.T) {
-	p := labeledPR()
-	p.HeadRefName = "feat/x"
-	m := NewModel("/repo", "is:open", nil)
-	m.width, m.height = 100, 44 // tall → two-line mode
-	m.setPRs([]gh.PR{p})
-	m.renderList()
-	if m.cursorRows != 2 {
-		t.Fatalf("labeled PR in two-line mode should be 2 rows tall, got %d", m.cursorRows)
-	}
-}
-
+// A labeled PR with a branch is the row that used to grow a second line; it must
+// stay one row tall at every viewport height.
 func TestRenderListSingleLineRowHeight(t *testing.T) {
-	p := labeledPR()
-	m := NewModel("/repo", "is:open", nil)
-	m.width, m.height = 100, 12 // short → single-line mode
-	m.setPRs([]gh.PR{p})
-	m.renderList()
-	if m.cursorRows != 1 {
-		t.Fatalf("row in single-line mode should be 1 row tall, got %d", m.cursorRows)
+	for _, h := range []int{12, 44} {
+		p := labeledPR()
+		p.HeadRefName = "feat/x"
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, h
+		m.setPRs([]gh.PR{p})
+		m.renderList()
+		if m.cursorRows != 1 {
+			t.Fatalf("h=%d: row should be 1 row tall, got %d", h, m.cursorRows)
+		}
 	}
 }
 
@@ -1865,7 +1984,7 @@ func TestFilterBarAlwaysVisible(t *testing.T) {
 	// The status bar already has a "/:find" hint, so the check above alone is
 	// vacuous — assert on the actual filter-bar placeholder text as the real
 	// regression guard for "blurred but always rendered".
-	if !strings.Contains(ansi.Strip(m.render()), "filter (@user") {
+	if !strings.Contains(ansi.Strip(m.render()), "@user · is: · text") {
 		t.Fatalf("blurred board should show the filter-bar placeholder hint: %q", m.render())
 	}
 	// Focusing keeps it visible and accepts input.
@@ -2042,7 +2161,7 @@ func TestAdvanceSelectionCycle(t *testing.T) {
 		"me",
 	)
 	// Review requested = #1,#2; Mine = #3; Others = #4
-	m.cursor = 0 // in Review requested
+	m.cursor = 0         // in Review requested
 	m.advanceSelection() // Group
 	if m.sel.count() != 2 || !m.sel.has(0) || !m.sel.has(1) {
 		t.Fatalf("after Group: sel=%v, want indexes 0,1", m.sel.indices())
@@ -2083,6 +2202,49 @@ func TestAdvanceSelectionFlatAllThenNone(t *testing.T) {
 	m.advanceSelection()
 	if m.sel.count() != 0 {
 		t.Fatalf("flat second V should clear, got %d", m.sel.count())
+	}
+}
+
+// TestVSelectsClusterThenCategoryThenAllThenNone guards the #88 cycle order:
+// cluster (author) → category → all → none. Review requested mixes alice's
+// two-PR cluster with bob's single PR so the cluster span is a strict subset
+// of the category span — a fixture where they coincide can't catch a
+// regression to the old group → all → none cycle.
+func TestVSelectsClusterThenCategoryThenAllThenNone(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	m.setSections(
+		[]gh.PR{{Number: 10, Author: author("alice")}, {Number: 11, Author: author("alice")}, {Number: 12, Author: author("bob")}},
+		nil,
+		[]gh.PR{{Number: 20, Author: author("me")}, {Number: 21, Author: author("x")}},
+		"me",
+	)
+	ps := m.section.(*PRSection)
+	for i := 0; i < ps.Len(); i++ {
+		if ps.prAt(i).Author.Login == "alice" {
+			m.cursor = i
+			break
+		}
+	}
+
+	m.advanceSelection()
+	if got := m.sel.count(); got != 2 {
+		t.Fatalf("first V selected %d rows, want the 2-row alice cluster", got)
+	}
+
+	lo, hi := m.groupRange()
+	m.advanceSelection()
+	if got := m.sel.count(); got != hi-lo+1 {
+		t.Fatalf("second V selected %d rows, want the %d-row category", got, hi-lo+1)
+	}
+
+	m.advanceSelection()
+	if got := m.sel.count(); got != ps.Len() {
+		t.Fatalf("third V selected %d rows, want all %d", got, ps.Len())
+	}
+
+	m.advanceSelection()
+	if got := m.sel.count(); got != 0 {
+		t.Fatalf("fourth V left %d rows selected, want none", got)
 	}
 }
 

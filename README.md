@@ -49,7 +49,7 @@ go build -o prdash . && ./prdash
 | `F` | filter by author (PR only) |
 | `R` | assign reviewers (PR only) |
 | `D` | toggle drafts (PR only) |
-| `/` | fuzzy find · `space` select · `V` select group → all → none |
+| `/` | fuzzy find · `space` select · `V` select cluster → category → all → none |
 | `a` | actions menu · `?` legend · `q` (or `ctrl+c`) quit |
 
 Actions on the focused PR (or the whole selection):
