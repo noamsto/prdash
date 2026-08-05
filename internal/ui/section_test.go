@@ -986,9 +986,10 @@ func TestTicketColumnSitsAfterTitleAndBlanksDontShiftAge(t *testing.T) {
 		{Number: 3087, Title: "has a ticket", State: "OPEN", HeadRefName: "eng-7726-x"},
 		{Number: 3065, Title: "has none", State: "OPEN", HeadRefName: "agents/spicedb-rel-migrate-88ee"},
 	})
-	// Both PRs tie on actionability rank, so groupByAuthor breaks the tie
-	// alphabetically: the login assigned to prs[0] must sort first, or its
-	// group — and RenderRow(0) — lands on prs[1] instead.
+	// Distinct logins put each PR in its own cluster, and clusters sort by their
+	// highest PR number: prs[0] is #3087 > prs[1]'s #3065, so RenderRow(0) is the
+	// row with the ticket id. groupByAuthor's login tiebreak can't reach this —
+	// PR numbers are unique, so the numbers never tie.
 	s.prs[0].Author.Login = "asaf-s-factify"
 	s.prs[1].Author.Login = "noamsto"
 	s.SetShown([]int{0, 1})
@@ -1025,7 +1026,8 @@ func TestTicketColumnWidthIsStableAcrossRows(t *testing.T) {
 		{Number: 3087, Title: "short id", State: "OPEN", HeadRefName: "fix/213-x"},
 		{Number: 3065, Title: "long id", State: "OPEN", HeadRefName: "eng-7726-y"},
 	})
-	// Same tie-break as above: prs[0]'s login must sort first alphabetically.
+	// Same cluster ordering as above: prs[0] carries the higher PR number, so its
+	// cluster leads and RenderRow(0) is the short-id row.
 	s.prs[0].Author.Login = "asaf-s-factify"
 	s.prs[1].Author.Login = "noamsto"
 	s.SetShown([]int{0, 1})
