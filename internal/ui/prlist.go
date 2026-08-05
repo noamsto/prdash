@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -1741,7 +1742,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.backgroundRefresh()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.repaintActive() // reflow whichever view owns the viewport to the new size
+		m.filterInput.SetWidth(m.filterInputWidth()) // keep the box's own View() from wrapping open
+		m.repaintActive()                            // reflow whichever view owns the viewport to the new size
 		return m, nil
 	case tea.KeyMsg:
 		if m.logView {
@@ -2090,6 +2092,20 @@ func (m Model) render() string {
 	return board
 }
 
+// filterInputWidth is the textinput's own width budget: the box interior
+// minus the leading search glyph, its separator, the input's prompt, and
+// (conservatively, since it's shown for any non-empty query) the match-count
+// segment. Without this, bubbles renders the whole value unbounded and
+// filterBar's lipgloss.Width word-wraps it open past three rows.
+func (m Model) filterInputWidth() int {
+	inner := max(1, m.width-4)
+	reserved := lipgloss.Width(filterGlyph) + 1 + lipgloss.Width(m.filterInput.Prompt)
+	if total := len(m.section.Haystacks()); total > 0 {
+		reserved += lipgloss.Width(fmt.Sprintf("%d→%d", total, total)) // total→total upper-bounds the real total→shown width
+	}
+	return max(1, inner-reserved)
+}
+
 // filterBar renders the omni-filter as a bordered box. It is three rows in every
 // state — the primary surface should not change height as it gains and loses
 // focus, and filterBarRows measures off this render so contentHeight follows.
@@ -2108,6 +2124,13 @@ func (m Model) filterBar() string {
 	}
 	body = accentStyle.Render(filterGlyph) + " " + body
 
+	// body is already styled, so clamping it must use ansi.Truncate, not
+	// truncate — that walks runes and would slice an ANSI escape. This is the
+	// hard guarantee behind the three-row invariant: filterInputWidth bounds
+	// the common case, but this clamp holds even when it's stale or unset
+	// (e.g. a model built without ever seeing a WindowSizeMsg).
+	body = ansi.Truncate(body, inner, "")
+
 	// The match count is the lowest-priority element and drops first. Len() is
 	// post-filter (SetShown narrows it) and Haystacks() covers the whole set, so
 	// the pair is total→shown without storing anything on the model.
@@ -2118,9 +2141,8 @@ func (m Model) filterBar() string {
 			body += strings.Repeat(" ", pad) + count
 		}
 	}
-	// body is already styled, so it must NOT go through truncate — that walks
-	// runes and would slice an ANSI escape. lipgloss's Width + MaxWidth clamp
-	// styled content safely.
+	// lipgloss's Width + MaxWidth clamp the final line safely; body is already
+	// bounded to inner above so this can't trigger a word-wrap.
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(theme.Rule)).

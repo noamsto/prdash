@@ -1550,6 +1550,8 @@ func TestFilterBarShowsCommittedQuery(t *testing.T) {
 // combination of filtering/query state.
 func TestFilterBarIsAlwaysThreeRows(t *testing.T) {
 	m := newTestModelWideWithPR(t)
+	longQuery := "is:pr repo:factify-inc/mono is:open author:@me label:complexity:6 -label:blocked"
+	hugeQuery := strings.Repeat("x", 200)
 	for _, st := range []struct {
 		name      string
 		filtering bool
@@ -1559,6 +1561,10 @@ func TestFilterBarIsAlwaysThreeRows(t *testing.T) {
 		{"blurred with query", false, "@asaf"},
 		{"focused", true, ""},
 		{"focused with query", true, "is:approved"},
+		{"blurred with long query", false, longQuery},
+		{"focused with long query", true, longQuery},
+		{"blurred with huge query", false, hugeQuery},
+		{"focused with huge query", true, hugeQuery},
 	} {
 		m.filtering = st.filtering
 		m.filterInput.SetValue(st.query)
@@ -1568,6 +1574,34 @@ func TestFilterBarIsAlwaysThreeRows(t *testing.T) {
 		if got := m.filterBarRows(); got != 3 {
 			t.Errorf("%s: filterBarRows = %d, want 3", st.name, got)
 		}
+		if bar, rows := lipgloss.Height(m.filterBar()), m.filterBarRows(); bar != rows {
+			t.Errorf("%s: filterBar height = %d, filterBarRows = %d, must agree", st.name, bar, rows)
+		}
+	}
+}
+
+// TestFilterInputKeepsCursorVisible guards that once the box clamps the
+// textinput's own width (so it can't wrap the box open), typing past the
+// visible window still scrolls to keep the cursor in view instead of hiding
+// behind the truncated end of the value.
+func TestFilterInputKeepsCursorVisible(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	u, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = u.(Model)
+	m.filtering = true
+	m.filterInput.Focus()
+
+	long := strings.Repeat("a", 40) + "END"
+	for _, r := range long {
+		u, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = u.(Model)
+	}
+
+	if got := lipgloss.Height(m.filterBar()); got != 3 {
+		t.Fatalf("filterBar height = %d, want 3", got)
+	}
+	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "END") {
+		t.Fatalf("filter bar hides the cursor end of a long value: %q", bar)
 	}
 }
 
