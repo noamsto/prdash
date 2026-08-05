@@ -546,7 +546,7 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 func (m Model) renderDocked(l Layout) string {
 	tint := accentFor(m.mode)
 	ch := max(1, l.ContentHeight-m.filterBarRows())
-	list := titledBoxTinted(m.vp.View(), l.ListWidth, ch, m.listTitle(), tint)
+	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	panel := m.keysActionsPanel(l.ListWidth)
 	left := lipgloss.JoinVertical(lipgloss.Left, list, panel)
 
@@ -556,6 +556,16 @@ func (m Model) renderDocked(l Layout) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
 }
 
+// listBody is the list pane's interior: the scrolling viewport, with the sticky
+// column-header row pinned above it when the board shows one. The header lives
+// outside the viewport so it never scrolls and never enters the cursor math.
+func (m Model) listBody() string {
+	if m.listColHeader == "" {
+		return m.vp.View()
+	}
+	return m.listColHeader + "\n" + m.vp.View()
+}
+
 func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	ch := m.contentHeight(l)
@@ -563,7 +573,7 @@ func (m Model) renderMain() string {
 	if m.previewMax {
 		return titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle(), tint)
 	}
-	list := titledBoxTinted(m.vp.View(), l.ListWidth, ch, m.listTitle(), tint)
+	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	if !l.ShowSide {
 		return list
 	}

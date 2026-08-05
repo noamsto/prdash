@@ -823,6 +823,50 @@ func cellOffset(t *testing.T, row, sub string) int {
 	return lipgloss.Width(plain[:i])
 }
 
+// TestFixedAuthorColumnAlignsColumns pins the fixed-column mode: with a positive
+// AuthorWidth the author slot is padded to a shared width, so the diffstat (and
+// every column after it) lands at the same cell on rows whose authors differ in
+// length — the alignment the sticky header depends on. In auto mode (no
+// AuthorWidth) the diffstat would drift with the author's natural width.
+func TestFixedAuthorColumnAlignsColumns(t *testing.T) {
+	s := NewPRSection("is:open")
+	s.SetPRs([]gh.PR{
+		{Number: 11, Title: "same title", Additions: 5, Deletions: 2},
+		{Number: 10, Title: "same title", Additions: 5, Deletions: 2},
+	})
+	for i := range s.prs {
+		switch s.prs[i].Number {
+		case 11:
+			s.prs[i].Author.Login = "al"
+		case 10:
+			s.prs[i].Author.Login = "alexander-the-great"
+		}
+	}
+	aw, dw := authorColWidth(s, false), diffstatWidth(s, false)
+	opt := RowOpts{Width: 120, NumWidth: 5, DiffWidth: dw, AuthorWidth: aw}
+	a, b := s.RenderRow(0, opt), s.RenderRow(1, opt)
+	if x, y := cellOffset(t, a, "+5"), cellOffset(t, b, "+5"); x != y {
+		t.Errorf("diffstat misaligned under a fixed author column: row0 col %d, row1 col %d", x, y)
+	}
+}
+
+func TestColumnHeaderWidthAndLabels(t *testing.T) {
+	h := columnHeader(120, 5, 9, 8, 14)
+	if w := lipgloss.Width(h); w != 120 {
+		t.Errorf("header width %d, want the full 120 cells", w)
+	}
+	plain := stripANSIForTest(h)
+	for _, want := range []string{"Title", "Issue", "Author", "Δ", "Age"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("header missing %q label: %q", want, plain)
+		}
+	}
+	// No ticket column reserved (tktW=0) → no "Issue" label.
+	if plain := stripANSIForTest(columnHeader(120, 5, 9, 0, 14)); strings.Contains(plain, "Issue") {
+		t.Errorf("header should drop the Issue label when the ticket column is absent: %q", plain)
+	}
+}
+
 func TestDiffstatCompactFormatting(t *testing.T) {
 	for _, tc := range []struct {
 		add, del int

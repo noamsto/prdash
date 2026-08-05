@@ -56,6 +56,7 @@ type Model struct {
 	rowText           []string             // renderList per-row cache: rendered string per shown index
 	rowSig            []rowKey             // the inputs each rowText was rendered under; a miss re-renders that row
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
+	listColHeader     string               // sticky column-label row above the board; "" hides it (empty/non-PR views)
 	vp                viewport.Model
 	cursor            int // indexes the section's shown set
 	cursorLine        int // display-line offset of the cursor row (headers shift it)
@@ -578,12 +579,12 @@ func (m *Model) moveCursor(delta int) {
 // re-styling the row — so a cursor move re-renders only the two rows whose focus
 // flipped, not all of them. gen invalidates the whole cache on a content change.
 type rowKey struct {
-	gen, w, numW, diffW, tktW int
-	focused, selected         bool
-	flag                      string
-	landed                    bool
-	commented                 bool
-	compactDiff, initials     bool
+	gen, w, numW, diffW, tktW, authorW int
+	focused, selected                  bool
+	flag                               string
+	landed                             bool
+	commented                          bool
+	compactDiff, initials              bool
 }
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
@@ -606,6 +607,7 @@ func (m *Model) renderList() {
 	if l.ShowTicket {
 		tktW = ticketWidth(m.section)
 	}
+	authorW := authorColWidth(m.section, l.InitialsAuthor)
 	ps, isPR := m.section.(*PRSection)
 	grouped := isPR && ps.grouped
 	n := m.section.Len()
@@ -636,10 +638,10 @@ func (m *Model) renderList() {
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, authorW: authorW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
+				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
 				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,
 			})
 			m.rowSig[i] = key
@@ -677,6 +679,14 @@ func (m *Model) renderList() {
 			hint = fmt.Sprintf("No %s %s.", m.state, noun)
 		}
 		content = dimStyle.Render(hint)
+	}
+	m.listColHeader = ""
+	if isPR && n > 0 {
+		m.listColHeader = columnHeader(innerW, numW, diffW, tktW, authorW)
+		innerH-- // the sticky header takes one interior row, above the viewport
+		if innerH < 1 {
+			innerH = 1
+		}
 	}
 	m.vp.SetWidth(innerW)
 	m.vp.SetHeight(innerH)

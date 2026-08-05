@@ -415,9 +415,13 @@ func TestListViewportSizedForBorder(t *testing.T) {
 		t.Fatalf("viewport width = %d, want ListWidth-2 = %d", got, l.ListWidth-2)
 	}
 	// contentHeight(l), not the raw l.ContentHeight, since the always-visible
-	// filter bar now reserves a row out of the layout's content budget.
-	if want := m.contentHeight(l) - 2; m.vp.Height() != want {
-		t.Fatalf("viewport height = %d, want contentHeight(l)-2 = %d", m.vp.Height(), want)
+	// filter bar reserves a row out of the layout's content budget; minus one
+	// more for the sticky column-header row, which sits above the viewport.
+	if want := m.contentHeight(l) - 2 - 1; m.vp.Height() != want {
+		t.Fatalf("viewport height = %d, want contentHeight(l)-3 = %d", m.vp.Height(), want)
+	}
+	if m.listColHeader == "" {
+		t.Fatal("a non-empty board should render a column header")
 	}
 }
 
@@ -2157,7 +2161,7 @@ func TestAdvanceSelectionCycle(t *testing.T) {
 		"me",
 	)
 	// Review requested = #1,#2; Mine = #3; Others = #4
-	m.cursor = 0 // in Review requested
+	m.cursor = 0         // in Review requested
 	m.advanceSelection() // Group
 	if m.sel.count() != 2 || !m.sel.has(0) || !m.sel.has(1) {
 		t.Fatalf("after Group: sel=%v, want indexes 0,1", m.sel.indices())

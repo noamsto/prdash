@@ -28,6 +28,7 @@ type RowOpts struct {
 	Tree        string // stack chain glyph, rendered between the gutter and the number
 	DiffWidth   int    // cell width of the diffstat column; 0 hides it
 	TicketWidth int    // cell width of the ticket-id column; 0 hides it
+	AuthorWidth int    // fixed cell width for the author column; 0 = natural width (no padding)
 	CompactDiff bool   // render ±N instead of +N -N
 	Initials    bool   // 2-char author initials instead of the login
 }
@@ -397,6 +398,51 @@ const landedTag = " landed"
 // renderItemRow renders one dense row:
 //
 //	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
+//
+// authorColMax caps the author column so one long login can't starve the title.
+const authorColMax = 17
+
+// rightCols holds the reserved cell widths of a row's right-hand columns —
+// including each column's leading "  " separator for diff/ticket, and the "  "
+// prefix for age. The data row and the column-header row both lay out from these
+// widths, so the header aligns with every row by construction rather than by a
+// second copy of the arithmetic.
+type rightCols struct {
+	tag, diff, ticket, author, age int
+}
+
+// reserveRightCols carves the optional right-hand columns out of one slack
+// budget so the gap between title and columns never has to be floored — a
+// floored gap is overflow, not slack. Order matters: the ticket is reserved
+// after the diffstat because columnLadder sheds it at a wider column, so on the
+// way down the ticket goes first without a tie-break.
+//
+// authorW is the requested author column: 0 means auto (take the leftover slack,
+// capped — the natural-width behaviour), a positive value means a fixed column
+// sized to the widest shown author so every row's columns land at the same cell.
+// Either way the author is the last to be carved and shrinks toward empty before
+// the fixed columns drop, so the title never starves.
+func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW int, landed bool) rightCols {
+	slack := w - leftW - ageW - 2 - 1
+	c := rightCols{age: ageW}
+	if landed && slack-len(landedTag) >= 0 {
+		c.tag = len(landedTag)
+	}
+	if diffW > 0 && slack-c.tag-2-diffW >= 0 {
+		c.diff = 2 + diffW
+	}
+	if tktW > 0 && slack-c.tag-c.diff-2-tktW >= 0 {
+		c.ticket = 2 + tktW
+	}
+	avail := max(0, slack-c.tag-c.diff-c.ticket)
+	if authorW > 0 {
+		c.author = min(authorW, avail)
+	} else {
+		c.author = min(authorColMax, avail)
+	}
+	return c
+}
+
 func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, author, age, diff, ci, review, auto string) string {
 	w := o.Width
 	if w < 24 {
@@ -468,20 +514,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated or cut to initials.
 	ageW := 2 + max(3, lipgloss.Width(age)) // matches the age suffix rendered below
-	slack := w - leftW - ageW - 2 - 1
-	tagW := 0
-	if o.Landed && slack-len(landedTag) >= 0 {
-		tagW = len(landedTag)
-	}
-	diffExtra := 0
-	if o.DiffWidth > 0 && slack-tagW-2-o.DiffWidth >= 0 {
-		diffExtra = 2 + o.DiffWidth
-	}
-	tktExtra := 0
-	if o.TicketWidth > 0 && slack-tagW-diffExtra-2-o.TicketWidth >= 0 {
-		tktExtra = 2 + o.TicketWidth
-	}
-	authorCap := min(17, max(0, slack-tagW-diffExtra-tktExtra))
+	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, o.Landed)
+	tagW, diffExtra, tktExtra, authorCap := cols.tag, cols.diff, cols.ticket, cols.author
 	right := ""
 	if tktExtra > 0 {
 		// Clamp before padding, exactly as the diffstat does below: TicketWidth is
@@ -495,7 +529,15 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	if o.Initials {
 		authorTxt = authorInitials(author)
 	}
-	right += authorStyle(author).Render(truncate(authorTxt, authorCap))
+	// authorStyle sees the full login for a stable hue; only the rendered text is
+	// truncated. With a fixed AuthorWidth the slot is right-padded so the ticket,
+	// diffstat and age land at the same cell on every row and the column header
+	// lines up; in auto mode the author keeps its natural width.
+	authorTxt = truncate(authorTxt, authorCap)
+	right += authorStyle(author).Render(authorTxt)
+	if o.AuthorWidth > 0 {
+		right += strings.Repeat(" ", authorCap-lipgloss.Width(authorTxt))
+	}
 	if diffExtra > 0 {
 		// Clamp before padding: DiffWidth is the column, so a diffstat wider than
 		// it would render at natural width and push the row past w.
@@ -532,6 +574,39 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 		line = faintWrap(line) // a draft recedes as a whole row, not just a gutter glyph
 	}
 	return line
+}
+
+// columnHeader is the sticky label row above the board. It lays out from the
+// same reserveRightCols widths the data rows use, so each label sits over its
+// column. ageW is fixed at the common 3-cell age; a row with a wider age or a
+// landed tag can drift by a cell, which muted labels tolerate. leftW mirrors
+// renderItemRow's left block: a 9-cell gutter, a 3-cell tree slot, the number
+// column, and one separating space.
+func columnHeader(w, numW, diffW, tktW, authorW int) string {
+	const gutterW, treeW, ageW = 9, 3, 5
+	leftW := gutterW + treeW + numW + 1
+	cols := reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, false)
+
+	fit := func(s string, width int) string { // left-align, pad or truncate to width
+		s = truncate(s, width)
+		return s + strings.Repeat(" ", width-lipgloss.Width(s))
+	}
+	left := strings.Repeat(" ", gutterW+treeW) + "#" + strings.Repeat(" ", numW-1) + " "
+	right := ""
+	if cols.ticket > 0 {
+		right = fit("Issue", tktW) + "  "
+	}
+	right += fit("Author", cols.author)
+	if cols.diff > 0 {
+		right += "  " + fit("Δ", diffW)
+	}
+	right += "  Age" // the age column is 3 cells; "Age" fills it exactly
+
+	rightW := lipgloss.Width(right)
+	title := fit("Title", max(1, w-leftW-rightW-2))
+	gap := max(1, w-leftW-lipgloss.Width(title)-rightW)
+	line := left + title + strings.Repeat(" ", gap) + right
+	return dimStyle.Render(ansi.Truncate(line, w, ""))
 }
 
 // rowBgWrap fills a composed row with a background. lipgloss ends each styled
@@ -630,6 +705,26 @@ func ticketWidth(s Section) int {
 		w = max(w, lipgloss.Width(ticketID(ps.prs[i].HeadRefName)))
 	}
 	return w
+}
+
+// authorColWidth is the fixed author column: the widest rendered author across
+// the shown set (initials or full login, per the layout), capped at authorColMax.
+// Feeds RowOpts.AuthorWidth and columnHeader so the board's author column and its
+// header label share one width.
+func authorColWidth(s Section, initials bool) int {
+	ps, ok := s.(*PRSection)
+	if !ok {
+		return 0
+	}
+	w := 0
+	for _, i := range ps.shown {
+		a := ps.prs[i].Author.Login
+		if initials {
+			a = authorInitials(a)
+		}
+		w = max(w, lipgloss.Width(a))
+	}
+	return min(authorColMax, w)
 }
 
 // padNum right-aligns a plain "#123" string to w cells; never truncates.
