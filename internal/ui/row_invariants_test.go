@@ -117,14 +117,25 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 		}
 	}
 
-	// renderItemRow floors its working width at 24 and reserves 3 cells for the
-	// tree slot, so 26 is the smallest width where exact-fill is a real contract
-	// for a 4-cell number column; below it the row is legitimately wider than w
-	// (covered by TestDenseRowDegradesWithoutCrashAtNarrowWidths). A wider number
-	// column shifts that floor by the same amount, since it lands in leftW, which
-	// every budget in the row subtracts from w. Sweeping every integer up to 200
-	// is cheap since this is pure string composition.
-	for w := 26; w <= 200; w++ {
+	// Exact-fill is only a contract once the row's unsheddable columns fit in w;
+	// below that the row is legitimately wider (covered by
+	// TestDenseRowDegradesWithoutCrashAtNarrowWidths). That floor moves with the
+	// number column and the age, both of which land outside slack — so take it
+	// from the render rather than re-deriving the arithmetic here: at a width of 1
+	// every optional column drops out and the row comes back exactly its floor.
+	floor := make([][]int, len(nums))
+	for ni, nc := range nums {
+		floor[ni] = make([]int, len(ages))
+		for ai, age := range ages {
+			floor[ni][ai] = lipgloss.Width(renderItemRow(RowOpts{Width: 1, NumWidth: nc.width},
+				accentStyle, nc.num, title, "", "", age, "", ci, review, auto))
+		}
+	}
+
+	// renderItemRow floors its own working width at 24, so no smaller w means
+	// anything. Sweeping every integer up to 200 is cheap: this is pure string
+	// composition.
+	for w := 24; w <= 200; w++ {
 		for _, login := range logins {
 			wantSGR := extractLeadingSGRPrefix(authorStyle(login).Render("x"))
 
@@ -139,9 +150,9 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 						// dimension because that tag is drawn unconditionally, so a room
 						// calculation that ignores it overflows the row.
 						for _, landed := range []bool{false, true} {
-							for _, age := range ages {
-								for _, nc := range nums {
-									if w < 26+nc.width-4 {
+							for ai, age := range ages {
+								for ni, nc := range nums {
+									if w < floor[ni][ai] {
 										continue
 									}
 									num := nc.num
