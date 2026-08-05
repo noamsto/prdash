@@ -850,20 +850,20 @@ func TestFixedAuthorColumnAlignsColumns(t *testing.T) {
 	}
 }
 
-func TestColumnHeaderWidthAndLabels(t *testing.T) {
+func TestColumnHeaderWidthAndGlyphs(t *testing.T) {
 	h := columnHeader(120, 5, 9, 8, 14)
 	if w := lipgloss.Width(h); w != 120 {
 		t.Errorf("header width %d, want the full 120 cells", w)
 	}
 	plain := stripANSIForTest(h)
-	for _, want := range []string{"Title", "Issue", "Author", "Δ", "Age"} {
+	for _, want := range []string{statusHeadGlyph, issueHeadGlyph, authorHeadGlyph, deltaHeadGlyph, ageHeadGlyph} {
 		if !strings.Contains(plain, want) {
-			t.Errorf("header missing %q label: %q", want, plain)
+			t.Errorf("header missing %q glyph: %q", want, plain)
 		}
 	}
-	// No ticket column reserved (tktW=0) → no "Issue" label.
-	if plain := stripANSIForTest(columnHeader(120, 5, 9, 0, 14)); strings.Contains(plain, "Issue") {
-		t.Errorf("header should drop the Issue label when the ticket column is absent: %q", plain)
+	// No ticket column reserved (tktW=0) → no issue glyph.
+	if plain := stripANSIForTest(columnHeader(120, 5, 9, 0, 14)); strings.Contains(plain, issueHeadGlyph) {
+		t.Errorf("header should drop the issue glyph when the ticket column is absent: %q", plain)
 	}
 }
 

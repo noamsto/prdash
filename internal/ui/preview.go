@@ -515,8 +515,12 @@ func reviewRoster(d gh.PRDetail) string {
 	var lines []string
 	for _, e := range entries {
 		s := reviewState[e.state]
-		login := fmt.Sprintf("%-*s", loginW, "@"+e.login)
-		lines = append(lines, s.style.Render(s.glyph+" "+login+"  "+s.label))
+		// The login carries its author hue — the same hash the board's Author column
+		// uses (keyed on the raw login, not the "@" display text) — so a reviewer
+		// reads as the same colour here as in the list. The glyph and label keep the
+		// review-status colour.
+		login := authorStyle(e.login).Render(fmt.Sprintf("%-*s", loginW, "@"+e.login))
+		lines = append(lines, s.style.Render(s.glyph+" ")+login+s.style.Render("  "+s.label))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -587,25 +587,34 @@ func columnHeader(w, numW, diffW, tktW, authorW int) string {
 	leftW := gutterW + treeW + numW + 1
 	cols := reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, false)
 
-	fit := func(s string, width int) string { // left-align, pad or truncate to width
-		s = truncate(s, width)
-		return s + strings.Repeat(" ", width-lipgloss.Width(s))
+	// Each glyph aligns the way its column's data does: the author and ticket are
+	// left-aligned, the diffstat and age are right-aligned.
+	leftGlyph := func(g string, width int) string {
+		return g + strings.Repeat(" ", max(0, width-lipgloss.Width(g)))
 	}
-	left := strings.Repeat(" ", gutterW+treeW) + "#" + strings.Repeat(" ", numW-1) + " "
+	rightGlyph := func(g string, width int) string {
+		return strings.Repeat(" ", max(0, width-lipgloss.Width(g))) + g
+	}
+
+	// Gutter: a status glyph over the CI cell (cell 2, after the focus bar); the
+	// rest of the gutter and the tree slot stay blank. Then "#" over the number.
+	left := " " + statusHeadGlyph + strings.Repeat(" ", gutterW-2+treeW) +
+		"#" + strings.Repeat(" ", numW-1) + " "
 	right := ""
 	if cols.ticket > 0 {
-		right = fit("Issue", tktW) + "  "
+		right = leftGlyph(issueHeadGlyph, tktW) + "  "
 	}
-	right += fit("Author", cols.author)
+	right += leftGlyph(authorHeadGlyph, cols.author)
 	if cols.diff > 0 {
-		right += "  " + fit("Δ", diffW)
+		right += "  " + rightGlyph(deltaHeadGlyph, diffW)
 	}
-	right += "  Age" // the age column is 3 cells; "Age" fills it exactly
+	right += "  " + rightGlyph(ageHeadGlyph, 3)
 
+	// The title column carries no glyph — a row of titles needs no marker; the gap
+	// between the number and the first right-hand glyph is the title's span.
 	rightW := lipgloss.Width(right)
-	title := fit("Title", max(1, w-leftW-rightW-2))
-	gap := max(1, w-leftW-lipgloss.Width(title)-rightW)
-	line := left + title + strings.Repeat(" ", gap) + right
+	gap := max(1, w-leftW-rightW)
+	line := left + strings.Repeat(" ", gap) + right
 	return dimStyle.Render(ansi.Truncate(line, w, ""))
 }
 

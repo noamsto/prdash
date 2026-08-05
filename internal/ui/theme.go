@@ -392,6 +392,17 @@ const (
 	headBranchGlyph  = "⎇" // nerd: nf-oct-git_branch
 )
 
+// Board column-header glyphs — the markers in the sticky label row above the
+// list. If any renders as tofu, swap it for your Nerd Font's variant; the label
+// row tolerates any single-cell glyph.
+var (
+	statusHeadGlyph = "◉"        // nerd: nf-oct-pulse — the gutter status column (CI/review/auto/flag)
+	issueHeadGlyph  = issueGlyph // nerd: nf-oct-issue_opened — the ticket-id column
+	authorHeadGlyph = "@"        // the author column — a handle sigil
+	deltaHeadGlyph  = "Δ"        // the diffstat column
+	ageHeadGlyph    = "◴"        // nerd: nf-md-history — the age column
+)
+
 // rateGlyph marks the API-budget segment in the header.
 const rateGlyph = "◔" // nerd: nf-md-gauge
 
