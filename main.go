@@ -40,6 +40,9 @@ func main() {
 
 	m := ui.NewModel(dir, "is:open", c)
 	m.SetRepo(repo)
+	if os.Getenv("PRDASH_FRAME") == "1" {
+		m.SetOuterFrame(true)
+	}
 	gs := gh.NewGraphSource(tok, repo)
 	m.SetPRSource(gs)
 	m.SetDetailSource(gs)

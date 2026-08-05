@@ -63,6 +63,9 @@ type Model struct {
 	previewOffset     int // alt+j/k scroll position within the side preview
 	width             int
 	height            int
+	termW             int // full terminal size; width/height are the inner content box when outerFrame
+	termH             int
+	outerFrame        bool // rounded titled chrome around the whole app (float / PRDASH_FRAME=1)
 	section           Section
 	err               error
 	filtering         bool
@@ -1730,7 +1733,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case delayedRefreshMsg:
 		return m, m.backgroundRefresh()
 	case tea.WindowSizeMsg:
+		m.termW, m.termH = msg.Width, msg.Height
 		m.width, m.height = msg.Width, msg.Height
+		if m.outerFrame {
+			m.width = max(1, msg.Width-2)
+			m.height = max(1, msg.Height-2)
+		}
 		m.repaintActive() // reflow whichever view owns the viewport to the new size
 		return m, nil
 	case tea.KeyMsg:
@@ -2047,7 +2055,19 @@ func (m Model) View() tea.View {
 	return v
 }
 
+// SetOuterFrame enables the float chrome: a mauve-titled rounded border around
+// the whole app. Lazytmux sets PRDASH_FRAME=1 on the floating-pane bind.
+func (m *Model) SetOuterFrame(on bool) { m.outerFrame = on }
+
 func (m Model) render() string {
+	body := m.renderInner()
+	if !m.outerFrame || m.termW < 4 || m.termH < 4 {
+		return body
+	}
+	return titledBoxTinted(body, m.termW, m.termH, "prdash", headerStyle)
+}
+
+func (m Model) renderInner() string {
 	if m.logView {
 		base := m.logViewRender()
 		if m.showLegend {
