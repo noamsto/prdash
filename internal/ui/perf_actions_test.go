@@ -479,27 +479,48 @@ func TestCachedDetailStillTriggersRefetch(t *testing.T) {
 	}
 }
 
-func TestExitActionWithoutHandoffQueuesExec(t *testing.T) {
+// enterExec drives one Enter on a single-PR board rooted at dir and returns the
+// queued exits-TUI command.
+func enterExec(t *testing.T, dir string, pr gh.PR) []string {
+	t.Helper()
 	t.Setenv("PRDASH_ACTION_FILE", "") // no orchestrator sink
 
-	m := NewModel("/repo", "is:open", nil)
+	m := NewModel(dir, "is:open", nil)
 	m.SetRepo("noamsto/prdash")
 	m.width, m.height = 120, 30
-	m.setPRs([]gh.PR{{Number: 7, Title: "hi", HeadRefName: "feat/x"}})
+	m.setPRs([]gh.PR{pr})
 	m.renderList()
 
 	u, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = u.(Model)
-
+	if cmd == nil {
+		t.Fatal("enter should still quit the TUI")
+	}
 	got := m.PendingExec()
 	if len(got) != 1 {
 		t.Fatalf("enter should queue one exec command standalone, got %d", len(got))
 	}
-	if want := []string{"wt", "switch", "feat/x"}; !slices.Equal(got[0], want) {
-		t.Fatalf("queued %v, want %v", got[0], want)
+	return got[0]
+}
+
+func TestExitActionWithoutHandoffQueuesExec(t *testing.T) {
+	dir := cleanupRepo(t)
+	gitIn(t, dir, "update-ref", "refs/remotes/origin/feat/x", "HEAD")
+
+	got := enterExec(t, dir, gh.PR{Number: 7, Title: "hi", HeadRefName: "feat/x"})
+	// The branch form is ~12ms against pr:{N}'s ~2.2s, so a fetched branch must
+	// never route through the shortcut.
+	if want := []string{"wt", "switch", "feat/x"}; !slices.Equal(got, want) {
+		t.Fatalf("queued %v, want %v", got, want)
 	}
-	if cmd == nil {
-		t.Fatal("enter should still quit the TUI")
+}
+
+func TestExitActionFallsBackToPRShortcut(t *testing.T) {
+	dir := cleanupRepo(t) // no origin/feat/x: nothing for wt switch to resolve
+
+	got := enterExec(t, dir, gh.PR{Number: 7, Title: "hi", HeadRefName: "feat/x"})
+	if want := []string{"wt", "switch", "pr:7"}; !slices.Equal(got, want) {
+		t.Fatalf("queued %v, want %v", got, want)
 	}
 }
 

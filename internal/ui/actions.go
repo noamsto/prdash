@@ -24,6 +24,16 @@ func (m *Model) cursorVars() (action.Vars, bool) {
 	return v, true
 }
 
+// withSwitchRef resolves what `wt switch` can open for the PR row at i. It
+// shells out to git, so it stays off cursorVars — the render paths call that
+// every frame.
+func (m *Model) withSwitchRef(v action.Vars, i int) action.Vars {
+	if ps, ok := m.section.(*PRSection); ok && i >= 0 && i < ps.Len() {
+		v.SwitchRef = gh.SwitchRef(m.dir, ps.prAt(i))
+	}
+	return v
+}
+
 // clipboardText is the payload a copy action writes for one PR.
 func clipboardText(builtin string, v action.Vars) string {
 	switch builtin {
@@ -110,7 +120,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	}
 
 	if a.ExitsTUI {
-		argv, err := a.ExpandArgv(v)
+		argv, err := a.ExpandArgv(m.withSwitchRef(v, m.cursor))
 		if err != nil {
 			m.err = err
 			return nil
@@ -436,7 +446,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		}
 		v := m.section.VarsAt(i)
 		v.Repo = m.repo
-		argv, err := a.ExpandArgv(v)
+		argv, err := a.ExpandArgv(m.withSwitchRef(v, i))
 		if err != nil {
 			m.err = err
 			continue

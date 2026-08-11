@@ -76,25 +76,26 @@ type qlStackEntry struct {
 // mapPR copies into gh.PR. The statusCheckRollup union is flattened into
 // []Check by mapPR.
 type qlPR struct {
-	ID             string `graphql:"id"`
-	Number         int
-	Title          string
-	Body           string
-	URL            string `graphql:"url"`
-	State          string
-	IsDraft        bool
-	HeadRefName    string
-	BaseRefName    string
-	ReviewDecision string
-	Additions      int
-	Deletions      int
-	ChangedFiles   int
-	Stack          *qlStack
-	StackEntry     *qlStackEntry
-	UpdatedAt      githubv4.DateTime
-	MergedAt       *githubv4.DateTime
-	ClosedAt       *githubv4.DateTime
-	Author         struct {
+	ID                string `graphql:"id"`
+	Number            int
+	Title             string
+	Body              string
+	URL               string `graphql:"url"`
+	State             string
+	IsDraft           bool
+	HeadRefName       string
+	BaseRefName       string
+	IsCrossRepository bool
+	ReviewDecision    string
+	Additions         int
+	Deletions         int
+	ChangedFiles      int
+	Stack             *qlStack
+	StackEntry        *qlStackEntry
+	UpdatedAt         githubv4.DateTime
+	MergedAt          *githubv4.DateTime
+	ClosedAt          *githubv4.DateTime
+	Author            struct {
 		Login    string
 		Typename string `graphql:"__typename"`
 	}
@@ -168,20 +169,21 @@ func (s GraphSource) query(ctx context.Context, filter string, limit int) ([]PR,
 
 func mapPR(g qlPR) PR {
 	p := PR{
-		ID:             g.ID,
-		Number:         g.Number,
-		Title:          g.Title,
-		Body:           g.Body,
-		URL:            g.URL,
-		State:          g.State,
-		IsDraft:        g.IsDraft,
-		HeadRefName:    g.HeadRefName,
-		BaseRefName:    g.BaseRefName,
-		ReviewDecision: g.ReviewDecision,
-		UpdatedAt:      g.UpdatedAt.Time,
-		Additions:      g.Additions,
-		Deletions:      g.Deletions,
-		ChangedFiles:   g.ChangedFiles,
+		ID:                g.ID,
+		Number:            g.Number,
+		Title:             g.Title,
+		Body:              g.Body,
+		URL:               g.URL,
+		State:             g.State,
+		IsDraft:           g.IsDraft,
+		HeadRefName:       g.HeadRefName,
+		BaseRefName:       g.BaseRefName,
+		IsCrossRepository: g.IsCrossRepository,
+		ReviewDecision:    g.ReviewDecision,
+		UpdatedAt:         g.UpdatedAt.Time,
+		Additions:         g.Additions,
+		Deletions:         g.Deletions,
+		ChangedFiles:      g.ChangedFiles,
 	}
 	// gh reports GitHub App actors (dependabot, etc.) with an "app/" prefix;
 	// the GraphQL Bot actor's login has none, so add it to match.
