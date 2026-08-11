@@ -2,8 +2,12 @@ package action
 
 func DefaultPRActions() map[string]Action {
 	return map[string]Action{
+		// pr:{N}, not {{.Branch}}: wt switch resolves a branch name against local
+		// refs only, so a PR pushed since the last fetch has nothing to resolve —
+		// and a fork PR's head is never on origin at all. pr:{N} fetches what's
+		// missing and still lands on the real head branch.
 		"enter": {Key: "enter", Label: "Open worktree",
-			Command:  Command{Argv: []string{"wt", "switch", "{{.Branch}}"}},
+			Command:  Command{Argv: []string{"wt", "switch", "pr:{{.Number}}"}},
 			ExitsTUI: true, Scope: "single"},
 		"m": {Key: "m", Label: "Merge (squash)",
 			Command: Command{Native: "merge-squash"},
@@ -25,7 +29,7 @@ func DefaultPRActions() map[string]Action {
 		"o": {Key: "o", Label: "Open in browser",
 			Command: Command{Native: "open-web"}, Scope: "per-selected"},
 		"W": {Key: "W", Label: "Bulk worktrees",
-			Command:  Command{Argv: []string{"wt", "switch", "{{.Branch}}"}},
+			Command:  Command{Argv: []string{"wt", "switch", "pr:{{.Number}}"}},
 			ExitsTUI: true, Scope: "per-selected"},
 		"u": {Key: "u", Label: "Update branch",
 			Command: Command{Native: "update-branch"}, Scope: "per-selected", Refresh: true,
