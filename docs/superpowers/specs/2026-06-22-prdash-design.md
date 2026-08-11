@@ -67,6 +67,13 @@ Three command forms: **argv** (discrete args, no shell — default, injection-sa
 Vars: `{{.Number}} {{.HeadRefName}} {{.BaseRefName}} {{.Url}} {{.Repo}}
 {{.Author}} {{.Branch}}`.
 
+> **Amended 2026-08-11 (#96):** the PR worktree actions take `{{.SwitchRef}}`,
+> not `pr:{{.Number}}`. `pr:{N}` costs ~2.2s per open against a bare branch's
+> ~12ms, so #31 swapped in `{{.Branch}}` — but `wt switch` resolves branch names
+> against local refs only, which fails for a branch pushed since the last fetch
+> and for every fork PR. `SwitchRef` resolves per row: the head branch when this
+> clone can reach it, `pr:{N}` when it can't. Rows below are as designed.
+
 Defaults:
 | key | label | command | exits-tui | scope |
 |-----|-------|---------|-----------|-------|

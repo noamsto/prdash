@@ -85,7 +85,8 @@ docks under it; narrow terminals drop the preview and show a compact status bar.
 the tmux window can switch. prdash supports two modes:
 
 - **Standalone** — with no orchestrator, prdash exits the alt-screen and runs the
-  command itself (`wt switch pr:N`), so the worktree opens directly.
+  command itself (`wt switch <branch>`, or `wt switch pr:N` when the branch isn't
+  fetched locally or the PR comes from a fork), so the worktree opens directly.
 - **Orchestrated** — when `PRDASH_ACTION_FILE` is set, prdash appends the chosen
   command to that file and quits; a wrapper (e.g. the lazytmux popup binding)
   reads and runs it. This is how the `prefix + p` popup integration works.
