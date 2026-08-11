@@ -92,19 +92,22 @@ type PR struct {
 	Assignees         []struct {
 		Login string `json:"login"`
 	} `json:"assignees"`
-	HeadRefName      string            `json:"headRefName"`
-	BaseRefName      string            `json:"baseRefName"`
-	URL              string            `json:"url"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
-	MergedAt         time.Time         `json:"mergedAt"` // zero unless State == MERGED
-	ClosedAt         time.Time         `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
-	IsDraft          bool              `json:"isDraft"`
-	State            string            `json:"state"` // OPEN | CLOSED | MERGED
-	Body             string            `json:"body"`
-	AutoMergeRequest *AutoMergeRequest `json:"autoMergeRequest"`
-	Additions        int               `json:"additions"`
-	Deletions        int               `json:"deletions"`
-	ChangedFiles     int               `json:"changedFiles"`
+	HeadRefName string `json:"headRefName"`
+	BaseRefName string `json:"baseRefName"`
+	// IsCrossRepository marks a fork PR, whose head branch lives on the
+	// contributor's repo and so is never resolvable under origin/.
+	IsCrossRepository bool              `json:"isCrossRepository"`
+	URL               string            `json:"url"`
+	UpdatedAt         time.Time         `json:"updatedAt"`
+	MergedAt          time.Time         `json:"mergedAt"` // zero unless State == MERGED
+	ClosedAt          time.Time         `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
+	IsDraft           bool              `json:"isDraft"`
+	State             string            `json:"state"` // OPEN | CLOSED | MERGED
+	Body              string            `json:"body"`
+	AutoMergeRequest  *AutoMergeRequest `json:"autoMergeRequest"`
+	Additions         int               `json:"additions"`
+	Deletions         int               `json:"deletions"`
+	ChangedFiles      int               `json:"changedFiles"`
 	// Stack is nil unless the PR is part of a GitHub stack. StackPosition is
 	// 1-based within that stack and 0 when Stack is nil.
 	Stack         *PRStack `json:"stack"`

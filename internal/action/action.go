@@ -16,6 +16,10 @@ type Vars struct {
 	Author      string
 	Branch      string // derived branch (issue) or HeadRefName (PR)
 	ID          string // GraphQL node ID (PR only); "" on the issue board or the gh-CLI path
+	// SwitchRef is what `wt switch` can actually resolve for a PR row: the head
+	// branch, or pr:{N} when this clone can't reach it. Filled on the action
+	// path only — it costs a git probe, and the render paths build Vars too.
+	SwitchRef string
 }
 
 type Command struct {

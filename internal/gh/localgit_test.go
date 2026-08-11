@@ -124,3 +124,34 @@ func TestDeleteBranchReportsGitError(t *testing.T) {
 		t.Error("DeleteBranch reported success for a branch that doesn't exist")
 	}
 }
+
+func TestSwitchRefPrefersAFetchedBranch(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "update-ref", "refs/remotes/origin/feat/x", "HEAD")
+
+	pr := PR{Number: 7, HeadRefName: "feat/x"}
+	if got := SwitchRef(dir, pr); got != "feat/x" {
+		t.Errorf("SwitchRef = %q, want the branch — pr:{N} costs a gh round-trip", got)
+	}
+}
+
+func TestSwitchRefFallsBackWhenUnfetched(t *testing.T) {
+	dir := initRepo(t)
+
+	pr := PR{Number: 7, HeadRefName: "feat/x"}
+	if got := SwitchRef(dir, pr); got != "pr:7" {
+		t.Errorf("SwitchRef = %q, want pr:7 — wt switch can't resolve an unfetched branch", got)
+	}
+}
+
+// A fork PR opened from its default branch collides with a ref that always
+// resolves, so the ref probe alone would switch to the wrong commits.
+func TestSwitchRefFallsBackForAForkEvenWhenTheRefResolves(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+	pr := PR{Number: 7, HeadRefName: "main", IsCrossRepository: true}
+	if got := SwitchRef(dir, pr); got != "pr:7" {
+		t.Errorf("SwitchRef = %q, want pr:7 — origin/main is not the fork's head", got)
+	}
+}
