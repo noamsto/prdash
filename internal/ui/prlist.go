@@ -2141,10 +2141,10 @@ func (m Model) renderInner() string {
 	return board
 }
 
-// contentWidth is the width of the filter bar and the list column below it. The
-// bar tracks the list column, not the terminal — the preview beside it spans the
-// bar's rows rather than starting under them. Zoom is the exception: there is no
-// list column there, so the bar sits over the full-width preview.
+// contentWidth is the width of the filter bar and the list column below it: the
+// bar belongs to that column, and the preview beside it spans the bar's rows.
+// Zoom is the exception — no list column, so the bar sits over the full-width
+// preview.
 func (m Model) contentWidth() int {
 	if m.previewMax {
 		return m.width
@@ -2228,8 +2228,8 @@ func (m Model) board() string {
 		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
 	}
 	l := computeLayout(m.width, m.height)
-	// The filter bar belongs to the list column, so renderMain/renderDocked
-	// stack it there themselves rather than it spanning the frame above them.
+	// The filter bar is stacked by renderMain/renderDocked — it lives in the
+	// list column, not across the frame.
 	if m.previewMax {
 		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
 	}
