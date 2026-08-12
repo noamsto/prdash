@@ -290,32 +290,49 @@ func sectionHeader(glyph, label string, w int) string {
 	return sectionLabelStyle.Underline(true).Render(glyph + " " + name)
 }
 
-// previewPane renders the side pane as identity header + tab bar + the active
-// tab's body. The Overview tab renders via renderOverview directly (not
-// expandedBody) because it — not expandedBody's pre-switch !cached gate — owns
-// the pre-fill from list-only data (triage.Preliminary), so the cursor never
-// lands on a bare "Loading…" before detail arrives.
-func (m Model) previewPane() string {
+// previewParts splits the side pane into the head that stays pinned to the top
+// of the pane — identity lines plus the tab bar — and the body below it, which
+// is the only part alt+j/k scrolls. The Overview tab renders via renderOverview
+// directly (not expandedBody) because it — not expandedBody's pre-switch
+// !cached gate — owns the pre-fill from list-only data (triage.Preliminary), so
+// the cursor never lands on a bare "Loading…" before detail arrives.
+func (m Model) previewParts() (head, body string) {
 	if _, ok := m.cursorVars(); !ok {
-		return ""
+		return "", ""
 	}
 	w := m.previewWidth()
 	if is, ok := m.section.(*IssueSection); ok {
-		return m.issuePreviewPane(is, w, w-2)
+		return m.issuePreviewParts(is, w, w-2)
 	}
 	ps, ok := m.section.(*PRSection)
 	if !ok {
-		return ""
+		return "", ""
 	}
-	header := identityHeader(ps.prAt(m.cursor), w-2)
-	bar := renderTabBar(expandedTabs, m.expandedTab, w)
-	var body string
+	head = identityHeader(ps.prAt(m.cursor), w-2) + "\n\n" + renderTabBar(expandedTabs, m.expandedTab, w)
 	if m.expandedTab == tabOverview {
-		body = m.renderOverview(w)
-	} else {
-		body = m.expandedBody(w)
+		return head, m.renderOverview(w)
 	}
-	return strings.Join([]string{header, bar, body}, "\n\n")
+	return head, m.expandedBody(w)
+}
+
+// previewPane is the whole side pane, head and body together — the measurement
+// view of previewParts.
+func (m Model) previewPane() string {
+	head, body := m.previewParts()
+	if head == "" {
+		return body
+	}
+	return head + "\n\n" + body
+}
+
+// previewScrolled is what the side pane's box gets: the head pinned in place
+// with only the body scrolled by previewOffset.
+func (m Model) previewScrolled() string {
+	head, body := m.previewParts()
+	if head == "" {
+		return dropLines(body, m.previewOffset)
+	}
+	return head + "\n\n" + dropLines(body, m.previewOffset)
 }
 
 // renderOverview is the Overview tab body: the triage summary shown by default.
@@ -364,22 +381,21 @@ func (m Model) renderOverview(w int) string {
 	return strings.Join(blocks, "\n\n")
 }
 
-// issuePreviewPane renders the issue identity header + its markdown body. The
-// body is the whole v1 story; the comments timeline lands in a later milestone.
-func (m Model) issuePreviewPane(is *IssueSection, w, bw int) string {
+// issuePreviewParts is previewParts for issues: the identity header pins, the
+// markdown body scrolls. The body is the whole v1 story; the comments timeline
+// lands in a later milestone.
+func (m Model) issuePreviewParts(is *IssueSection, w, bw int) (head, body string) {
 	iss := is.issueAt(m.cursor)
-	blocks := []string{identityHeaderIssue(iss)}
+	head = identityHeaderIssue(iss)
 	d, cached := m.issueDetail[iss.Number]
 	if !cached {
-		blocks = append(blocks, dimStyle.Render("  loading details…"))
-		return strings.Join(blocks, "\n\n")
+		return head, dimStyle.Render("  loading details…")
 	}
-	body, err := preview.Render(d.Body, bw)
+	md, err := preview.Render(d.Body, bw)
 	if err != nil {
-		body = d.Body
+		md = d.Body
 	}
-	blocks = append(blocks, sectionHeader(descriptionGlyph, "body", w)+"\n"+indentLines(strings.TrimRight(body, "\n"), 2))
-	return strings.Join(blocks, "\n\n")
+	return head, sectionHeader(descriptionGlyph, "body", w) + "\n" + indentLines(strings.TrimRight(md, "\n"), 2)
 }
 
 // identityHeaderIssue mirrors identityHeader for issues (no branch/head ref line).
@@ -542,20 +558,35 @@ func flagGlyph(d gh.PRDetail, cached bool) string {
 	}
 }
 
-// renderMain lays the bordered list and (when wide) the bordered side preview.
-// renderDocked stacks the keys/actions panel beneath the list in the left
-// column and lets the preview span the full height on the right. Unlike
-// renderMain it doesn't go through contentHeight — the panel is always docked
-// here — so it reserves the filter bar's rows itself.
+// previewHeight is the OUTER height of the side preview box — the single
+// authority both render paths and the scroll clamp measure against. The preview
+// owns the whole right column: it spans the filter bar's rows (which sit over
+// the list column only) and, when the keys panel is docked, its rows too.
+func (m Model) previewHeight(l Layout) int {
+	switch {
+	case m.previewMax:
+		return m.contentHeight(l)
+	case l.ShowSide && l.ShowPanel:
+		return l.ContentHeight + l.PanelRows // renderDocked's bar + list + panel
+	default:
+		return m.contentHeight(l) + m.filterBarRows()
+	}
+}
+
+// renderMain lays the filter bar and the bordered list in the left column and
+// (when wide) the bordered side preview beside them, full height.
+// renderDocked additionally stacks the keys/actions panel beneath the list in
+// that column. Unlike renderMain it doesn't go through contentHeight — the
+// panel is always docked here — so it reserves the filter bar's rows itself.
 func (m Model) renderDocked(l Layout) string {
 	tint := accentFor(m.mode)
+	bar := m.filterBar()
 	ch := max(1, l.ContentHeight-m.filterBarRows())
 	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	panel := m.keysActionsPanel(l.ListWidth)
-	left := lipgloss.JoinVertical(lipgloss.Left, list, panel)
+	left := lipgloss.JoinVertical(lipgloss.Left, bar, list, panel)
 
-	fullH := ch + l.PanelRows // list + panel, so the preview reaches the bottom
-	side := titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, fullH, m.previewTitle(), tint)
+	side := titledBoxTinted(m.previewScrolled(), l.SideWidth, m.previewHeight(l), m.previewTitle(), tint)
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
 }
@@ -574,14 +605,15 @@ func (m Model) renderMain() string {
 	l := computeLayout(m.width, m.height)
 	ch := m.contentHeight(l)
 	tint := accentFor(m.mode)
+	bar := m.filterBar()
 	if m.previewMax {
-		return titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), m.width, ch, m.previewTitle(), tint)
+		return bar + "\n" + titledBoxTinted(m.previewScrolled(), m.width, ch, m.previewTitle(), tint)
 	}
-	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
+	left := lipgloss.JoinVertical(lipgloss.Left, bar, titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint))
 	if !l.ShowSide {
-		return list
+		return left
 	}
-	side := titledBoxTinted(dropLines(m.previewPane(), m.previewOffset), l.SideWidth, ch, m.previewTitle(), tint)
+	side := titledBoxTinted(m.previewScrolled(), l.SideWidth, m.previewHeight(l), m.previewTitle(), tint)
 	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
-	return lipgloss.JoinHorizontal(lipgloss.Top, list, side)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
 }

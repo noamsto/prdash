@@ -433,9 +433,10 @@ func TestPreviewScrollClampsAndResets(t *testing.T) {
 	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 
-	// contentHeight(l), not the raw l.ContentHeight, since the always-visible
-	// filter bar now reserves a row out of the layout's content budget.
-	over := lipgloss.Height(m.previewPane()) - (m.contentHeight(computeLayout(150, 6)) - 2)
+	// Only the body scrolls: the pinned head (identity + tab bar) and the blank
+	// row under it come off the pane interior before the body's budget.
+	head, body := m.previewParts()
+	over := lipgloss.Height(body) - (m.previewHeight(computeLayout(150, 6)) - 2 - lipgloss.Height(head) - 1)
 	if over <= 0 {
 		t.Fatalf("fixture must overflow the pane for this test; over=%d", over)
 	}
@@ -451,6 +452,36 @@ func TestPreviewScrollClampsAndResets(t *testing.T) {
 	m.moveCursor(0) // focus change resets the preview scroll
 	if m.previewOffset != 0 {
 		t.Fatalf("moving the cursor should reset preview scroll, got %d", m.previewOffset)
+	}
+}
+
+// TestPreviewHeadStaysPinned locks the pinned head: alt+j moves the body under
+// the identity lines and tab bar, which keep their rows at the top of the pane.
+func TestPreviewHeadStaysPinned(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 150, 6 // tiny height → preview content overflows the pane
+	p := gh.PR{Number: 1, Title: "x"}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+
+	head, body := m.previewParts()
+	if head == "" {
+		t.Fatal("PR preview must have a pinned head")
+	}
+	m.previewScrollBy(1)
+	if m.previewOffset != 1 {
+		t.Fatalf("fixture must overflow so the body scrolls; offset=%d", m.previewOffset)
+	}
+	got := m.previewScrolled()
+	if !strings.HasPrefix(got, head+"\n\n") {
+		t.Fatalf("head must stay at the top of the pane after scrolling; got %q", ansi.Strip(got))
+	}
+	firstBody := strings.SplitN(body, "\n", 2)[0]
+	if rest := strings.TrimPrefix(got, head+"\n\n"); strings.HasPrefix(rest, firstBody) {
+		t.Fatalf("body did not scroll: still starts with %q", ansi.Strip(firstBody))
 	}
 }
 
