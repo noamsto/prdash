@@ -734,11 +734,16 @@ func (m *Model) repaintActive() {
 }
 
 // previewScrollBy scrolls the side preview by delta lines, clamped so the last
-// line can't scroll above the top of the pane.
+// line can't scroll above the top of the pane. Only the body scrolls — the
+// pinned head keeps its rows, so they come off the visible budget.
 func (m *Model) previewScrollBy(delta int) {
 	l := computeLayout(m.width, m.height)
-	visible := m.contentHeight(l) - 2 // inside the pane border
-	over := lipgloss.Height(m.previewPane()) - visible
+	head, body := m.previewParts()
+	visible := m.previewHeight(l) - 2 // inside the pane border
+	if head != "" {
+		visible -= lipgloss.Height(head) + 1 // the head and the blank row under it
+	}
+	over := lipgloss.Height(body) - visible
 	if over < 0 {
 		over = 0 // content fits the pane; nothing to scroll
 	}
@@ -2136,16 +2141,15 @@ func (m Model) renderInner() string {
 	return board
 }
 
-// contentWidth is the width of the filter bar and the list column below it. It
-// is the whole terminal until the preview is hidden and the list is capped, at
-// which point the filter bar narrows with the list rather than overhanging the
-// empty right margin.
+// contentWidth is the width of the filter bar and the list column below it. The
+// bar tracks the list column, not the terminal — the preview beside it spans the
+// bar's rows rather than starting under them. Zoom is the exception: there is no
+// list column there, so the bar sits over the full-width preview.
 func (m Model) contentWidth() int {
-	l := computeLayout(m.width, m.height)
-	if !l.ShowSide {
-		return l.ListWidth
+	if m.previewMax {
+		return m.width
 	}
-	return m.width
+	return computeLayout(m.width, m.height).ListWidth
 }
 
 // filterInputWidth is the textinput's own width budget: the box interior
@@ -2224,22 +2228,24 @@ func (m Model) board() string {
 		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
 	}
 	l := computeLayout(m.width, m.height)
+	// The filter bar belongs to the list column, so renderMain/renderDocked
+	// stack it there themselves rather than it spanning the frame above them.
 	if m.previewMax {
-		return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
+		return m.header() + "\n" + m.renderMain() // zoom fills the frame; action folded into the title
 	}
 	if l.ShowSide && l.ShowPanel {
-		return m.header() + "\n" + m.filterBar() + "\n" + m.renderDocked(l)
+		return m.header() + "\n" + m.renderDocked(l)
 	}
 	if !l.ShowFooter {
 		// Small window: the footer's key hints are dropped (press ? for them), but
 		// the filter bar stays — it's the primary surface, not chrome.
-		return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain()
+		return m.header() + "\n" + m.renderMain()
 	}
 	foot := m.statusBar()
 	if l.ShowPanel {
 		foot = m.keysActionsPanel(m.width)
 	}
-	return m.header() + "\n" + m.filterBar() + "\n" + m.renderMain() + "\n" + foot
+	return m.header() + "\n" + m.renderMain() + "\n" + foot
 }
 
 // confirmQuestion is the y/n prompt text for the pending action. A single target

@@ -1633,6 +1633,29 @@ func TestFilterBarIsAlwaysThreeRows(t *testing.T) {
 	}
 }
 
+// TestFilterBarSpansListColumnOnly locks the bar to the list column: it stops
+// where the list stops, and the preview beside it starts level with the bar's
+// own top row rather than below it.
+func TestFilterBarSpansListColumnOnly(t *testing.T) {
+	m := newTestModelWideWithPR(t)
+	u, _ := m.Update(tea.WindowSizeMsg{Width: 150, Height: 40})
+	m = u.(Model)
+
+	l := computeLayout(m.width, m.height)
+	if !l.ShowSide {
+		t.Fatal("fixture must be wide enough for the side preview")
+	}
+	if got := lipgloss.Width(m.filterBar()); got != l.ListWidth {
+		t.Fatalf("filter bar width = %d, want the list column's %d", got, l.ListWidth)
+	}
+	// The preview's title only ever appears in its top border, so finding it on
+	// the main block's first row is what proves the pane reaches that high.
+	first := ansi.Strip(strings.SplitN(m.renderMain(), "\n", 2)[0])
+	if !strings.Contains(first, m.previewTitle()) {
+		t.Fatalf("preview must start on the filter bar's row; first row = %q", first)
+	}
+}
+
 // TestFilterInputKeepsCursorVisible guards that once the box clamps the
 // textinput's own width (so it can't wrap the box open), typing past the
 // visible window still scrolls to keep the cursor in view instead of hiding
