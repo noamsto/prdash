@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -118,8 +120,24 @@ func boxFastReason(content string, w, h int) (lines []string, widths []int, reas
 	}
 	widths = make([]int, len(lines))
 	for i, ln := range lines {
-		if strings.ContainsAny(ln, "\t\r") {
-			return nil, nil, fmt.Sprintf("line %d has a tab or CR: %q", i, ln)
+		// Style.Render rewrites control bytes before it measures anything: tabs
+		// become spaces, CR is dropped from CRLF, and the wrap treats VT as a
+		// line break, so a row carrying one comes back as two. They all measure
+		// zero, so only a byte check sees them. ESC is the exception the escape
+		// scan below exists for.
+		if j := strings.IndexFunc(ln, func(r rune) bool {
+			return (r < 0x20 && r != 0x1b) || r == 0x7f
+		}); j >= 0 {
+			return nil, nil, fmt.Sprintf("line %d has control byte %#x at %d: %q", i, ln[j], j, ln)
+		}
+		// The escape scan below reads 7-bit introducers, but the parser behind
+		// Style.Render works on bytes and also honours the 8-bit C1 forms — a raw
+		// 0x9b opens a CSI there and would slip past the scan, and past the width
+		// check too, since C1 measures zero. Every C1 byte lies in 0x80..0xbf,
+		// where valid UTF-8 only ever puts a continuation byte, so validity rules
+		// the whole class out at once. Log output is where invalid UTF-8 shows up.
+		if !utf8.ValidString(ln) {
+			return nil, nil, fmt.Sprintf("line %d is not valid UTF-8: %q", i, ln)
 		}
 		if pensOpenAtEnd(ln) {
 			return nil, nil, fmt.Sprintf("line %d leaves a pen open: %q", i, ln)
@@ -184,8 +202,11 @@ func pensOpenAtEnd(s string) bool {
 			// Mirrors ultraviolet's ReadLink, which lipgloss feeds the OSC data
 			// to: anything but exactly three ;-separated fields — a URI holding
 			// its own ';', say — leaves the pen where it was.
-			if f := strings.Split(body[:end], ";"); len(f) == 3 && f[0] == "8" {
-				link = f[1] != "" || f[2] != ""
+			// The command is read as a number, not text, so 08 is still 8.
+			if f := strings.Split(body[:end], ";"); len(f) == 3 {
+				if cmd, err := strconv.Atoi(f[0]); err == nil && cmd == 8 {
+					link = f[1] != "" || f[2] != ""
+				}
 			}
 			s = body[adv:]
 		default:

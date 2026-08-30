@@ -24,7 +24,7 @@ type boxFixture struct{ name, content string }
 
 // boxFixtureCount is asserted against the executed case count so a fixture that
 // falls out of the table below shows up as a failure rather than as silence.
-const boxFixtureCount = 31
+const boxFixtureCount = 36
 
 // boxFixtures spans the shapes a width comparison alone cannot decide: the ones
 // Style.Render rewrites before measuring (tabs, CRLF, pens left open at a line
@@ -59,6 +59,15 @@ func boxFixtures(w int) []boxFixture {
 		{"csiAbortedByEscape", "\x1b[\x1b[31mred\nplain"},
 		{"csiTruncatedParamsThenEscape", "\x1b[38;5\x1b[31mred\nplain"},
 		{"csiTrailingSemicolonThenEscape", "\x1b[1;\x1b[31mred\nplain"},
+		// The OSC command is a number to the real parser, so 08 is still 8.
+		{"osc8LeadingZeroCommand", "\x1b]08;;https://x.com\x1b\\click\nhere"},
+		// Raw 8-bit C1 introducers: the parser behind Style.Render honours them,
+		// and they measure zero, so neither the escape scan nor the width check
+		// sees them — only the UTF-8 check does.
+		{"c1CsiRaw", "\x9b31mred\nplain"},
+		{"c1OscRaw", "\x9d8;;https://x.com\x1b\\click\nhere"},
+		{"c1CsiAsUTF8", "\u009b31mred\nplain"},
+		{"controlBytes", "a\x00b\x07c\x7fd\x0be\x0cf\x08g\nplain"},
 		{"cjk", "重试重试重试"},
 		{"cjkStraddlesEdge", strings.Repeat("x", max(0, inner-1)) + "重"},
 		{"zwjEmoji", "👨‍👩‍👧‍👦 fam"},
@@ -142,6 +151,8 @@ func TestPensOpenAtEnd(t *testing.T) {
 		{"csiTrailingSemicolonThenEscape", "\x1b[1;\x1b[31mred", true},
 		{"csiAbortedThenBalanced", "\x1b[\x1b[31mred\x1b[0m", false},
 		{"csiTruncatedAtEnd", "abc\x1b[38;5", false},
+		{"osc8LeadingZeroCommand", "\x1b]08;;https://x.com\x1b\\click", true},
+		{"osc8LeadingZeroClosed", "\x1b]08;;https://x.com\x1b\\click\x1b]08;;\x1b\\", false},
 	}
 	for _, c := range cases {
 		if got := pensOpenAtEnd(c.s); got != c.want {
