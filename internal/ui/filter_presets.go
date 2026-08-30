@@ -2,8 +2,6 @@ package ui
 
 import "strings"
 
-type filterPreset struct{ name, search string }
-
 // prStates / issueStates are the `s`-toggle cycles per board. Order = cycle order.
 var prStates = []string{"open", "merged", "closed"}
 var issueStates = []string{"open", "closed"}
@@ -61,41 +59,10 @@ const (
 	assigneeBody = "assignee:@me"
 )
 
-var defaultPresets = []filterPreset{
-	{"mine", authorBody},
-	{"all", ""},
-}
-
-var issuePresets = []filterPreset{
-	{"mine", assigneeBody},
-	{"all", ""},
-}
-
-// statesFor / presetsFor select the cycle tables for the active board mode.
+// statesFor selects the s-toggle cycle table for the active board mode.
 func statesFor(mode string) []string {
 	if mode == "issue" {
 		return issueStates
 	}
 	return prStates
-}
-
-func presetsFor(mode string) []filterPreset {
-	if mode == "issue" {
-		return issuePresets
-	}
-	return defaultPresets
-}
-
-// nextPreset returns the index after i, wrapping to 0.
-func nextPreset(i int, presets []filterPreset) int { return (i + 1) % len(presets) }
-
-// presetIndexFor returns the index of the preset whose body equals body, or -1
-// when it is a custom (author) query.
-func presetIndexFor(body string, presets []filterPreset) int {
-	for i, p := range presets {
-		if p.search == body {
-			return i
-		}
-	}
-	return -1
 }

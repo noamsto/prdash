@@ -24,10 +24,9 @@ import (
 )
 
 // boardView is the per-mode selection saved across an i-toggle so flipping back
-// lands on the same state/preset the user left.
+// lands on the same state/body the user left.
 type boardView struct {
 	state, body, filter string
-	presetIdx           int
 }
 
 type Model struct {
@@ -113,7 +112,6 @@ type Model struct {
 	spinnerFrame      int                  // advancing index into spinnerFrames
 	polling           bool                 // the live-checks poll tick loop is running
 	actionStatus      *actionStat          // transient inline-action progress shown by the header
-	presetIdx         int                  // index into defaultPresets; -1 when filter is a custom (author) query
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
 	showPicker        bool
@@ -136,8 +134,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	return Model{
 		dir: dir, filter: resolved, state: state, body: body, mode: "pr",
 		other: boardView{
-			state: "open", body: assigneeBody, filter: searchFor("issue", "open", assigneeBody),
-			presetIdx: 0, // issuePresets[0] == "mine"
+			state: "open", body: "", filter: searchFor("issue", "open", ""),
 		},
 		cache: c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
@@ -146,9 +143,9 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		reviewRequested: map[int]bool{}, reviewedSet: map[int]bool{},
 		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
-		previewN:  2,
-		logCache:  map[string][]logStep{},
-		presetIdx: -1, refreshing: true, // the PR board has no presets; sections replace them
+		previewN:   2,
+		logCache:   map[string][]logStep{},
+		refreshing: true,
 	}
 }
 
@@ -1526,8 +1523,8 @@ func (m *Model) switchToFilter() tea.Cmd {
 // selection, restores the other's, swaps the section + action set, resets all
 // per-item/preview view state, and re-fetches (cached → instant).
 func (m *Model) toggleMode() tea.Cmd {
-	cur := boardView{state: m.state, body: m.body, filter: m.filter, presetIdx: m.presetIdx}
-	m.state, m.body, m.filter, m.presetIdx = m.other.state, m.other.body, m.other.filter, m.other.presetIdx
+	cur := boardView{state: m.state, body: m.body, filter: m.filter}
+	m.state, m.body, m.filter = m.other.state, m.other.body, m.other.filter
 	m.other = cur
 
 	if m.mode == "pr" {
@@ -1619,7 +1616,6 @@ func (m *Model) confirmPicker() tea.Cmd {
 		slices.Sort(terms)
 		m.body = strings.Join(terms, " ")
 		m.filter = searchFor(m.mode, m.state, m.body)
-		m.presetIdx = -1
 		return m.switchToFilter()
 	case "reviewer":
 		v, ok := m.cursorVars()
@@ -2205,16 +2201,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			m.showActions = true
 			return m, m.actionFilter.Focus()
-		case "f":
-			if m.mode != "issue" {
-				return m, nil // PR board: filtering is via / (omni); f is retired
-			}
-			// presetIdx is -1 for a custom (author) filter; max(...,0) makes f resume from "mine".
-			ps := presetsFor(m.mode)
-			m.presetIdx = nextPreset(max(m.presetIdx, 0), ps)
-			m.body = ps[m.presetIdx].search
-			m.filter = searchFor(m.mode, m.state, m.body)
-			return m, m.switchToFilter()
 		case "s":
 			m.state = nextState(m.state, statesFor(m.mode))
 			body := m.body
@@ -2674,11 +2660,11 @@ func (m Model) titleGlyph() string {
 }
 
 // listTitle is the list pane's border title — the current view: state glyph +
-// preset (or custom author body, or the active omni query) + state + shown count.
+// label (custom author body, the active omni query, or "all") + state + shown count.
 func (m Model) listTitle() string {
 	label := m.body
-	if m.mode == "issue" && m.presetIdx >= 0 {
-		label = presetsFor(m.mode)[m.presetIdx].name
+	if m.mode == "issue" {
+		label = "all"
 	} else if m.mode == "pr" {
 		if m.omniServer != "" {
 			label = m.omniServer
@@ -3074,9 +3060,6 @@ func (m Model) statusBar() string {
 		if computeLayout(m.width, m.height).ShowSide {
 			parts = append(parts, hint("p", "all comments")) // only unfolds the side preview's timeline
 		}
-	}
-	if m.mode == "issue" {
-		parts = append(parts, hint("f", "preset")) // f cycles issue presets; it's retired on the PR board
 	}
 	parts = append(parts, hint("/", "find"), hint("space", "select"))
 	if m.mode == "pr" {

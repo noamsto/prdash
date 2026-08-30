@@ -154,26 +154,10 @@ func TestViewShowsHeaderAndStatus(t *testing.T) {
 	}
 }
 
-func TestCycleFilterAdvancesPresetAndLabel(t *testing.T) {
-	m := NewModel("/repo", "is:open", nil)
-	m.SetRepo("noamsto/prdash")
-	m.width, m.height = 100, 30
-	m.mode = "issue"
-	m.section = NewIssueSection("is:open")
-	m.presetIdx = 0 // issuePresets[0] == "mine"
-	m2, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
-	m = m2.(Model)
-	if m.filter != "is:open" {
-		t.Fatalf("after f, filter = %q", m.filter)
-	}
-	if !strings.Contains(m.render(), "all") {
-		t.Fatalf("header should show the active preset name: %q", m.render())
-	}
-}
-
-// TestFAndBigFAreNoOpsOnPRBoard guards Phase E: on the PR board, filtering is
-// via / (omni) — f and F are retired (issue board f cycles presets unchanged).
-func TestFAndBigFAreNoOpsOnPRBoard(t *testing.T) {
+// TestFAndBigFAreNoOpsOnBothBoards guards Phase E/R7: filtering is via /
+// (omni) on the PR board and via sections on the issue board — f and F are
+// retired everywhere.
+func TestFAndBigFAreNoOpsOnBothBoards(t *testing.T) {
 	m := newTestModelWithRows(t)
 	before := m.filter
 	u, _ := m.Update(keyMsg("f"))
@@ -183,6 +167,14 @@ func TestFAndBigFAreNoOpsOnPRBoard(t *testing.T) {
 	u2, _ := u.(Model).Update(keyMsg("F"))
 	if u2.(Model).showPicker {
 		t.Error("F must not open the author picker anymore")
+	}
+
+	m2, _ := m.Update(keyMsg("tab")) // switch to the issue board
+	m = m2.(Model)
+	before = m.filter
+	u3, _ := m.Update(keyMsg("f"))
+	if u3.(Model).filter != before {
+		t.Error("f must be a no-op on the issue board")
 	}
 }
 
@@ -274,7 +266,6 @@ func TestGroupedRenderEmitsHeadersAndTracksCursorLine(t *testing.T) {
 
 func TestMineViewRendersFlatNoHeaders(t *testing.T) {
 	m := NewModel("/repo", "is:open author:@me", nil) // the "mine" preset
-	m.presetIdx = 0                                   // NewModel no longer infers the preset from body
 	m.SetRepo("r")
 	m.width, m.height = 100, 30
 	p1 := gh.PR{Number: 1, Title: "one"}
@@ -1699,7 +1690,7 @@ func TestFilterBarShowsMatchCountWhenFiltered(t *testing.T) {
 }
 
 // TestStatusBarOmitsRetiredFilterKey guards that the footer doesn't advertise a
-// dead key: f cycles presets on the issue board and does nothing on the PR one.
+// dead key: f is retired on both boards now that sections replace presets.
 func TestStatusBarOmitsRetiredFilterKey(t *testing.T) {
 	m := newTestModelWithRows(t)
 	m.width, m.height = 130, 40
@@ -1710,8 +1701,8 @@ func TestStatusBarOmitsRetiredFilterKey(t *testing.T) {
 
 	m.mode = "issue"
 	m.section = NewIssueSection(m.filter)
-	if bar := ansi.Strip(m.statusBar()); !strings.Contains(bar, "f:preset") {
-		t.Fatalf("issue board footer = %q, want f labelled as the preset cycle", bar)
+	if bar := ansi.Strip(m.statusBar()); strings.Contains(bar, "f:") {
+		t.Fatalf("issue board footer advertises f, which is retired there: %q", bar)
 	}
 }
 

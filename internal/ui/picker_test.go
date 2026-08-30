@@ -64,7 +64,4 @@ func TestConfirmAuthorSetsFilter(t *testing.T) {
 	if m.filter != "is:open author:alice author:bob" {
 		t.Fatalf("author filter = %q", m.filter)
 	}
-	if m.presetIdx != -1 {
-		t.Fatalf("author filter should be custom (presetIdx -1), got %d", m.presetIdx)
-	}
 }
