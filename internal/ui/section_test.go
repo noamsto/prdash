@@ -554,6 +554,89 @@ func TestPRSectionResolvesOnlyVisibleImmediateStackParent(t *testing.T) {
 	if got := s.stackParentNumber(1); got != 101 {
 		t.Errorf("tip parent = #%d, want #101", got)
 	}
+
+	// A just-merged predecessor can be held briefly on the open board. It is not
+	// a blocker: the next open link is the visible root while its child remains
+	// blocked on that immediate link.
+	s.SetPRs([]gh.PR{
+		{Number: 100, State: "MERGED", Stack: stack, StackPosition: 1},
+		{Number: 101, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+	})
+	for i := 0; i < s.Len(); i++ {
+		switch s.prAt(i).Number {
+		case 101:
+			if got := s.stackParentNumber(i); got != 0 {
+				t.Errorf("post-merge visible root parent = #%d, want none", got)
+			}
+		case 102:
+			if got := s.stackParentNumber(i); got != 101 {
+				t.Errorf("post-merge tip parent = #%d, want #101", got)
+			}
+		}
+	}
+}
+
+func TestPRStackMissingCountUsesTitleTagBudget(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 13}
+	prs := []gh.PR{
+		{Number: 100, Title: "root", Stack: stack, StackPosition: 1},
+		{Number: 101, Title: "middle", Stack: stack, StackPosition: 2},
+		{Number: 102, Title: "tip", Stack: stack, StackPosition: 3},
+	}
+	s := NewPRSection("")
+	s.SetPRs(prs)
+	row := s.RenderRow(0, RowOpts{Width: 90, NumWidth: 4})
+	if got := ansi.Strip(row); !strings.Contains(got, "⧉+10") {
+		t.Fatalf("missing count = %q, want complete ⧉+10", got)
+	}
+	if want := dimStyle.Render(" ⧉+10"); !strings.Contains(row, want) {
+		t.Errorf("missing count should be dim: %q does not contain %q", row, want)
+	}
+	if got := lipgloss.Width(row); got != 90 {
+		t.Errorf("row width = %d, want 90", got)
+	}
+	root := ansi.Strip(row)
+	child := ansi.Strip(s.RenderRow(1, RowOpts{Width: 90, NumWidth: 4}))
+	rootCol := lipgloss.Width(strings.Split(root, "#100")[0])
+	childCol := lipgloss.Width(strings.Split(child, "#101")[0])
+	if rootCol != childCol {
+		t.Errorf("number column drifted: root=%q child=%q", root, child)
+	}
+}
+
+func TestSetShownExpandsPartialStackMatch(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := []gh.PR{
+		{Number: 100, Stack: stack, StackPosition: 1},
+		{Number: 101, IsDraft: true, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+		{Number: 200, Title: "unstacked"},
+	}
+	s := NewPRSection("")
+	s.SetHideDrafts(true)
+	s.SetPRs(prs)
+	match := -1
+	for i, p := range s.prs {
+		if p.Number == 102 {
+			match = i
+		}
+	}
+	s.SetShown([]int{match})
+	if s.Len() != 3 {
+		t.Fatalf("partial stack match shows %d rows, want full 3-link chain", s.Len())
+	}
+	for i, want := range []int{100, 101, 102} {
+		if got := s.prAt(i).Number; got != want {
+			t.Errorf("stack row %d = #%d, want #%d", i, got, want)
+		}
+	}
+	if row := ansi.Strip(s.RenderRow(0, RowOpts{Width: 90, NumWidth: 4})); !strings.Contains(row, "⧉") {
+		t.Errorf("lowest visible member should be the root: %q", row)
+	}
+	if got := s.stackParentNumber(2); got != 101 {
+		t.Errorf("expanded tip parent = #%d, want #101", got)
+	}
 }
 
 func TestSetPRsMergedSortsByMergeTime(t *testing.T) {

@@ -2309,6 +2309,29 @@ func TestVSelectsStackFromAnyMember(t *testing.T) {
 	}
 }
 
+func TestDKeyKeepsStackedDraftLinks(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := []gh.PR{
+		{Number: 100, Stack: stack, StackPosition: 1},
+		{Number: 101, IsDraft: true, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+		{Number: 200, IsDraft: true},
+	}
+	m.setPRs(prs)
+	u, _ := m.Update(keyMsg("D"))
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	if !m.hideDrafts || ps.Len() != 3 {
+		t.Fatalf("D leaves hideDrafts=%v and %d rows, want true and the 3-link stack", m.hideDrafts, ps.Len())
+	}
+	for i, want := range []int{100, 101, 102} {
+		if got := ps.prAt(i).Number; got != want {
+			t.Errorf("D stack row %d = #%d, want #%d", i, got, want)
+		}
+	}
+}
+
 func TestVKeyAdvancesSelection(t *testing.T) {
 	m := NewModel("/tmp", "is:open", nil)
 	m.width, m.height = 120, 40

@@ -17,20 +17,21 @@ import (
 
 // RowOpts controls how a section renders one row.
 type RowOpts struct {
-	Width       int
-	NumWidth    int // cell width for the right-aligned number column (0 = natural)
-	Focused     bool
-	Selected    bool
-	Draft       bool   // dim the title; drafts sort last (see sortPRs)
-	Landed      bool   // merged by prdash this session, held on the open board until ctrl+r
-	Commented   bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
-	Flag        string // pre-rendered ! column glyph (conflict/behind), "" when unknown
-	Tree        string // stack chain glyph, rendered between the gutter and the number
-	DiffWidth   int    // cell width of the diffstat column; 0 hides it
-	TicketWidth int    // cell width of the ticket-id column; 0 hides it
-	AuthorWidth int    // fixed cell width for the author column; 0 = natural width (no padding)
-	CompactDiff bool   // render ±N instead of +N -N
-	Initials    bool   // 2-char author initials instead of the login
+	Width        int
+	NumWidth     int // cell width for the right-aligned number column (0 = natural)
+	Focused      bool
+	Selected     bool
+	Draft        bool   // dim the title; drafts sort last (see sortPRs)
+	Landed       bool   // merged by prdash this session, held on the open board until ctrl+r
+	Commented    bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
+	Flag         string // pre-rendered ! column glyph (conflict/behind), "" when unknown
+	Tree         string // stack chain glyph, rendered between the gutter and the number
+	StackMissing string // complete dim ⧉+N marker, rendered in the title/tag budget
+	DiffWidth    int    // cell width of the diffstat column; 0 hides it
+	TicketWidth  int    // cell width of the ticket-id column; 0 hides it
+	AuthorWidth  int    // fixed cell width for the author column; 0 = natural width (no padding)
+	CompactDiff  bool   // render ±N instead of +N -N
+	Initials     bool   // 2-char author initials instead of the login
 }
 
 type Section interface {
@@ -59,8 +60,9 @@ type PRSection struct {
 
 	// Stack rendering is derived from the current shown set: an open board can
 	// be missing merged links, so the lowest visible position is its root.
-	stackRoots map[int]int // PR number → lowest visible PR number in its stack
-	stackTrees map[int]string
+	stackRoots   map[int]int // PR number → lowest visible PR number in its stack
+	stackTrees   map[int]string
+	stackMissing map[int]string
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
@@ -125,7 +127,7 @@ func (s *PRSection) stackParentNumber(i int) int {
 	}
 	for _, j := range s.shown {
 		parent := s.prs[j]
-		if parent.Stack != nil && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
+		if parent.State != "MERGED" && parent.Stack != nil && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
 			return parent.Number
 		}
 	}
@@ -182,6 +184,7 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	if tree := s.stackTrees[p.Number]; tree != "" {
 		o.Tree = tree
 	}
+	o.StackMissing = s.stackMissing[p.Number]
 	// A terminal PR's cell-1 glyph reflects how it ended, not its frozen CI rollup:
 	// merged → mauve merge mark, closed → dim ✗. The age column likewise shows the
 	// event that ended it (merge/close time) rather than the last update.
@@ -275,6 +278,7 @@ func (s *PRSection) SetForceFlat(v bool)  { s.forceFlat = v }
 func (s *PRSection) SetState(state string) { s.state = state }
 
 func (s *PRSection) setShownOrdered(idx []int) {
+	idx = expandStackMembers(s.prs, idx)
 	if s.hideDrafts {
 		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool {
 			return s.prs[i].IsDraft && s.prs[i].Stack == nil
@@ -298,6 +302,33 @@ func (s *PRSection) setShownOrdered(idx []int) {
 	}
 	s.grouped = false
 	s.setShownStacks(flattenUnits(units))
+}
+
+// expandStackMembers keeps a fuzzy hit from making its chain look shorter than
+// it is. A stack is a display unit, so matching any link shows every link the
+// section holds before grouping, connector selection, and triage run.
+func expandStackMembers(prs []gh.PR, idx []int) []int {
+	matched := map[int]bool{}
+	for _, i := range idx {
+		if p := prs[i]; p.Stack != nil {
+			matched[p.Stack.Number] = true
+		}
+	}
+	if len(matched) == 0 {
+		return idx
+	}
+	seen := make(map[int]bool, len(idx))
+	out := make([]int, 0, len(prs))
+	for _, i := range idx {
+		seen[i] = true
+		out = append(out, i)
+	}
+	for i, p := range prs {
+		if !seen[i] && p.Stack != nil && matched[p.Stack.Number] {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // stackUnits keeps every visible stack contiguous and positions its members
@@ -413,6 +444,7 @@ func (s *PRSection) setShownStacks(shown []int) {
 	s.shown = shown
 	s.stackRoots = map[int]int{}
 	s.stackTrees = map[int]string{}
+	s.stackMissing = map[int]string{}
 	byStack := map[int][]int{}
 	for _, i := range shown {
 		if p := s.prs[i]; p.Stack != nil {
@@ -427,7 +459,8 @@ func (s *PRSection) setShownStacks(shown []int) {
 			s.stackRoots[p.Number] = root.Number
 			switch {
 			case n == 0 && missing > 0:
-				s.stackTrees[p.Number] = dimStyle.Render("⧉+" + strconv.Itoa(missing))
+				s.stackTrees[p.Number] = "⧉"
+				s.stackMissing[p.Number] = "⧉+" + strconv.Itoa(missing)
 			case n == 0:
 				s.stackTrees[p.Number] = "⧉"
 			case n == len(members)-1:
@@ -604,11 +637,11 @@ type rightCols struct {
 // sized to the widest shown author so every row's columns land at the same cell.
 // Either way the author is the last to be carved and shrinks toward empty before
 // the fixed columns drop, so the title never starves.
-func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW int, landed bool) rightCols {
+func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, tagW int) rightCols {
 	slack := w - leftW - ageW - 2 - 1
 	c := rightCols{age: ageW}
-	if landed && slack-len(landedTag) >= 0 {
-		c.tag = len(landedTag)
+	if tagW > 0 && slack-tagW >= 0 {
+		c.tag = tagW
 	}
 	if diffW > 0 && slack-c.tag-2-diffW >= 0 {
 		c.diff = 2 + diffW
@@ -696,7 +729,14 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated or cut to initials.
 	ageW := 2 + max(3, lipgloss.Width(age)) // matches the age suffix rendered below
-	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, o.Landed)
+	tag := ""
+	if o.Landed {
+		tag += landedTag
+	}
+	if o.StackMissing != "" {
+		tag += " " + o.StackMissing
+	}
+	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, lipgloss.Width(tag))
 	tagW, diffExtra, tktExtra, authorCap := cols.tag, cols.diff, cols.ticket, cols.author
 	right := ""
 	if tktExtra > 0 {
@@ -740,7 +780,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	}
 	tags := ""
 	if tagW > 0 {
-		tags = dimStyle.Render(landedTag)
+		tags = dimStyle.Render(tag)
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
 
@@ -767,7 +807,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 func columnHeader(w, numW, diffW, tktW, authorW int) string {
 	const gutterW, treeW, ageW = 9, 3, 5
 	leftW := gutterW + treeW + numW + 1
-	cols := reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, false)
+	cols := reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, 0)
 
 	// Each glyph aligns the way its column's data does: the author and ticket are
 	// left-aligned, the diffstat and age are right-aligned.
