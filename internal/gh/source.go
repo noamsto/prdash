@@ -56,7 +56,9 @@ type MembersSource interface {
 type MutationSource interface {
 	MergePR(prID string) error
 	EnableAutoMerge(prID string) error
+	DisableAutoMerge(prID string) error
 	MarkReady(prID string) error
+	ConvertToDraft(prID string) error
 	UpdateBranch(prID string) error
 	ApprovePR(prID string) error
 	RequestReviews(prID string, logins []string) error

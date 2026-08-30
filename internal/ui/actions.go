@@ -114,6 +114,7 @@ func (m *Model) queueExit(key string, argv []string) {
 // runAction executes a single-scope action against the cursor row. exits-tui
 // actions hand off (or queue) the command and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
+	a = m.resolvePRAction(a)
 	v, ok := m.cursorVars()
 	if !ok {
 		return nil
@@ -231,7 +232,7 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bool) {
 	if p.ID == "" {
 		switch native {
-		case "merge-squash", "auto-merge-squash", "mark-ready", "update-branch", "approve":
+		case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
 			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
 			return func() error { return err }, true
 		}
@@ -247,7 +248,18 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		if err := m.mergePreCheck(p); err != nil {
 			return func() error { return err }, true
 		}
+		if p.AutoMergeEnabled() {
+			return func() error { return nil }, true
+		}
 		return func() error { return src.EnableAutoMerge(p.ID) }, true
+	case "disable-auto-merge":
+		if err := m.mergePreCheck(p); err != nil {
+			return func() error { return err }, true
+		}
+		if !p.AutoMergeEnabled() {
+			return func() error { return nil }, true
+		}
+		return func() error { return src.DisableAutoMerge(p.ID) }, true
 	case "mark-ready":
 		if p.State != "OPEN" {
 			err := fmt.Errorf("PR #%d is not open", p.Number)
@@ -257,6 +269,15 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 			return func() error { return nil }, true // already ready: gh's own CLI treats this as a benign no-op
 		}
 		return func() error { return src.MarkReady(p.ID) }, true
+	case "convert-to-draft":
+		if p.State != "OPEN" {
+			err := fmt.Errorf("PR #%d is not open", p.Number)
+			return func() error { return err }, true
+		}
+		if p.IsDraft {
+			return func() error { return nil }, true
+		}
+		return func() error { return src.ConvertToDraft(p.ID) }, true
 	case "update-branch":
 		return func() error { return src.UpdateBranch(p.ID) }, true
 	case "approve":
@@ -406,6 +427,7 @@ const bulkWarnThreshold = 4
 // targets a PR the viewer didn't author or fans out across a bulk selection, or
 // when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
+	a = m.resolvePRAction(a)
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
 	if a.Confirm || overThreshold || m.needsOthersConfirm(a) {
 		m.pending = &a
@@ -442,6 +464,7 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 // Scope:"per-selected", so runBulkNative — not singleNativeCmd — is the one
 // that actually fires for a single cursor-row press too.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
+	a = m.resolvePRAction(a)
 	if a.Command.Native != "" {
 		return m.runBulkNative(a)
 	}
@@ -463,6 +486,21 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return tea.Quit
 	}
 	return nil
+}
+
+func (m Model) resolvePRAction(a action.Action) action.Action {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.cursor < 0 || m.cursor >= ps.Len() {
+		return a
+	}
+	p := ps.prAt(m.cursor)
+	switch a.Key {
+	case "A":
+		return action.AutoMergeAction(p.AutoMergeEnabled())
+	case "M":
+		return action.ReadyAction(p.IsDraft)
+	}
+	return a
 }
 
 // runBulkNative is runBulk's native-mutation counterpart, firing

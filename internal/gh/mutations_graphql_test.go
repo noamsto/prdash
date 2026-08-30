@@ -45,6 +45,32 @@ func TestEnableAutoMergeInputUsesSquashMethod(t *testing.T) {
 	}
 }
 
+func TestDisableAutoMergeInputUsesPullRequestIDOnly(t *testing.T) {
+	input := githubv4.DisablePullRequestAutoMergeInput{
+		PullRequestID: githubv4.ID("PR_test"),
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"pullRequestId":"PR_test"`) {
+		t.Errorf("DisablePullRequestAutoMergeInput JSON = %s, want pullRequestId", raw)
+	}
+}
+
+func TestConvertPullRequestToDraftInputUsesPullRequestIDOnly(t *testing.T) {
+	input := githubv4.ConvertPullRequestToDraftInput{
+		PullRequestID: githubv4.ID("PR_test"),
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"pullRequestId":"PR_test"`) {
+		t.Errorf("ConvertPullRequestToDraftInput JSON = %s, want pullRequestId", raw)
+	}
+}
+
 func TestAddPullRequestReviewInputUsesApproveEventWithNoBody(t *testing.T) {
 	event := githubv4.PullRequestReviewEventApprove
 	input := githubv4.AddPullRequestReviewInput{

@@ -13,10 +13,7 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Native: "merge-squash"},
 			Confirm: true, Scope: "per-selected", Refresh: true,
 			Progress: "Merging", Past: "Merged", Fail: "Merge failed"},
-		"A": {Key: "A", Label: "Auto-merge (squash)",
-			Command: Command{Native: "auto-merge-squash"},
-			Scope:   "per-selected", ConfirmOthers: true, Refresh: true,
-			Progress: "Enabling auto-merge", Past: "Auto-merge on", Fail: "Auto-merge failed"},
+		"A": AutoMergeAction(false),
 		"r": {Key: "r", Label: "Rerun checks",
 			Command: Command{Builtin: "rerun-failed"}, Scope: "single", Refresh: true,
 			Progress: "Rerunning checks", Past: "Checks re-running", Fail: "Rerun failed"},
@@ -34,10 +31,7 @@ func DefaultPRActions() map[string]Action {
 		"u": {Key: "u", Label: "Update branch",
 			Command: Command{Native: "update-branch"}, Scope: "per-selected", Refresh: true,
 			Progress: "Updating branch", Past: "Branch updated — checks re-running", Fail: "Update failed"},
-		"M": {Key: "M", Label: "Mark ready",
-			Command: Command{Native: "mark-ready"}, Scope: "per-selected", Refresh: true,
-			ConfirmOthers: true,
-			Progress:      "Marking ready", Past: "Marked ready", Fail: "Mark-ready failed"},
+		"M": ReadyAction(true),
 		"L": {Key: "L", Label: "Approve",
 			Command: Command{Native: "approve"}, Scope: "per-selected", Refresh: true,
 			Confirm: true, ConfirmOthers: true,
@@ -48,6 +42,32 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Builtin: "cleanup-branch"}, Scope: "single", Confirm: true,
 			Progress: "Cleaning up", Past: "Branch cleaned up", Fail: "Cleanup failed"},
 	}
+}
+
+func AutoMergeAction(enabled bool) Action {
+	if enabled {
+		return Action{Key: "A", Label: "Disable auto-merge",
+			Command: Command{Native: "disable-auto-merge"},
+			Scope:   "per-selected", ConfirmOthers: true, Refresh: true,
+			Progress: "Disabling auto-merge", Past: "Auto-merge off", Fail: "Auto-merge failed"}
+	}
+	return Action{Key: "A", Label: "Auto-merge (squash)",
+		Command: Command{Native: "auto-merge-squash"},
+		Scope:   "per-selected", ConfirmOthers: true, Refresh: true,
+		Progress: "Enabling auto-merge", Past: "Auto-merge on", Fail: "Auto-merge failed"}
+}
+
+func ReadyAction(draft bool) Action {
+	if !draft {
+		return Action{Key: "M", Label: "Convert to draft",
+			Command: Command{Native: "convert-to-draft"}, Scope: "per-selected", Refresh: true,
+			ConfirmOthers: true,
+			Progress:      "Converting to draft", Past: "Converted to draft", Fail: "Convert to draft failed"}
+	}
+	return Action{Key: "M", Label: "Mark ready",
+		Command: Command{Native: "mark-ready"}, Scope: "per-selected", Refresh: true,
+		ConfirmOthers: true,
+		Progress:      "Marking ready", Past: "Marked ready", Fail: "Mark-ready failed"}
 }
 
 func DefaultIssueActions() map[string]Action {
