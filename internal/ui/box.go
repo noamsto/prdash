@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // indentLines prefixes every line of s with n spaces.
@@ -36,16 +38,215 @@ func dropLines(s string, n int) string {
 	return strings.Join(lines[n:], "\n")
 }
 
+// boxFastDisabled forces boxBody onto boxBodyLipgloss, so a test can build the
+// expected bytes with the same call it is checking.
+var boxFastDisabled bool
+
 // boxBody renders content inside a rounded left/right/bottom border of OUTER
 // width w and OUTER height h; the top edge is drawn separately by the caller so
 // a label or tab bar can be set into it. Content is clipped to the interior.
+// Requires w >= 2 and h >= 2; titledBoxTinted and tabbedBox, the only callers,
+// clamp to 4 and 2.
+//
+// The interior is already exactly the width the layout chose, so lipgloss's
+// wrap, align, border and margin passes only re-measure what we picked. When the
+// precondition scan can prove that, the rows are built directly; otherwise the
+// lipgloss path renders them, bit-for-bit as before.
 func boxBody(content string, w, h int) string {
+	if boxFastDisabled {
+		return boxBodyLipgloss(content, w, h)
+	}
+	lines, widths, reason := boxFastReason(content, w, h)
+	if reason != "" {
+		return boxBodyLipgloss(content, w, h)
+	}
+
+	rb := lipgloss.RoundedBorder()
+	// Derived per call: applyTheme rebuilds sepStyle from the Update loop, so a
+	// flank cached at package scope would paint the pre-switch palette.
+	left, right := sepStyle.Render(rb.Left), sepStyle.Render(rb.Right)
+
+	innerW := w - 2
+	rows := max(1, h-2)
+	out := make([]string, 0, rows+1)
+	for i := range rows {
+		line, lineW := "", 0
+		if i < len(lines) {
+			line, lineW = lines[i], widths[i]
+		}
+		out = append(out, left+line+strings.Repeat(" ", innerW-lineW)+right)
+	}
+	out = append(out, sepStyle.Render(rb.BottomLeft+strings.Repeat(rb.Bottom, innerW)+rb.BottomRight))
+	// At h == 2 the single blank row is the whole box and this drops the bottom
+	// edge, which is what lipgloss's MaxHeight does today.
+	if budget := max(1, h-1); len(out) > budget {
+		out = out[:budget]
+	}
+	return strings.Join(out, "\n")
+}
+
+// boxBodyLipgloss is boxBody's original body, kept as the fallback for content
+// the fast path cannot prove equivalent.
+func boxBodyLipgloss(content string, w, h int) string {
 	rb := lipgloss.RoundedBorder()
 	return lipgloss.NewStyle().
 		Border(rb, false, true, true, true).
 		BorderForeground(lipgloss.Color(theme.Rule)).
 		Width(w).Height(h - 1).MaxWidth(w).MaxHeight(h - 1).
 		Render(clipLines(content, h-2))
+}
+
+// boxFastReason reports why boxBody cannot build content's rows directly at
+// w x h, or "" when it can, along with the clipped lines and their widths so the
+// fast path never splits or measures a second time.
+//
+// A width check alone is not enough: Style.Render rewrites its input before it
+// measures it. Tabs expand to spaces, CRLF collapses to LF, and a pen left open
+// at a line end is reset before the newline and re-emitted after it — none of
+// which a display width can see.
+func boxFastReason(content string, w, h int) (lines []string, widths []int, reason string) {
+	innerW := w - 2
+	// Below the documented w >= 2 there is no interior to pad to, and content
+	// clipped to zero rows would skip the per-line width check that otherwise
+	// catches this.
+	if innerW < 0 {
+		return nil, nil, fmt.Sprintf("interior width %d is negative", innerW)
+	}
+	lines = strings.Split(content, "\n")
+	if len(lines) > h-2 {
+		lines = lines[:max(0, h-2)]
+	}
+	widths = make([]int, len(lines))
+	for i, ln := range lines {
+		if strings.ContainsAny(ln, "\t\r") {
+			return nil, nil, fmt.Sprintf("line %d has a tab or CR: %q", i, ln)
+		}
+		if pensOpenAtEnd(ln) {
+			return nil, nil, fmt.Sprintf("line %d leaves a pen open: %q", i, ln)
+		}
+		widths[i] = ansi.StringWidth(ln)
+		if widths[i] > innerW {
+			return nil, nil, fmt.Sprintf("line %d is %d cells wide, interior is %d: %q", i, widths[i], innerW, ln)
+		}
+	}
+	return lines, widths, ""
+}
+
+// pensOpenAtEnd reports whether an SGR style or an OSC 8 hyperlink is still open
+// at the end of s. lipgloss's WrapWriter carries both pens independently and
+// rewrites the line when either is open at a newline, so both have to be closed
+// before rows can be emitted verbatim.
+func pensOpenAtEnd(s string) bool {
+	style, link := false, false
+	for {
+		i := strings.IndexByte(s, 0x1b)
+		if i < 0 || i+1 >= len(s) {
+			return style || link
+		}
+		rest := s[i+1:]
+		switch rest[0] {
+		case '[': // CSI, up to its final byte
+			j := strings.IndexFunc(rest[1:], func(r rune) bool { return r >= '@' && r <= '~' })
+			if j < 0 {
+				return style || link
+			}
+			if rest[1+j] == 'm' {
+				p := rest[1 : 1+j]
+				style = !(p == "" || p == "0")
+			}
+			s = rest[2+j:]
+		case ']': // OSC, up to ST or BEL
+			body := rest[1:]
+			end, adv := -1, 0
+			if k := strings.IndexByte(body, 0x07); k >= 0 {
+				end, adv = k, k+1
+			}
+			if k := strings.Index(body, "\x1b\\"); k >= 0 && (end < 0 || k < end) {
+				end, adv = k, k+2
+			}
+			// An unterminated OSC leaves its pen open, so the answer is already
+			// known. Returning also keeps this walk linear: resuming after the
+			// introducer would rescan the whole tail for a terminator that isn't
+			// there, once per introducer, which is quadratic on a line of them —
+			// and preview and log content is arbitrary text off the network.
+			if end < 0 {
+				return true
+			}
+			// Mirrors ultraviolet's ReadLink, which lipgloss feeds the OSC data
+			// to: anything but exactly three ;-separated fields — a URI holding
+			// its own ';', say — leaves the pen where it was.
+			if f := strings.Split(body[:end], ";"); len(f) == 3 && f[0] == "8" {
+				link = f[1] != "" || f[2] != ""
+			}
+			s = body[adv:]
+		default:
+			s = rest[1:]
+		}
+	}
+}
+
+// joinFastDisabled forces joinBoard onto joinBoardLipgloss, so a test can build
+// the expected bytes with the same call it is checking.
+var joinFastDisabled bool
+
+// joinBoard stacks the docked column (filter bar, list, and where it is shown
+// the keys/actions panel) and sets side, the preview box, gap columns to its
+// right — the shape lipgloss.JoinVertical + MarginLeft(gap).Render +
+// lipgloss.JoinHorizontal produce.
+//
+// It takes the same maxima lipgloss takes rather than trusting the widths the
+// layout handed out, because it cannot: titledBoxTinted clamps w up to 4, and
+// filterBar's Style.Width stops padding at degenerate widths. What it skips is
+// the three Style.Render passes, which re-measure blocks this pass has already
+// measured once.
+func joinBoard(stack []string, side string, gap int) string {
+	if joinFastDisabled {
+		return joinBoardLipgloss(stack, side, gap)
+	}
+
+	var leftLines []string
+	var leftWidths []int
+	commonW := 0
+	for _, s := range stack {
+		for _, ln := range strings.Split(s, "\n") {
+			w := ansi.StringWidth(ln)
+			leftLines = append(leftLines, ln)
+			leftWidths = append(leftWidths, w)
+			commonW = max(commonW, w)
+		}
+	}
+
+	sideLines := strings.Split(side, "\n")
+	sideWidths := make([]int, len(sideLines))
+	sideW := 0
+	for i, ln := range sideLines {
+		sideWidths[i] = ansi.StringWidth(ln)
+		sideW = max(sideW, sideWidths[i])
+	}
+
+	rows := max(len(leftLines), len(sideLines))
+	lines := make([]string, rows)
+	for i := range rows {
+		left, leftW := "", 0
+		if i < len(leftLines) {
+			left, leftW = leftLines[i], leftWidths[i]
+		}
+		right, rightW := "", 0
+		if i < len(sideLines) {
+			right, rightW = sideLines[i], sideWidths[i]
+		}
+		lines[i] = left + strings.Repeat(" ", commonW-leftW) +
+			strings.Repeat(" ", gap) + right + strings.Repeat(" ", sideW-rightW)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// joinBoardLipgloss is the triple joinBoard replaces, kept so the fast path has
+// something to be checked against and to fall back to.
+func joinBoardLipgloss(stack []string, side string, gap int) string {
+	left := lipgloss.JoinVertical(lipgloss.Left, stack...)
+	side = lipgloss.NewStyle().MarginLeft(gap).Render(side)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
 }
 
 // boxTop builds the rounded top edge of OUTER width w with a pre-rendered
