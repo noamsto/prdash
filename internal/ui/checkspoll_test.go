@@ -3,6 +3,8 @@ package ui
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -207,5 +209,104 @@ func TestCursorFetchIsASingleRequest(t *testing.T) {
 	}
 	if len(msg.details[7].ReviewThreads) != 1 {
 		t.Error("review threads should arrive with the detail, not in a second fetch")
+	}
+}
+
+// TestPollPausesAfterIdleBeats walks pollIdleBeats consecutive beats with no key
+// handled between them: each one must still fetch, since the counter hasn't
+// crossed the threshold yet. The next beat crosses it and must skip the fetch
+// while keeping the tick loop alive (self-resuming: see checksPollMsg).
+func TestPollPausesAfterIdleBeats(t *testing.T) {
+	fc := &fakeChecksSource{}
+	m := pollModel(t, fc, []gh.PR{{Number: 1, StatusCheckRollup: pending()}})
+
+	for i := range pollIdleBeats {
+		u, cmd := m.Update(checksPollMsg{})
+		m = u.(Model)
+		if cmd == nil {
+			t.Fatalf("beat %d: want a command while checks are running", i)
+		}
+		batch, ok := cmd().(tea.BatchMsg)
+		if !ok || len(batch) != 2 {
+			t.Fatalf("beat %d: want a fetch+reschedule batch, got %T", i, cmd())
+		}
+		batch[0]() // pollChecksCmd, per tea.Batch(m.pollChecksCmd(), checksPollTick(...)) call order
+	}
+	if len(fc.got) != pollIdleBeats {
+		t.Fatalf("want %d fetches before going idle, got %d", pollIdleBeats, len(fc.got))
+	}
+
+	// The threshold beat: idle now, so it must reschedule without fetching. Do not
+	// call cmd() here — on the idle path it is the raw checksPollTick closure and
+	// invoking it blocks for the poll interval.
+	u, cmd := m.Update(checksPollMsg{})
+	m = u.(Model)
+	if cmd == nil {
+		t.Fatal("idle beat must still reschedule the tick, not kill the loop")
+	}
+	if !m.polling {
+		t.Fatal("loop should stay alive while idle, waiting for input")
+	}
+	if len(fc.got) != pollIdleBeats {
+		t.Error("idle beat must not fetch")
+	}
+}
+
+// TestKeyInputResetsIdleCounter checks the resume half: a handled key zeroes the
+// counter, so the very next beat fetches again.
+func TestKeyInputResetsIdleCounter(t *testing.T) {
+	fc := &fakeChecksSource{}
+	m := pollModel(t, fc, []gh.PR{{Number: 1, StatusCheckRollup: pending()}})
+	m.pollQuietBeats = pollIdleBeats // already idle
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = u.(Model)
+	if m.pollQuietBeats != 0 {
+		t.Fatalf("handled key should reset the idle counter, got %d", m.pollQuietBeats)
+	}
+
+	_, cmd := m.Update(checksPollMsg{})
+	if cmd == nil {
+		t.Fatal("want a command while checks are running")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("resumed poll should fetch again, got %T", cmd())
+	}
+}
+
+// TestCtrlRRefreshesAndResumesWhileIdle: ctrl+r is itself a handled key, so besides
+// forcing its own refresh it must also resume a paused poll loop.
+func TestCtrlRRefreshesAndResumesWhileIdle(t *testing.T) {
+	fc := &fakeChecksSource{}
+	m := pollModel(t, fc, []gh.PR{{Number: 1, StatusCheckRollup: pending()}})
+	m.pollQuietBeats = pollIdleBeats // idle
+
+	// Do not invoke cmd(): backgroundRefresh's fetch closure dereferences m.prSource,
+	// which pollModel never sets.
+	u, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m = u.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+r must always refresh")
+	}
+	if !m.refreshing {
+		t.Error("ctrl+r should trigger backgroundRefresh")
+	}
+	if m.pollQuietBeats != 0 {
+		t.Error("ctrl+r is a handled key: it should resume a paused poll too")
+	}
+}
+
+// TestThemePollUnaffectedByIdlePause proves the checks-poll idle gate doesn't
+// reach themePollMsg — the theme watch and rate-limit countdown keep ticking.
+func TestThemePollUnaffectedByIdlePause(t *testing.T) {
+	writeState(t, "") // no state file: statModTime errors, the case early-returns
+
+	m := pollModel(t, &fakeChecksSource{}, []gh.PR{{Number: 1, StatusCheckRollup: pending()}})
+	m.pollQuietBeats = pollIdleBeats // idle
+
+	_, cmd := m.Update(themePollMsg{lastMod: m.themeModTime})
+	if cmd == nil {
+		t.Fatal("theme watch tick must keep rearming regardless of checks-poll idle state")
 	}
 }

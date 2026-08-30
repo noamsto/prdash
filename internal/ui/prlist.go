@@ -111,6 +111,7 @@ type Model struct {
 	spinning          bool                 // the refresh spinner tick loop is running
 	spinnerFrame      int                  // advancing index into spinnerFrames
 	polling           bool                 // the live-checks poll tick loop is running
+	pollQuietBeats    int                  // poll beats since a key was handled; pauses the fetch at pollIdleBeats
 	actionStatus      *actionStat          // transient inline-action progress shown by the header
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
@@ -1331,6 +1332,12 @@ const (
 // live-checks poll always force a real refresh regardless.
 const launchFreshTTL = 60 * time.Second
 
+// pollIdleBeats bounds how many quiet checks-poll beats pass before the fetch
+// pauses. ~4 min hot / ~16 min cold: long enough that someone quietly watching
+// their own CI go green (the dominant use of this poll) is never mistaken for
+// gone, short enough that an abandoned session stops burning GraphQL budget.
+const pollIdleBeats = 8
+
 func (m Model) cacheFresh(key string) bool {
 	return m.cacheFreshFor(key, launchFreshTTL)
 }
@@ -1426,6 +1433,7 @@ func (m *Model) maybeStartPoll() tea.Cmd {
 		return nil
 	}
 	m.polling = true
+	m.pollQuietBeats = 0
 	return checksPollTick(m.checksPollDelay())
 }
 
@@ -1931,6 +1939,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pollBusy() {
 			return m, checksPollTick(m.checksPollDelay()) // skip this beat, keep the loop alive
 		}
+		if m.pollQuietBeats >= pollIdleBeats {
+			// Idle: keep ticking so a key resumes us, but skip the fetch. The loop no
+			// longer self-retires while paused — anyChecksRunning() only goes false via
+			// a fetch that lands — so it re-arms until a backgroundRefresh settles it.
+			return m, checksPollTick(m.checksPollDelay())
+		}
+		m.pollQuietBeats++
 		return m, tea.Batch(m.pollChecksCmd(), checksPollTick(m.checksPollDelay()))
 	case checksFetchedMsg:
 		ps, ok := m.section.(*PRSection)
@@ -2024,6 +2039,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive()                            // reflow whichever view owns the viewport to the new size
 		return m, nil
 	case tea.KeyMsg:
+		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
 		if m.logView {
 			return m.updateLogView(msg)
 		}

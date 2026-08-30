@@ -630,6 +630,7 @@ func TestFetchDoesNotStartPollWhenAllSettled(t *testing.T) {
 func TestPollTickStopsWhenChecksSettle(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.polling = true
+	m.pollQuietBeats = pollIdleBeats // idle state must not override the settle-and-stop path
 	m.setPRs([]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{{State: "SUCCESS"}}}})
 	u, cmd := m.Update(checksPollMsg{})
 	if u.(Model).polling {
