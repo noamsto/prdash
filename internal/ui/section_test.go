@@ -527,6 +527,35 @@ func TestPRStackUnitLabelSelectsWholeChain(t *testing.T) {
 	}
 }
 
+func TestPRSectionResolvesOnlyVisibleImmediateStackParent(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := []gh.PR{
+		{Number: 100, Stack: stack, StackPosition: 1},
+		{Number: 101, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+	}
+	s := NewPRSection("")
+	s.SetPRs(prs)
+	for i, want := range []int{0, 100, 101} {
+		if got := s.stackParentNumber(i); got != want {
+			t.Errorf("stack parent for #%d = #%d, want #%d", s.prAt(i).Number, got, want)
+		}
+	}
+
+	// Once #100 merges it leaves the open board. #101 becomes the visible root;
+	// #102 remains blocked only on its exact immediate predecessor.
+	s.SetPRs([]gh.PR{
+		{Number: 101, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+	})
+	if got := s.stackParentNumber(0); got != 0 {
+		t.Errorf("visible root parent = #%d, want none", got)
+	}
+	if got := s.stackParentNumber(1); got != 101 {
+		t.Errorf("tip parent = #%d, want #101", got)
+	}
+}
+
 func TestSetPRsMergedSortsByMergeTime(t *testing.T) {
 	mk := func(num int, merged string) gh.PR {
 		ts, _ := time.Parse(time.RFC3339, merged)

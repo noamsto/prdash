@@ -115,6 +115,23 @@ func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 
+// stackParentNumber returns the immediate predecessor when it is visible in the
+// current board. A merged predecessor is absent from an open board, so a later
+// link becomes its visible root instead of inheriting a stale blocker.
+func (s *PRSection) stackParentNumber(i int) int {
+	p := s.prAt(i)
+	if p.Stack == nil || p.StackPosition <= 1 {
+		return 0
+	}
+	for _, j := range s.shown {
+		parent := s.prs[j]
+		if parent.Stack != nil && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
+			return parent.Number
+		}
+	}
+	return 0
+}
+
 func (s *PRSection) prByNumber(number int) gh.PR {
 	for _, p := range s.prs {
 		if p.Number == number {
