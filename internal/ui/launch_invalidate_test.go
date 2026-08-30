@@ -2,9 +2,11 @@ package ui
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/noamsto/prdash/internal/action"
+	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -85,6 +87,40 @@ func TestMergeDispatchInvalidatesCacheBeforeCompletion(t *testing.T) {
 	}
 	if n := cs.calls.Load(); n == 0 {
 		t.Error("relaunch after a mid-flight merge dispatch should not skip the list fetch")
+	}
+}
+
+// TestRelaunchAfterMergeDispatchRefetchesFromDisk is the full issue #99 repro:
+// merge a PR, quit before the mutation's tea.Cmd ever runs (so the reconcile
+// fetch and its cache.Set never land), flush to disk on exit, then rebuild a
+// brand-new Model+Cache from that file — a real process restart — and confirm
+// the relaunch fetch is not skipped.
+func TestRelaunchAfterMergeDispatchRefetchesFromDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	c := cache.Open(path)
+	m := NewModel("/repo", "is:open author:@me", c)
+	m.SetRepo("owner/repo")
+	warmLaunchCache(m, c)
+	m.SetMutationSource(&fakeMutationSource{})
+	m.setPRs([]gh.PR{{Number: 61, ID: "pr61node", State: "OPEN"}})
+
+	cmd := m.runBulk(action.DefaultPRActions()["m"]) // dispatch only — never executed, like a quit mid-flight
+	if cmd == nil {
+		t.Fatal("expected a dispatch command")
+	}
+	c.Flush() // the process-exit path
+
+	relaunched := cache.Open(path) // a fresh process reading the same on-disk cache
+	rm := NewModel("/repo", "is:open author:@me", relaunched)
+	rm.SetRepo("owner/repo")
+	cs := countLaunchSources(&rm)
+	for _, fc := range rm.launchFetchCmds() {
+		if fc != nil {
+			fc()
+		}
+	}
+	if n := cs.calls.Load(); n == 0 {
+		t.Error("a from-disk relaunch after a mid-flight merge dispatch should not skip the list fetch")
 	}
 }
 
