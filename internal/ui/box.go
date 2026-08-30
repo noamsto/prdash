@@ -170,8 +170,13 @@ func pensOpenAtEnd(s string) bool {
 			// have the second escape's own introducer read as the first's final
 			// byte, swallowing a real SGR and missing the pen it opens.
 			j := strings.IndexFunc(rest[1:], func(r rune) bool { return r == 0x1b || (r >= '@' && r <= '~') })
+			// A CSI that never terminates is not inert: the parser stays in its
+			// parameter state and swallows whatever follows, including the padding
+			// this box appends afterwards. lipgloss then measures the padded row as
+			// zero cells and sizes the bottom edge off that, collapsing it to
+			// nothing on a box whose interior is a single row.
 			if j < 0 {
-				return style || link
+				return true
 			}
 			if rest[1+j] == 0x1b {
 				s = rest[1+j:] // cancelled: it sets nothing, so resume at the new escape

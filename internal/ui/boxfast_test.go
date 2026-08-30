@@ -24,7 +24,7 @@ type boxFixture struct{ name, content string }
 
 // boxFixtureCount is asserted against the executed case count so a fixture that
 // falls out of the table below shows up as a failure rather than as silence.
-const boxFixtureCount = 36
+const boxFixtureCount = 38
 
 // boxFixtures spans the shapes a width comparison alone cannot decide: the ones
 // Style.Render rewrites before measuring (tabs, CRLF, pens left open at a line
@@ -59,6 +59,10 @@ func boxFixtures(w int) []boxFixture {
 		{"csiAbortedByEscape", "\x1b[\x1b[31mred\nplain"},
 		{"csiTruncatedParamsThenEscape", "\x1b[38;5\x1b[31mred\nplain"},
 		{"csiTrailingSemicolonThenEscape", "\x1b[1;\x1b[31mred\nplain"},
+		// An unterminated CSI keeps swallowing bytes, so the padding appended after
+		// it measures as nothing and the bottom edge is sized off that.
+		{"csiUnterminated", "\x1b[3"},
+		{"csiUnterminatedBare", "\x1b["},
 		// The OSC command is a number to the real parser, so 08 is still 8.
 		{"osc8LeadingZeroCommand", "\x1b]08;;https://x.com\x1b\\click\nhere"},
 		// Raw 8-bit C1 introducers: the parser behind Style.Render honours them,
@@ -150,7 +154,7 @@ func TestPensOpenAtEnd(t *testing.T) {
 		{"csiTruncatedParamsThenEscape", "\x1b[38;5\x1b[31mred", true},
 		{"csiTrailingSemicolonThenEscape", "\x1b[1;\x1b[31mred", true},
 		{"csiAbortedThenBalanced", "\x1b[\x1b[31mred\x1b[0m", false},
-		{"csiTruncatedAtEnd", "abc\x1b[38;5", false},
+		{"csiTruncatedAtEnd", "abc\x1b[38;5", true},
 		{"osc8LeadingZeroCommand", "\x1b]08;;https://x.com\x1b\\click", true},
 		{"osc8LeadingZeroClosed", "\x1b]08;;https://x.com\x1b\\click\x1b]08;;\x1b\\", false},
 	}
