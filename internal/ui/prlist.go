@@ -439,15 +439,12 @@ func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
 	}
 }
 
-// setIssueSections paints the open issue board's Mine → Others split.
-// Precedence is assigned > authored > wide (first match wins), mirroring
-// setSections. An empty viewer (login not yet resolved) collapses wide-half
-// rows into Others until viewerFetchedMsg re-runs this. The wide half's
-// client-side re-check — Author.Login or an Assignees login matching viewer —
-// exists because all three halves are capped at issueListLimit: without it, a
-// row that falls outside the assigned/authored fetch window but is still mine
-// would land in Others, breaking the invariant that every row shown under
-// Mine is assigned to or authored by me.
+// setIssueSections paints the open issue board's Mine → Others split, with
+// precedence assigned > authored > wide. An empty viewer (login not yet
+// resolved) collapses wide-half rows into Others until viewerFetchedMsg
+// re-runs this. The wide half is re-checked client-side because all three
+// halves are capped at issueListLimit: a row outside the assigned/authored
+// fetch window but still mine would otherwise land in Others.
 func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer string) {
 	cats := make(map[int]string, len(assigned)+len(authored)+len(open))
 	all := make([]gh.Issue, 0, len(assigned)+len(authored)+len(open))
@@ -464,7 +461,7 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 	}
 	for _, is := range open {
 		if _, dup := cats[is.Number]; dup {
-			continue // already categorized; precedence wins
+			continue
 		}
 		isAssignee := false
 		for _, a := range is.Assignees {
@@ -473,7 +470,7 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 				break
 			}
 		}
-		if mine := viewer != "" && (is.Author.Login == viewer || isAssignee); mine {
+		if viewer != "" && (is.Author.Login == viewer || isAssignee) {
 			cats[is.Number] = "Mine"
 		} else {
 			cats[is.Number] = "Others"
@@ -988,11 +985,9 @@ const issueListLimit = 100
 const issueSortRecent = "sort:updated-desc"
 
 // issueSectionFilters is the single source of truth for the three issue
-// sections searches (R1.1): the fetch cmd, hydrate, and the launch gate all
-// call it, so the three filter strings can never drift out of sync with each
-// other. All three pin the literal "open" rather than m.state — at launch
-// m.state is the *PR* state, and the sections view is open-only by
-// construction — and all three carry issueSortRecent (R1.4).
+// sections searches — the fetch cmd, hydrate, and the launch gate all call it,
+// so the strings cannot drift apart. All three pin the literal "open" rather
+// than m.state: at launch m.state is the *PR* state.
 func issueSectionFilters() (assigned, authored, wide string) {
 	assigned = searchFor("issue", "open", assigneeBody+" "+issueSortRecent)
 	authored = searchFor("issue", "open", authorBody+" "+issueSortRecent)
@@ -1257,7 +1252,7 @@ func (m Model) sectionsFetchCmd() tea.Cmd {
 
 // issueSectionsFetchCmd fetches the thirds of the issue sections view —
 // assigned, authored, and the wider open list — mirroring sectionsFetchCmd.
-// All three run through issueSectionFilters (R1.1) at issueListLimit.
+// All three run through issueSectionFilters at issueListLimit.
 func (m Model) issueSectionsFetchCmd() tea.Cmd {
 	src := m.issueSource
 	assignedF, authoredF, wideF := issueSectionFilters()
@@ -1283,12 +1278,10 @@ func (m Model) issueSectionsFetchCmd() tea.Cmd {
 			wide.issues, wide.raw, wide.err = src.FetchIssues(wideF, issueListLimit)
 		}()
 		wg.Wait()
-		// Report the board filter, not the failing half's: the half's filter
-		// (which carries assigneeBody/authorBody/issueSortRecent) would never
-		// equal m.filter, so the handler's filter guard would bail before the
-		// gh.IssuesDisabled branch and an issues-disabled repo would show
-		// "Loading…" forever. The error is passed through unwrapped so
-		// IssuesDisabled and m.err read as they do today.
+		// Report the board filter, not the failing half's: a half's filter never
+		// equals m.filter, so the handler's filter guard would bail before the
+		// gh.IssuesDisabled branch and a disabled repo would show "Loading…"
+		// forever. The error passes through unwrapped so IssuesDisabled still reads.
 		boardFilter := searchFor("issue", "open", "")
 		if assigned.err != nil {
 			return fetchFailedMsg{err: assigned.err, mode: "issue", filter: boardFilter}
@@ -1653,12 +1646,8 @@ func (m Model) launchGateKeys() []string {
 	}
 }
 
-// issueLaunchGateKeys are launchGateKeys' issue-side counterpart: the three
-// issueSectionFilters halves at issueListLimit, used by launchFetchCmds' issue
-// gate. A separate helper, not folded into launchGateKeys, because the two
-// gates govern different fetches (R3.1): launchGateKeys' keys back the
-// foreground PR view's skip decision and its fetchSkippedMsg, while these back
-// a background prewarm that never emits fetchSkippedMsg. Merging them would
+// issueLaunchGateKeys are launchGateKeys' issue-side counterpart. Kept
+// separate because the two gates govern different fetches: merging them would
 // let a stale issue cache force a redundant PR refetch, and a stale PR cache
 // suppress the issue prewarm.
 func (m Model) issueLaunchGateKeys() []string {
@@ -2677,16 +2666,9 @@ func (m Model) sectionsDefault() bool {
 }
 
 // issueSectionsDefault reports whether the issue board is the empty-default
-// open view — the sole state that shows the Mine/Others sections. It is not
-// sectionsDefault generalized across mode: the issue board has no omni-server
-// qualifier dimension to gate on (that's a PR-only concept, guarded by
-// m.mode == "pr" everywhere else it's read), so the two predicates can't
-// share a body without inventing a clause that means nothing on this side.
-// The mode term is what does the real work: at launch the user is still on
-// the PR board (m.mode == "pr"), so this reads false while
-// issueSectionsFetchedMsg's handler composes cache-only — trimming the
-// predicate down to just m.state == "open" would make that handler paint
-// the issue sections onto the PR board on every launch.
+// open view — the sole state that shows the Mine/Others sections. The mode
+// term is load-bearing: the launch prewarm lands while the user is still on
+// the PR board, and this reading false is what keeps that handler cache-only.
 func (m Model) issueSectionsDefault() bool {
 	return m.mode == "issue" && m.state == "open"
 }

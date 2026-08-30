@@ -31,13 +31,10 @@ type sectionsFetchedMsg struct {
 	reviewRaw, reviewedRaw, openRaw []byte
 }
 
-// issueSectionsFetchedMsg carries the async thirds of the issue sections view
-// (assigned + authored + the issueListLimit-deep open list) so the handler can
-// compose the Mine/Others sections. Unlike sectionsFetchedMsg it carries no
-// state field: issueSectionFilters pins the literal "open" rather than reading
-// m.state (R1.2), so there is no other state a result could be for, and no
-// stale-state comparison to make — a later reader "restoring" this field would
-// resurrect a comparison the design deliberately has no use for.
+// issueSectionsFetchedMsg carries the three halves of the issue sections view
+// so the handler can compose Mine/Others. Unlike sectionsFetchedMsg it carries
+// no state field: issueSectionFilters pins the literal "open", so there is no
+// other state a result could be for and no stale-state comparison to make.
 type issueSectionsFetchedMsg struct {
 	assigned, authored, open          []gh.Issue
 	assignedRaw, authoredRaw, openRaw []byte

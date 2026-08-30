@@ -397,7 +397,7 @@ func (s *IssueSection) setShownOrdered(idx []int) {
 
 // groupIssuesByCategory reorders idx so rows cluster under their category in
 // header order, preserving idx order within each category. No author
-// sub-grouping — that's a PR-board affordance (R2.4).
+// sub-grouping — that's a PR-board affordance.
 func groupIssuesByCategory(is []gh.Issue, idx []int, cats map[int]string, order []string) []int {
 	out := make([]int, 0, len(idx))
 	for _, cat := range order {
