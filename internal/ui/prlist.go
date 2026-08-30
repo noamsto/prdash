@@ -1086,7 +1086,7 @@ func (m *Model) hydrateViewer() {
 
 func (m *Model) Hydrate() {
 	m.hydrateViewer() // must precede hydrate(): setSections partitions Mine/Others by viewerLogin
-	m.hydrate()
+	m.loaded = m.hydrate()
 	m.hydrateMembers()
 }
 
@@ -1484,6 +1484,34 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// launchGateKeys are the cache keys launchFetchCmds treats as an all-or-nothing
+// gate: launch skips the list fetch entirely only when every one is fresh.
+// invalidateLaunchCache marks these same keys Stale at mutation dispatch, so
+// the gate can never trust a snapshot a mutation has since made questionable.
+func (m Model) launchGateKeys() []string {
+	return []string{
+		prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit),
+		prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit),
+		prKey(m.repo, "is:open", openListLimit),
+	}
+}
+
+// invalidateLaunchCache marks the launch-gate keys and the given PRs' detail
+// keys Stale. Call it when a mutation is dispatched — not on success — so a
+// quit while the mutation is still in flight leaves the pre-mutation snapshot
+// unpainted and untrusted at next launch (hydrate withholds a Stale entry,
+// and Fresh reports false for one regardless of age).
+func (m Model) invalidateLaunchCache(nums ...int) {
+	if m.cache == nil {
+		return
+	}
+	keys := m.launchGateKeys()
+	for _, n := range nums {
+		keys = append(keys, detailKey(m.repo, n))
+	}
+	m.cache.Invalidate(keys...)
+}
+
 // launchFetchCmds returns the startup reconcile fetches — the sections default
 // view plus the prewarmed issue board, member list, and viewer login — omitting
 // any whose cache is still fresh. When the current view is reused, it emits
@@ -1491,9 +1519,13 @@ func (m Model) Init() tea.Cmd {
 // freshness gating is unit-testable without the ticker commands.
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
-	sectionsFresh := m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit)) &&
-		m.cacheFresh(prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit)) &&
-		m.cacheFresh(prKey(m.repo, "is:open", openListLimit))
+	sectionsFresh := true
+	for _, key := range m.launchGateKeys() {
+		if !m.cacheFresh(key) {
+			sectionsFresh = false
+			break
+		}
+	}
 	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {

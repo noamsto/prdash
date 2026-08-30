@@ -164,6 +164,9 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
 		m.actionStatus.nums = []int{v.Number}
+		if a.Refresh {
+			m.invalidateLaunchCache(v.Number)
+		}
 		return tea.Batch(func() tea.Msg {
 			return actionDoneMsg{err: action.RerunFailed(native, branch)}
 		}, m.startSpinner())
@@ -204,6 +207,9 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 	m.actionStatus.nums = []int{p.Number}
 	if a.Command.Native == "merge-squash" {
 		m.actionStatus.merged = []gh.PR{p}
+	}
+	if a.Refresh {
+		m.invalidateLaunchCache(p.Number)
 	}
 	return tea.Batch(func() tea.Msg {
 		return actionDoneMsg{err: fn()}
@@ -503,6 +509,9 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
 	m.actionStatus.merged = merging
+	if a.Refresh {
+		m.invalidateLaunchCache(nums...)
+	}
 	m.sel.clear() // the batch op consumes the selection
 	return tea.Batch(func() tea.Msg {
 		var failed int
