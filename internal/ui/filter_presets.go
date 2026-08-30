@@ -46,12 +46,12 @@ func nextState(s string, states []string) string {
 	return states[0]
 }
 
-// authorBody / reviewBody are the state-agnostic qualifiers the PR sections
+// reviewBody / reviewedBody are the state-agnostic qualifiers the PR sections
 // view combines. reviewedBody re-catches PRs GitHub drops from
 // review-requested:@me once the viewer submits a review, so a commented-by-me
-// PR keeps its place. assigneeBody is the issue-side qualifier; the issue
-// board's Mine category is the assigned-OR-authored union of assigneeBody and
-// authorBody, fetched as two of the three sections halves (see R1).
+// PR keeps its place. assigneeBody / authorBody are the issue-side pair: the
+// issue board's Mine category is their union, fetched as two of the three
+// sections halves.
 const (
 	authorBody   = "author:@me"
 	reviewBody   = "review-requested:@me"

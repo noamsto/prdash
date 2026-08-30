@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -334,5 +335,49 @@ func TestIssueBoardHeadersPaint(t *testing.T) {
 	}
 	if !strings.Contains(view, "Others") {
 		t.Errorf("viewport should paint an Others header:\n%s", view)
+	}
+}
+
+// TestIssueBoardStateToggleLeavesSections drives `s` through Update on the
+// issue board. `s` is the one filter axis the sections migration keeps, and
+// moving off "open" is also what drops the board out of sections back to flat
+// — issueSectionsDefault is false for any other state, so a stale `grouped`
+// would paint Mine/Others headers over a closed-issue list.
+func TestIssueBoardStateToggleLeavesSections(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.mode = "issue"
+	m.state = "open"
+	m.section = NewIssueSection("is:open")
+	m.width, m.height = 100, 30
+	m.setIssueSections(
+		[]gh.Issue{{Number: 1, Title: "mine", Author: author("me")}},
+		nil,
+		[]gh.Issue{{Number: 2, Title: "not mine", Author: author("other")}},
+		"me",
+	)
+	is := m.section.(*IssueSection)
+	if !is.isGrouped() {
+		t.Fatal("open issue board should start grouped")
+	}
+
+	u, _ := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = u.(Model)
+	if m.state != "closed" {
+		t.Fatalf("s toggle: state = %q, want %q", m.state, "closed")
+	}
+	if want := searchFor("issue", "closed", ""); m.filter != want {
+		t.Fatalf("s toggle: filter = %q, want %q", m.filter, want)
+	}
+	if m.issueSectionsDefault() {
+		t.Error("closed issue board must not be the sections default")
+	}
+	if m.section.(*IssueSection).isGrouped() {
+		t.Error("closed issue board must render flat, not under Mine/Others headers")
+	}
+
+	u, _ = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = u.(Model)
+	if m.state != "open" {
+		t.Fatalf("second s toggle: state = %q, want %q (issueStates wraps)", m.state, "open")
 	}
 }
