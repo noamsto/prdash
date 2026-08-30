@@ -585,11 +585,9 @@ func (m Model) renderDocked(l Layout) string {
 	ch := max(1, l.ContentHeight-m.filterBarRows())
 	list := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	panel := m.keysActionsPanel(l.ListWidth)
-	left := lipgloss.JoinVertical(lipgloss.Left, bar, list, panel)
 
 	side := titledBoxTinted(m.previewScrolled(), l.SideWidth, m.previewHeight(l), m.previewTitle(), tint)
-	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
+	return joinBoard([]string{bar, list, panel}, side, l.Gap)
 }
 
 // listBody is the list pane's interior: the scrolling viewport, with the sticky
@@ -608,13 +606,16 @@ func (m Model) renderMain() string {
 	tint := accentFor(m.mode)
 	bar := m.filterBar()
 	if m.previewMax {
+		// No join at all here, so bar never gets common-width padding against the
+		// preview box — joinBoard's shared-width semantics don't apply.
 		return bar + "\n" + titledBoxTinted(m.previewScrolled(), m.width, ch, m.previewTitle(), tint)
 	}
-	left := lipgloss.JoinVertical(lipgloss.Left, bar, titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint))
+	listBox := titledBoxTinted(m.listBody(), l.ListWidth, ch, m.listTitle(), tint)
 	if !l.ShowSide {
-		return left
+		// A two-block JoinVertical with no JoinHorizontal — not the shape joinBoard
+		// reproduces, so this stays on lipgloss rather than being forced through it.
+		return lipgloss.JoinVertical(lipgloss.Left, bar, listBox)
 	}
 	side := titledBoxTinted(m.previewScrolled(), l.SideWidth, m.previewHeight(l), m.previewTitle(), tint)
-	side = lipgloss.NewStyle().MarginLeft(l.Gap).Render(side)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, side)
+	return joinBoard([]string{bar, listBox}, side, l.Gap)
 }
