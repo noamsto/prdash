@@ -84,6 +84,50 @@ func TestFresh(t *testing.T) {
 	}
 }
 
+// TestInvalidatePersistsAcrossLoad: the Stale mark survives a Flush/reload
+// cycle, so a mutation invalidated right before quitting stays invalidated at
+// next launch.
+func TestInvalidatePersistsAcrossLoad(t *testing.T) {
+	c := newTestCache(t)
+	c.Set("k", json.RawMessage(`[{"number":1}]`))
+	c.Invalidate("k")
+	c.Flush()
+
+	reloaded := &Cache{entries: map[string]Entry{}, filePath: c.filePath}
+	if err := reloaded.load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := reloaded.Get("k"); ok {
+		t.Fatal("Get should treat a reloaded Stale entry as a miss")
+	}
+	if reloaded.Fresh("k", time.Hour) {
+		t.Fatal("Fresh should be false for a reloaded Stale entry, regardless of ttl")
+	}
+}
+
+func TestInvalidateHidesEntryImmediately(t *testing.T) {
+	c := newTestCache(t)
+	c.Set("k", json.RawMessage(`[]`))
+	if !c.Fresh("k", time.Minute) {
+		t.Fatal("entry should be fresh before Invalidate")
+	}
+	c.Invalidate("k")
+	if _, ok := c.Get("k"); ok {
+		t.Error("Get should miss immediately after Invalidate")
+	}
+	if c.Fresh("k", time.Hour) {
+		t.Error("Fresh should be false immediately after Invalidate")
+	}
+}
+
+func TestInvalidateMissingKeyIsNoop(t *testing.T) {
+	c := newTestCache(t)
+	c.Invalidate("missing") // must not panic or mark the cache dirty
+	if c.dirty {
+		t.Error("invalidating a key with no entry should not dirty the cache")
+	}
+}
+
 func TestKey(t *testing.T) {
 	k := Key("pr", "is:open author:@me", 20, "abc123")
 	want := "pr:is:open author:@me\x0020\x00abc123"

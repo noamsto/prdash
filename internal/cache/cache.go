@@ -19,6 +19,11 @@ const writeDebounce = 400 * time.Millisecond
 type Entry struct {
 	Rows    json.RawMessage `json:"rows"`
 	SavedAt time.Time       `json:"savedAt"`
+	// Stale marks an entry a local mutation has invalidated: the rows on disk
+	// may no longer reflect reality, even though SavedAt is recent. Fresh and
+	// Get both treat it as a miss, so a mutation invalidated mid-flight (quit
+	// before the reconcile fetch lands) can't paint or be trusted next launch.
+	Stale bool `json:"stale,omitempty"`
 }
 
 type Cache struct {
@@ -42,23 +47,57 @@ func Open(filePath string) *Cache {
 	return c
 }
 
+// Get returns the entry for key, treating a Stale one as a miss so a caller
+// painting from cache never repaints a mutation-invalidated snapshot.
 func (c *Cache) Get(key string) (Entry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
-	return e, ok
+	if !ok || e.Stale {
+		return Entry{}, false
+	}
+	return e, true
 }
 
-// Fresh reports whether key has an entry saved within the last ttl. Callers use
-// it to skip a live reconcile fetch when the cached data is recent enough.
+// Fresh reports whether key has an entry saved within the last ttl and not
+// marked Stale. Callers use it to skip a live reconcile fetch when the cached
+// data is recent enough.
 func (c *Cache) Fresh(key string, ttl time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
-	if !ok {
+	if !ok || e.Stale {
 		return false
 	}
 	return time.Since(e.SavedAt) < ttl
+}
+
+// Invalidate marks the given keys Stale, arming the same debounce Set uses so
+// Flush persists it on exit. Call it when a mutation is dispatched — not on
+// success — so a quit while the mutation is still in flight still leaves the
+// pre-mutation snapshot unpainted and untrusted at next launch. A key with no
+// entry yet is already a miss and needs no mark.
+func (c *Cache) Invalidate(keys ...string) {
+	c.mu.Lock()
+	changed := false
+	for _, key := range keys {
+		e, ok := c.entries[key]
+		if !ok || e.Stale {
+			continue
+		}
+		e.Stale = true
+		c.entries[key] = e
+		changed = true
+	}
+	if changed {
+		c.dirty = true
+		if c.timer == nil {
+			c.timer = time.AfterFunc(writeDebounce, c.flush)
+		} else {
+			c.timer.Reset(writeDebounce)
+		}
+	}
+	c.mu.Unlock()
 }
 
 // Set updates the entry in memory immediately (so reads are current) and
