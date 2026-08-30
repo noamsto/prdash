@@ -47,13 +47,12 @@ var boxFastDisabled bool
 // boxBody renders content inside a rounded left/right/bottom border of OUTER
 // width w and OUTER height h; the top edge is drawn separately by the caller so
 // a label or tab bar can be set into it. Content is clipped to the interior.
-// Requires w >= 2 and h >= 2; titledBoxTinted and tabbedBox, the only callers,
-// clamp to 4 and 2.
+// Requires w >= 2 and h >= 2.
 //
-// The interior is already exactly the width the layout chose, so lipgloss's
-// wrap, align, border and margin passes only re-measure what we picked. When the
-// precondition scan can prove that, the rows are built directly; otherwise the
-// lipgloss path renders them, bit-for-bit as before.
+// The interior is already exactly the width the layout assigned, so lipgloss's
+// wrap, align, border and margin passes only re-measure a size that is already
+// known. Rows are built directly whenever the scan can prove that; anything it
+// cannot prove goes through lipgloss.
 func boxBody(content string, w, h int) string {
 	if boxFastDisabled {
 		return boxBodyLipgloss(content, w, h)
@@ -205,9 +204,9 @@ func pensOpenAtEnd(s string) bool {
 				return true
 			}
 			// Mirrors ultraviolet's ReadLink, which lipgloss feeds the OSC data
-			// to: anything but exactly three ;-separated fields — a URI holding
-			// its own ';', say — leaves the pen where it was.
-			// The command is read as a number, not text, so 08 is still 8.
+			// to: the command is a number, so 08 is still 8, and anything but
+			// exactly three ;-separated fields — a URI holding its own ';', say —
+			// leaves the pen where it was.
 			if f := strings.Split(body[:end], ";"); len(f) == 3 {
 				if cmd, err := strconv.Atoi(f[0]); err == nil && cmd == 8 {
 					link = f[1] != "" || f[2] != ""
@@ -231,9 +230,7 @@ var joinFastDisabled bool
 //
 // It takes the same maxima lipgloss takes rather than trusting the widths the
 // layout handed out, because it cannot: titledBoxTinted clamps w up to 4, and
-// filterBar's Style.Width stops padding at degenerate widths. What it skips is
-// the three Style.Render passes, which re-measure blocks this pass has already
-// measured once.
+// filterBar's Style.Width stops padding at degenerate widths.
 func joinBoard(stack []string, side string, gap int) string {
 	if joinFastDisabled {
 		return joinBoardLipgloss(stack, side, gap)

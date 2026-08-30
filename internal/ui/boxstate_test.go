@@ -148,12 +148,12 @@ func matrixBoxCases(m Model) []boxCase {
 	return cases
 }
 
-// TestBoxStateMatrix is the geometry x state x theme sweep (spec R4.6): at
+// TestBoxStateMatrix is the geometry x state x theme sweep: at
 // every point it checks that boxBody is byte-identical to the pre-fast-path
-// implementation on the real content each render path produces (R4.1/R4.3),
+// implementation on the real content each render path produces,
 // that the fast path actually fires for the list and panel where that's a real
-// invariant (R4.4), and that boxBody/boxTop/filterBar never hand the join a tab
-// or a CR (R4.5). The side box is not required to fast-path anywhere — its
+// invariant, and that boxBody/boxTop/filterBar never hand the join a tab
+// or a CR. The side box is not required to fast-path anywhere — its
 // pinned, known-overflowing case is TestBoxStateSideFallsBackOnKnownOverflow.
 func TestBoxStateMatrix(t *testing.T) {
 	t.Cleanup(func() { applyTheme(Mocha()) })
@@ -174,7 +174,7 @@ func TestBoxStateMatrix(t *testing.T) {
 					m := matrixModel(t, w, h, opt)
 					l := computeLayout(m.width, m.height)
 
-					// R4.5: the producers never hand the join a tab or a CR.
+					// What joinBoard's equivalence rests on: its inputs carry no tab or CR.
 					if bar := m.filterBar(); strings.ContainsAny(bar, "\t\r") {
 						t.Errorf("filterBar contains a tab/CR at w=%d h=%d theme=%s opt=%+v", w, h, th.name, opt)
 					}
@@ -244,8 +244,8 @@ func TestBoxStateMatrix(t *testing.T) {
 		fallbacks["list"], fallbacks["panel"], fallbacks["side"])
 }
 
-// TestBoxStateSideFallsBackOnKnownOverflow pins the one live fallback trigger
-// (spec R4.4): at terminal w=120 in PR mode on the overview tab, cursor 0 is
+// TestBoxStateSideFallsBackOnKnownOverflow pins the one live fallback trigger:
+// at terminal w=120 in PR mode on the overview tab, cursor 0 is
 // sweepPRs' #4321 ("Rework the whole layout engine so the board scans
 // vertically") — its identity header is 66 cells against the side box's
 // 64-cell interior (SideWidth=66). Asserting on the reason being non-empty,

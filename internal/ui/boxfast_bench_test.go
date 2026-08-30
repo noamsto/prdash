@@ -132,7 +132,7 @@ func BenchmarkJoinBoardDocked(b *testing.B) {
 
 // BenchmarkKeysActionsPanel is the docked keys/actions panel alone — the one
 // genuinely static component (spec's "why not memoise" section), measured
-// here to feed Step 7's conditional gate on panelBody's share of the frame.
+// here to size panelBody's share of the frame, the largest slice left.
 func BenchmarkKeysActionsPanel(b *testing.B) {
 	m := richBoard(b)
 	l := computeLayout(m.width, m.height)
@@ -144,8 +144,8 @@ func BenchmarkKeysActionsPanel(b *testing.B) {
 }
 
 // BenchmarkPanelBodyOnly isolates panelBody — keysActionsPanel's interior,
-// minus its own titledBox call — since that's the half of the panel R1
-// doesn't touch and the candidate for Step 7.
+// minus its own titledBox call — the half of the panel the box fast path does
+// not reach, and so the one still carrying Style.Width's cost.
 func BenchmarkPanelBodyOnly(b *testing.B) {
 	m := richBoard(b)
 	l := computeLayout(m.width, m.height)
