@@ -56,6 +56,11 @@ type PRSection struct {
 
 	cats     map[int]string // PR number → category label; non-nil switches grouping from author to category
 	catOrder []string       // category header order (e.g. Mine, Review requested)
+
+	// Stack rendering is derived from the current shown set: an open board can
+	// be missing merged links, so the lowest visible position is its root.
+	stackRoots map[int]int // PR number → lowest visible PR number in its stack
+	stackTrees map[int]string
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
@@ -81,6 +86,9 @@ func (s *PRSection) SetCategorized(p []gh.PR, cats map[int]string, order []strin
 // groupLabel is the header key for shown-row i: category when categorized, else author.
 func (s *PRSection) groupLabel(i int) string {
 	p := s.prs[s.shown[i]]
+	if root, ok := s.stackRoots[p.Number]; ok {
+		p = s.prByNumber(root)
+	}
 	if len(s.catOrder) > 0 {
 		return s.cats[p.Number]
 	}
@@ -95,6 +103,9 @@ func (s *PRSection) groupLabel(i int) string {
 // one. #89 makes this return the stack for stacked rows.
 func (s *PRSection) unitLabel(i int) string {
 	p := s.prAt(i)
+	if p.Stack != nil {
+		return "stack:" + strconv.Itoa(p.Stack.Number)
+	}
 	return s.groupLabel(i) + "\x00" + p.Author.Login
 }
 
@@ -103,6 +114,15 @@ func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
+
+func (s *PRSection) prByNumber(number int) gh.PR {
+	for _, p := range s.prs {
+		if p.Number == number {
+			return p
+		}
+	}
+	return gh.PR{}
+}
 
 // authorOf returns the login that opened PR number, or "" when the board does not
 // hold it.
@@ -142,6 +162,9 @@ func (s *PRSection) updatePR(number int, fn func(*gh.PR)) bool {
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
 	p := s.prs[s.shown[i]]
 	o.Draft = p.IsDraft
+	if tree := s.stackTrees[p.Number]; tree != "" {
+		o.Tree = tree
+	}
 	// A terminal PR's cell-1 glyph reflects how it ended, not its frozen CI rollup:
 	// merged → mauve merge mark, closed → dim ✗. The age column likewise shows the
 	// event that ended it (merge/close time) rather than the last update.
@@ -236,25 +259,167 @@ func (s *PRSection) SetState(state string) { s.state = state }
 
 func (s *PRSection) setShownOrdered(idx []int) {
 	if s.hideDrafts {
-		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool { return s.prs[i].IsDraft })
+		idx = slices.DeleteFunc(slices.Clone(idx), func(i int) bool {
+			return s.prs[i].IsDraft && s.prs[i].Stack == nil
+		})
 	}
+	units := stackUnits(s.prs, idx)
 	if s.forceFlat {
 		s.grouped = false
-		s.shown = idx
+		s.setShownStacks(flattenUnits(units))
 		return
 	}
 	if len(s.catOrder) > 0 {
 		s.grouped = true
-		s.shown = groupByCategory(s.prs, idx, s.cats, s.catOrder, s.state)
+		s.setShownStacks(groupStackUnits(s.prs, units, s.cats, s.catOrder, s.state))
 		return
 	}
 	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
 		s.grouped = true
-		s.shown = groupByAuthor(s.prs, idx, s.state)
+		s.setShownStacks(groupStackUnits(s.prs, units, nil, nil, s.state))
 		return
 	}
 	s.grouped = false
-	s.shown = idx
+	s.setShownStacks(flattenUnits(units))
+}
+
+// stackUnits keeps every visible stack contiguous and positions its members
+// bottom-up. Its first occurrence in idx determines where the stack unit sits
+// among ordinary PRs.
+func stackUnits(prs []gh.PR, idx []int) [][]int {
+	byStack := map[int][]int{}
+	units := make([][]int, 0, len(idx))
+	seen := map[int]bool{}
+	for _, i := range idx {
+		p := prs[i]
+		if p.Stack == nil {
+			units = append(units, []int{i})
+			continue
+		}
+		byStack[p.Stack.Number] = append(byStack[p.Stack.Number], i)
+	}
+	for _, i := range idx {
+		p := prs[i]
+		if p.Stack == nil || seen[p.Stack.Number] {
+			continue
+		}
+		seen[p.Stack.Number] = true
+		members := byStack[p.Stack.Number]
+		slices.SortStableFunc(members, func(a, b int) int {
+			return prs[a].StackPosition - prs[b].StackPosition
+		})
+		units = append(units, members)
+	}
+	// The loops above collect unstacked PRs before stacks; restore each unit's
+	// input rank so an ordinary row and a stack share the board's existing order.
+	rank := map[int]int{}
+	for n, i := range idx {
+		rank[i] = n
+	}
+	slices.SortStableFunc(units, func(a, b []int) int {
+		minRank := func(unit []int) int {
+			r := len(idx)
+			for _, i := range unit {
+				r = min(r, rank[i])
+			}
+			return r
+		}
+		return minRank(a) - minRank(b)
+	})
+	return units
+}
+
+func flattenUnits(units [][]int) []int {
+	out := make([]int, 0)
+	for _, unit := range units {
+		out = append(out, unit...)
+	}
+	return out
+}
+
+// groupStackUnits uses the root's category and author. A stack is therefore one
+// unit even when its links cross categories or authors.
+func groupStackUnits(prs []gh.PR, units [][]int, cats map[int]string, order []string, state string) []int {
+	groups := map[string][][]int{}
+	keys := make([]string, 0)
+	for _, unit := range units {
+		root := prs[unit[0]]
+		cat := ""
+		if len(order) > 0 {
+			cat = cats[root.Number]
+		}
+		key := cat + "\x00" + root.Author.Login
+		if _, ok := groups[key]; !ok {
+			keys = append(keys, key)
+		}
+		groups[key] = append(groups[key], unit)
+	}
+	if state != "merged" && state != "closed" {
+		best := func(key string) int {
+			n := 0
+			for _, unit := range groups[key] {
+				for _, i := range unit {
+					n = max(n, prs[i].Number)
+				}
+			}
+			return n
+		}
+		slices.SortStableFunc(keys, func(a, b string) int {
+			if len(order) > 0 {
+				catRank := func(key string) int {
+					cat := strings.SplitN(key, "\x00", 2)[0]
+					for i, want := range order {
+						if cat == want {
+							return i
+						}
+					}
+					return len(order)
+				}
+				if catRank(a) != catRank(b) {
+					return catRank(a) - catRank(b)
+				}
+			}
+			if best(a) != best(b) {
+				return best(b) - best(a)
+			}
+			return strings.Compare(a, b)
+		})
+	}
+	out := make([]int, 0)
+	for _, key := range keys {
+		out = append(out, flattenUnits(groups[key])...)
+	}
+	return out
+}
+
+func (s *PRSection) setShownStacks(shown []int) {
+	s.shown = shown
+	s.stackRoots = map[int]int{}
+	s.stackTrees = map[int]string{}
+	byStack := map[int][]int{}
+	for _, i := range shown {
+		if p := s.prs[i]; p.Stack != nil {
+			byStack[p.Stack.Number] = append(byStack[p.Stack.Number], i)
+		}
+	}
+	for _, members := range byStack {
+		root := s.prs[members[0]]
+		missing := root.Stack.Size - len(members)
+		for n, i := range members {
+			p := s.prs[i]
+			s.stackRoots[p.Number] = root.Number
+			switch {
+			case n == 0 && missing > 0:
+				s.stackTrees[p.Number] = dimStyle.Render("⧉+" + strconv.Itoa(missing))
+			case n == 0:
+				s.stackTrees[p.Number] = "⧉"
+			case n == len(members)-1:
+				s.stackTrees[p.Number] = "╰─"
+			default:
+				s.stackTrees[p.Number] = "├─"
+			}
+		}
+	}
 }
 
 // groupByCategory reorders idx so rows cluster under their category in header

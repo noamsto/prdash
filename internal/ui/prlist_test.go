@@ -2287,6 +2287,28 @@ func TestVSelectsClusterThenCategoryThenAllThenNone(t *testing.T) {
 	}
 }
 
+func TestVSelectsStackFromAnyMember(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := make([]gh.PR, 3)
+	for i := range prs {
+		prs[i] = gh.PR{Number: 100 + i, Stack: stack, StackPosition: i + 1}
+		prs[i].Author.Login = []string{"alice", "bob", "carol"}[i]
+	}
+	m.setPRs(prs)
+	ps := m.section.(*PRSection)
+	for i := 0; i < ps.Len(); i++ {
+		if ps.prAt(i).StackPosition == 2 {
+			m.cursor = i
+			break
+		}
+	}
+	m.advanceSelection()
+	if got := m.sel.count(); got != 3 {
+		t.Fatalf("V on a stack middle selected %d rows, want the full 3-row chain", got)
+	}
+}
+
 func TestVKeyAdvancesSelection(t *testing.T) {
 	m := NewModel("/tmp", "is:open", nil)
 	m.width, m.height = 120, 40

@@ -474,6 +474,59 @@ func TestSetHideDraftsExcludesDrafts(t *testing.T) {
 	}
 }
 
+func TestPRStacksStayTogetherAcrossCategoriesAndDraftFilter(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 4}
+	root := gh.PR{Number: 100, Title: "root", Stack: stack, StackPosition: 1}
+	root.Author.Login = "alice"
+	middle := gh.PR{Number: 102, Title: "middle", IsDraft: true, Stack: stack, StackPosition: 2}
+	middle.Author.Login = "bob"
+	tip := gh.PR{Number: 101, Title: "tip", Stack: stack, StackPosition: 3}
+	tip.Author.Login = "carol"
+	other := gh.PR{Number: 200, Title: "other"}
+	other.Author.Login = "dave"
+
+	s := NewPRSection("")
+	s.SetCategorized([]gh.PR{root, middle, tip, other}, map[int]string{
+		100: "Review requested", 101: "Others", 102: "Others", 200: "Others",
+	}, []string{"Review requested", "Others"})
+	s.SetHideDrafts(true)
+	s.SetShown([]int{0, 1, 2, 3})
+
+	got := make([]int, s.Len())
+	for i := range got {
+		got[i] = s.prAt(i).Number
+	}
+	if want := []int{100, 102, 101, 200}; !slices.Equal(got, want) {
+		t.Fatalf("stack/category order = %v, want %v", got, want)
+	}
+	for i, want := range []string{"⧉+1", "├─", "╰─"} {
+		row := ansi.Strip(s.RenderRow(i, RowOpts{Width: 100, NumWidth: 4}))
+		if !strings.Contains(row, want) {
+			t.Errorf("stack row %d = %q, want tree %q", i, row, want)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if got := s.groupLabel(i); got != "Review requested" {
+			t.Errorf("stack member %d category = %q, want root category", i, got)
+		}
+	}
+}
+
+func TestPRStackUnitLabelSelectsWholeChain(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := make([]gh.PR, 3)
+	for i := range prs {
+		prs[i] = gh.PR{Number: 100 + i, Stack: stack, StackPosition: i + 1}
+		prs[i].Author.Login = []string{"alice", "bob", "carol"}[i]
+	}
+	s := NewPRSection("")
+	s.SetForceGroup(true)
+	s.SetPRs(prs)
+	if s.unitLabel(1) != "stack:900" {
+		t.Fatalf("middle stack unit = %q, want stack identity", s.unitLabel(1))
+	}
+}
+
 func TestSetPRsMergedSortsByMergeTime(t *testing.T) {
 	mk := func(num int, merged string) gh.PR {
 		ts, _ := time.Parse(time.RFC3339, merged)
