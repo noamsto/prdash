@@ -31,6 +31,18 @@ type sectionsFetchedMsg struct {
 	reviewRaw, reviewedRaw, openRaw []byte
 }
 
+// issueSectionsFetchedMsg carries the async thirds of the issue sections view
+// (assigned + authored + the issueListLimit-deep open list) so the handler can
+// compose the Mine/Others sections. Unlike sectionsFetchedMsg it carries no
+// state field: issueSectionFilters pins the literal "open" rather than reading
+// m.state (R1.2), so there is no other state a result could be for, and no
+// stale-state comparison to make — a later reader "restoring" this field would
+// resurrect a comparison the design deliberately has no use for.
+type issueSectionsFetchedMsg struct {
+	assigned, authored, open          []gh.Issue
+	assignedRaw, authoredRaw, openRaw []byte
+}
+
 // detailsBatchMsg carries one batched detail fetch — the whole prefetch window
 // resolved in a single request (githubv4 aliased query).
 type detailsBatchMsg struct {
@@ -38,8 +50,14 @@ type detailsBatchMsg struct {
 	raws    map[int][]byte
 }
 
+// fetchFailedMsg's mode discriminates which board a filter belongs to:
+// searchFor("pr", "open", "") and searchFor("issue", "open", "") are both
+// "is:open", so filter alone cannot tell a PR-side failure from an issue-side
+// one. Empty for senders that carry no filter — those must always surface
+// regardless of board.
 type fetchFailedMsg struct {
 	err    error
+	mode   string
 	filter string // set for list fetches; a background prewarm failure is dropped
 }
 

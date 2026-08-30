@@ -60,7 +60,7 @@ func TestHydrateFromCache(t *testing.T) {
 }
 
 func TestIssueKeyDistinctFromPRKey(t *testing.T) {
-	if issueKey("r", "is:open") == prKey("r", "is:open", defaultLimit) {
+	if issueKey("r", "is:open", defaultLimit) == prKey("r", "is:open", defaultLimit) {
 		t.Error("issue and pr cache keys collide")
 	}
 }
@@ -857,7 +857,7 @@ func warmLaunchCache(m Model, c *cache.Cache) {
 	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(prKey(m.repo, "is:open", openListLimit), json.RawMessage("[]"))
-	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody)), json.RawMessage("[]"))
+	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(membersKey(m.repo), json.RawMessage("[]"))
 	c.Set(viewerKey(), json.RawMessage(`"me"`))
 }

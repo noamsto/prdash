@@ -442,6 +442,56 @@ func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
 	}
 }
 
+// setIssueSections paints the open issue board's Mine → Others split.
+// Precedence is assigned > authored > wide (first match wins), mirroring
+// setSections. An empty viewer (login not yet resolved) collapses wide-half
+// rows into Others until viewerFetchedMsg re-runs this. The wide half's
+// client-side re-check — Author.Login or an Assignees login matching viewer —
+// exists because all three halves are capped at issueListLimit: without it, a
+// row that falls outside the assigned/authored fetch window but is still mine
+// would land in Others, breaking the invariant that every row shown under
+// Mine is assigned to or authored by me.
+func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer string) {
+	cats := make(map[int]string, len(assigned)+len(authored)+len(open))
+	all := make([]gh.Issue, 0, len(assigned)+len(authored)+len(open))
+	for _, is := range assigned {
+		cats[is.Number] = "Mine"
+		all = append(all, is)
+	}
+	for _, is := range authored {
+		if _, dup := cats[is.Number]; dup {
+			continue
+		}
+		cats[is.Number] = "Mine"
+		all = append(all, is)
+	}
+	for _, is := range open {
+		if _, dup := cats[is.Number]; dup {
+			continue // already categorized; precedence wins
+		}
+		isAssignee := false
+		for _, a := range is.Assignees {
+			if a.Login == viewer {
+				isAssignee = true
+				break
+			}
+		}
+		if mine := viewer != "" && (is.Author.Login == viewer || isAssignee); mine {
+			cats[is.Number] = "Mine"
+		} else {
+			cats[is.Number] = "Others"
+		}
+		all = append(all, is)
+	}
+	if s, ok := m.section.(*IssueSection); ok {
+		s.SetCategorized(all, cats, []string{"Mine", "Others"})
+	}
+	m.applyFilter()
+	if n := m.section.Len(); m.cursor >= n {
+		m.cursor = max(0, n-1)
+	}
+}
+
 // commentedByMe reports whether the viewer's latest review on number is a
 // comment — the ◐ marker's state. A PR back in the review-requested half was
 // re-requested after that comment, so the marker clears: my input is stale and
@@ -499,26 +549,26 @@ func spanOf(n, cur int, label func(int) string) (lo, hi int) {
 }
 
 // groupRange returns the inclusive [lo, hi] shown-index span of the cursor's
-// group. When the board is ungrouped (or not a PR section), the whole shown
-// set is one group.
+// group. When the board is ungrouped (or not a grouper), the whole shown set
+// is one group.
 func (m Model) groupRange() (lo, hi int) {
 	n := m.section.Len()
-	ps, ok := m.section.(*PRSection)
-	if !ok || !ps.grouped {
+	g, ok := m.section.(grouper)
+	if !ok || !g.isGrouped() {
 		return 0, n - 1
 	}
-	return spanOf(n, m.cursor, ps.groupLabel)
+	return spanOf(n, m.cursor, g.groupLabelAt)
 }
 
 // unitRange is the cursor's tightest selectable unit — its author cluster, or
-// (once #89 lands) its stack. Falls back to the whole shown set off a PR board.
+// (once #89 lands) its stack. Falls back to the whole shown set off a grouper.
 func (m Model) unitRange() (lo, hi int) {
 	n := m.section.Len()
-	ps, ok := m.section.(*PRSection)
-	if !ok || !ps.grouped {
+	g, ok := m.section.(grouper)
+	if !ok || !g.isGrouped() {
 		return 0, n - 1
 	}
-	return spanOf(n, m.cursor, ps.unitLabel)
+	return spanOf(n, m.cursor, g.unitLabelAt)
 }
 
 // advanceSelection cycles multi-select: Cluster → Category → All → None,
@@ -612,7 +662,8 @@ func (m *Model) renderList() {
 	}
 	authorW := authorColWidth(m.section, l.InitialsAuthor)
 	ps, isPR := m.section.(*PRSection)
-	grouped := isPR && ps.grouped
+	g, isGrouper := m.section.(grouper)
+	grouped := isGrouper && g.isGrouped()
 	n := m.section.Len()
 	if len(m.rowText) != n { // shown set resized (or first paint): reset the cache
 		m.rowText = make([]string, n)
@@ -623,15 +674,15 @@ func (m *Model) renderList() {
 	for i := 0; i < n; i++ {
 		headerLine := -1 // this row's group header line, when it opens a new group
 		if grouped {
-			if g := ps.groupLabel(i); g != prevGroup {
+			if lbl := g.groupLabelAt(i); lbl != prevGroup {
 				if prevGroup != "" { // blank line between groups, not above the first
 					b.WriteString("\n")
 					line++
 				}
 				headerLine = line
-				b.WriteString(groupHeader(g, innerW) + "\n")
+				b.WriteString(groupHeader(lbl, innerW) + "\n")
 				line++
-				prevGroup = g
+				prevGroup = lbl
 			}
 		}
 		flag := ""
@@ -765,6 +816,9 @@ func (m *Model) applyFilter() {
 		_, bare := parseOmni(query)
 		ps.SetForceFlat(bare != "")
 		query = bare
+	}
+	if is, ok := m.section.(*IssueSection); ok {
+		is.SetForceFlat(strings.TrimSpace(query) != "")
 	}
 	m.section.SetShown(matchIdx(m.section.Haystacks(), query))
 	if m.cursor >= m.section.Len() {
@@ -924,14 +978,42 @@ func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
 // issueSchemaVer is bumped whenever the cached issue field set changes shape.
 const issueSchemaVer = "v1"
 
-// issueKey scopes the cached issue list by repo, kind-prefixed "issue" so it can
-// never collide with the "pr" list cache for the same filter.
-func issueKey(repo, filter string) string {
-	return cache.Key("issue", repo+"\x00"+filter, defaultLimit, issueSchemaVer)
+// issueListLimit caps the issue sections halves. Issue repos are longer-tailed
+// than a PR review queue: >20 open issues assigned to or opened by one person
+// is ordinary, so the focused halves need the PR board's wide-list depth, not
+// its defaultLimit. The flat (closed) issue board keeps defaultLimit.
+const issueListLimit = 100
+
+// issueSortRecent pins a deterministic order on every issue sections filter.
+// GitHub's default sort for a qualifier-only search is best-match, not
+// recency, so without this a truncated page is an arbitrary slice that can
+// differ between fetches.
+const issueSortRecent = "sort:updated-desc"
+
+// issueSectionFilters is the single source of truth for the three issue
+// sections searches (R1.1): the fetch cmd, hydrate, and the launch gate all
+// call it, so the three filter strings can never drift out of sync with each
+// other. All three pin the literal "open" rather than m.state — at launch
+// m.state is the *PR* state, and the sections view is open-only by
+// construction — and all three carry issueSortRecent (R1.4).
+func issueSectionFilters() (assigned, authored, wide string) {
+	assigned = searchFor("issue", "open", assigneeBody+" "+issueSortRecent)
+	authored = searchFor("issue", "open", authorBody+" "+issueSortRecent)
+	wide = searchFor("issue", "open", issueSortRecent)
+	return assigned, authored, wide
 }
 
-func (m *Model) cachedIssues(filter string) ([]gh.Issue, bool) {
-	e, ok := m.cache.Get(issueKey(m.repo, filter))
+// issueKey scopes the cached issue list by repo and limit, kind-prefixed
+// "issue" so it can never collide with the "pr" list cache for the same
+// filter. The limit is part of the key because the sections halves fetch at
+// issueListLimit while the flat board fetches at defaultLimit — without it, a
+// hydrate could read back a list fetched at the other depth.
+func issueKey(repo, filter string, limit int) string {
+	return cache.Key("issue", repo+"\x00"+filter, limit, issueSchemaVer)
+}
+
+func (m *Model) cachedIssues(filter string, limit int) ([]gh.Issue, bool) {
+	e, ok := m.cache.Get(issueKey(m.repo, filter, limit))
 	if !ok {
 		return nil, false
 	}
@@ -950,7 +1032,7 @@ func (m *Model) hydrate() bool {
 		return false
 	}
 	if m.mode == "issue" {
-		is, ok := m.cachedIssues(m.filter)
+		is, ok := m.cachedIssues(m.filter, defaultLimit)
 		if !ok {
 			return false
 		}
@@ -1098,7 +1180,7 @@ func (m Model) fetchCmd(filter string) tea.Cmd {
 	return func() tea.Msg {
 		prs, raw, err := src.FetchPRs(filter, defaultLimit)
 		if err != nil {
-			return fetchFailedMsg{err: err, filter: filter}
+			return fetchFailedMsg{err: err, mode: "pr", filter: filter}
 		}
 		return prsFetchedMsg{filter: filter, prs: prs, raw: raw}
 	}
@@ -1110,7 +1192,7 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 	return func() tea.Msg {
 		is, raw, err := src.FetchIssues(filter, defaultLimit)
 		if err != nil {
-			return fetchFailedMsg{err: err, filter: filter}
+			return fetchFailedMsg{err: err, mode: "issue", filter: filter}
 		}
 		return issuesFetchedMsg{filter: filter, issues: is, raw: raw}
 	}
@@ -1149,18 +1231,70 @@ func (m Model) sectionsFetchCmd() tea.Cmd {
 		}()
 		wg.Wait()
 		if review.err != nil {
-			return fetchFailedMsg{err: review.err, filter: reviewF}
+			return fetchFailedMsg{err: review.err, mode: "pr", filter: reviewF}
 		}
 		if reviewed.err != nil {
-			return fetchFailedMsg{err: reviewed.err, filter: reviewedF}
+			return fetchFailedMsg{err: reviewed.err, mode: "pr", filter: reviewedF}
 		}
 		if open.err != nil {
-			return fetchFailedMsg{err: open.err, filter: "is:open"}
+			return fetchFailedMsg{err: open.err, mode: "pr", filter: "is:open"}
 		}
 		return sectionsFetchedMsg{state: state,
 			review: review.prs, reviewRaw: review.raw,
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
 			open: open.prs, openRaw: open.raw}
+	}
+}
+
+// issueSectionsFetchCmd fetches the thirds of the issue sections view —
+// assigned, authored, and the wider open list — mirroring sectionsFetchCmd.
+// All three run through issueSectionFilters (R1.1) at issueListLimit.
+func (m Model) issueSectionsFetchCmd() tea.Cmd {
+	src := m.issueSource
+	assignedF, authoredF, wideF := issueSectionFilters()
+	return func() tea.Msg {
+		type half struct {
+			issues []gh.Issue
+			raw    []byte
+			err    error
+		}
+		var assigned, authored, wide half
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			assigned.issues, assigned.raw, assigned.err = src.FetchIssues(assignedF, issueListLimit)
+		}()
+		go func() {
+			defer wg.Done()
+			authored.issues, authored.raw, authored.err = src.FetchIssues(authoredF, issueListLimit)
+		}()
+		go func() {
+			defer wg.Done()
+			wide.issues, wide.raw, wide.err = src.FetchIssues(wideF, issueListLimit)
+		}()
+		wg.Wait()
+		// Report the board filter, not the failing half's: the half's filter
+		// (which carries assigneeBody/authorBody/issueSortRecent) would never
+		// equal m.filter, so the handler's filter guard would bail before the
+		// gh.IssuesDisabled branch and an issues-disabled repo would show
+		// "Loading…" forever. The error is passed through unwrapped so
+		// IssuesDisabled and m.err read as they do today.
+		boardFilter := searchFor("issue", "open", "")
+		if assigned.err != nil {
+			return fetchFailedMsg{err: assigned.err, mode: "issue", filter: boardFilter}
+		}
+		if authored.err != nil {
+			return fetchFailedMsg{err: authored.err, mode: "issue", filter: boardFilter}
+		}
+		if wide.err != nil {
+			return fetchFailedMsg{err: wide.err, mode: "issue", filter: boardFilter}
+		}
+		return issueSectionsFetchedMsg{
+			assigned: assigned.issues, assignedRaw: assigned.raw,
+			authored: authored.issues, authoredRaw: authored.raw,
+			open: wide.issues, openRaw: wide.raw,
+		}
 	}
 }
 
@@ -1532,7 +1666,7 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 		cmds = append(cmds, m.sectionsFetchCmd())
 	}
 	issueF := searchFor("issue", "open", assigneeBody)
-	if !m.cacheFresh(issueKey(m.repo, issueF)) {
+	if !m.cacheFresh(issueKey(m.repo, issueF, defaultLimit)) {
 		cmds = append(cmds, m.issueFetchCmd(issueF))
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
@@ -1573,7 +1707,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.warmDetailCmd(), m.maybeStartPoll())
 	case issuesFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(issueKey(m.repo, msg.filter), msg.raw)
+			m.cache.Set(issueKey(m.repo, msg.filter, defaultLimit), msg.raw)
 		}
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // background prewarm of another issue filter
@@ -1606,6 +1740,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive()
 		return m, tea.Batch(m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll())
 	case fetchFailedMsg:
+		if msg.mode != "" && msg.mode != m.mode {
+			return m, nil // wrong board entirely
+		}
 		if msg.filter != "" && msg.filter != m.filter {
 			return m, nil // a background prewarm failed; the current view is unaffected
 		}
