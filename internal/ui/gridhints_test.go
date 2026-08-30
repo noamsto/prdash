@@ -8,9 +8,9 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// gridHintsRef is the pre-refactor gridHints, kept verbatim so the tests below
-// can assert byte-equality differentially rather than against frozen goldens —
-// which keeps them working when the theme changes.
+// gridHintsRef mirrors production gridHints (including renderKey) so the tests
+// below can assert byte-equality differentially rather than against frozen
+// goldens — which keeps them working when the theme changes.
 func gridHintsRef(hints []keyHint, width int, alignKeys bool) []string {
 	if len(hints) == 0 {
 		return nil
@@ -24,7 +24,7 @@ func gridHintsRef(hints []keyHint, width int, alignKeys bool) []string {
 		}
 	}
 	render := func(h keyHint) string {
-		key := accentStyle.Render(h.key)
+		key := h.renderKey()
 		if pad := keyW - lipgloss.Width(h.key); pad > 0 {
 			key += strings.Repeat(" ", pad)
 		}
@@ -70,14 +70,14 @@ func hintSets() map[string][]keyHint {
 		"nav-pr":    navHintsFor("pr"),
 		"nav-issue": navHintsFor("issue"),
 		"actions":   defaultActionHints(),
-		"single":    {{"x", "one"}},
-		"empty-key": {{"", "no key"}, {"a", "has key"}},
+		"single":    {{"x", "one", nil}},
+		"empty-key": {{"", "no key", nil}, {"a", "has key", nil}},
 		"wide": {
-			{"\uF461", "nerd glyph"},
-			{"⇥", "wide arrow"},
-			{"a", "日本語のラベル"},
-			{"b", "emoji ✅ label"},
-			{"⌘⇧", "multi glyph"},
+			{"\uF461", "nerd glyph", nil},
+			{"⇥", "wide arrow", nil},
+			{"a", "日本語のラベル", nil},
+			{"b", "emoji ✅ label", nil},
+			{"⌘⇧", "multi glyph", nil},
 		},
 	}
 }

@@ -2456,7 +2456,7 @@ func (m Model) cursorCard() (triage.Card, bool) {
 // legendView is the ?-toggled glyph + key reference, as a centered modal. It
 // lists every board-view key; expanded-view keys live in that view's own footer.
 // legendGroup is one titled, column-aligned section of the legend (glyphs are
-// modeled as keyHint{glyph, meaning} pairs so they share the same gridHints
+// modeled as keyHint{key, label, style?} entries so they share the same gridHints
 // alignment as real key bindings).
 type legendGroup struct {
 	title string
@@ -2468,48 +2468,57 @@ type legendGroup struct {
 func (m Model) legendGroups() []legendGroup {
 	groups := []legendGroup{
 		{"glyphs", []keyHint{
-			{"✓", "CI pass"}, {"✗", "checks failed"}, {ciRunningGlyph, "CI running"}, {"·", "no CI"},
-			{mergedGlyph, "merged"}, {closedGlyph, "closed"}, {draftGlyph, "draft"},
-			{warnGlyph, "conflict / behind base"}, {autoMergeGlyph(true), "auto-merge armed"},
-			{"●", "review required"}, {"✗", "changes requested"}, {reviewCommentedGlyph, "commented by me"},
-			{focusBarGlyph, "focus"}, {selBarGlyph, "selected"},
+			{key: "✓", label: "CI pass", style: &passStyle},
+			{key: "✗", label: "checks failed", style: &failStyle},
+			{key: ciRunningGlyph, label: "CI running", style: &pendStyle},
+			{key: "·", label: "no CI", style: &dimStyle},
+			{key: mergedGlyph, label: "merged", style: &mergedStyle},
+			{key: closedGlyph, label: "closed", style: &dimStyle},
+			{key: draftGlyph, label: "draft", style: &dimStyle},
+			{key: warnGlyph, label: "conflict / behind base", style: &failStyle},
+			{key: autoMergeGlyphRune, label: "auto-merge armed", style: &mergedStyle},
+			{key: "●", label: "review required", style: &pendStyle},
+			{key: "✗", label: "changes requested", style: &failStyle},
+			{key: reviewCommentedGlyph, label: "commented by me", style: &pendStyle},
+			{key: focusBarGlyph, label: "focus", style: &focusBarStyle},
+			{key: selBarGlyph, label: "selected", style: &selMarkStyle},
 		}},
 	}
 
-	nav := []keyHint{{"↑↓/jk", "move"}}
+	nav := []keyHint{{"↑↓/jk", "move", nil}}
 	if m.mode == "pr" {
-		nav = append(nav, keyHint{"→/l", "expand"})
+		nav = append(nav, keyHint{"→/l", "expand", nil})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues"}, keyHint{"space", "select"}, keyHint{"V", "cluster"})
+	nav = append(nav, keyHint{"⇥", "PRs/Issues", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
 
-	filters := []keyHint{{"/", "filter (@user, is:, text)"}, {"s", "state"}}
+	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}, {"s", "state", nil}}
 	if m.mode == "pr" {
-		filters = append(filters, keyHint{"R", "reviewers"}, keyHint{"D", "drafts"})
+		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil})
 	}
 	groups = append(groups, legendGroup{"filters", filters})
 
 	view := []keyHint{}
 	if m.mode == "pr" {
-		view = append(view, keyHint{"p", "all comments"}) // only the PR preview renders the timeline p unfolds
+		view = append(view, keyHint{"p", "all comments", nil}) // only the PR preview renders the timeline p unfolds
 		if computeLayout(m.width, m.height).ShowSide {
-			view = append(view, keyHint{"h/l", "switch tab"}, keyHint{"1-6", "jump tab"})
+			view = append(view, keyHint{"h/l", "switch tab", nil}, keyHint{"1-6", "jump tab", nil})
 		}
 	}
-	view = append(view, keyHint{"z", "maximize"}, keyHint{"alt+j/k", "scroll"})
+	view = append(view, keyHint{"z", "maximize", nil}, keyHint{"alt+j/k", "scroll", nil})
 	groups = append(groups, legendGroup{"view", view})
 
 	actions := []keyHint{
-		{"↵", "worktree"}, {"W", "bulk"}, {"y", "#"}, {"Y", "url"}, {"b", "branch"}, {"o", "open"},
+		{"↵", "worktree", nil}, {"W", "bulk", nil}, {"y", "#", nil}, {"Y", "url", nil}, {"b", "branch", nil}, {"o", "open", nil},
 	}
 	if m.mode == "pr" {
-		actions = append(actions, keyHint{"m", "merge"}, keyHint{"r", "rerun"}, keyHint{"u", "update"},
-			keyHint{"M", "ready"}, keyHint{"L", "approve"}, keyHint{"X", "cleanup branch"})
+		actions = append(actions, keyHint{"m", "merge", nil}, keyHint{"r", "rerun", nil}, keyHint{"u", "update", nil},
+			keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil}, keyHint{"X", "cleanup branch", nil})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
 
 	groups = append(groups, legendGroup{"", []keyHint{
-		{"a", "actions"}, {"ctrl+r", "refresh"}, {"? / F1", "legend"}, {"q", "quit"},
+		{"a", "actions", nil}, {"ctrl+r", "refresh", nil}, {"? / F1", "legend", nil}, {"q", "quit", nil},
 	}})
 	return groups
 }
@@ -2568,19 +2577,29 @@ func (m Model) legendView() string {
 // it doesn't jump around with Go's random map iteration.
 var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o"}
 
-type keyHint struct{ key, label string }
+type keyHint struct {
+	key, label string
+	style      *lipgloss.Style // nil → accentStyle
+}
+
+func (h keyHint) renderKey() string {
+	if h.style != nil {
+		return h.style.Render(h.key)
+	}
+	return accentStyle.Render(h.key)
+}
 
 // navHintsFor is the docked-panel cheatsheet for the active board. Issue mode
 // drops the PR-only author/reviewer/drafts hints; both modes show the tab-toggle.
 func navHintsFor(mode string) []keyHint {
 	base := []keyHint{
-		{"↑↓", "move"}, {"⇥", "PRs/Issues"}, {"s", "state"},
-		{"/", "find"}, {"space", "select"}, {"V", "cluster"}, {"q", "quit"},
+		{"↑↓", "move", nil}, {"⇥", "PRs/Issues", nil}, {"s", "state", nil},
+		{"/", "find", nil}, {"space", "select", nil}, {"V", "cluster", nil}, {"q", "quit", nil},
 	}
 	if mode == "pr" {
 		pr := []keyHint{
-			{"→", "tabs"}, {"z", "max"}, {"alt+j/k", "scroll"},
-			{"R", "reviewers"}, {"D", "drafts"},
+			{"→", "tabs", nil}, {"z", "max", nil}, {"alt+j/k", "scroll", nil},
+			{"R", "reviewers", nil}, {"D", "drafts", nil},
 		}
 		return append(base, pr...)
 	}
@@ -2644,7 +2663,7 @@ func gridHints(hints []keyHint, width int, alignKeys bool) []string {
 	g := gridLayout(hints, width, alignKeys)
 	cells := make([]string, len(hints))
 	for i, h := range hints {
-		key := accentStyle.Render(h.key)
+		key := h.renderKey()
 		if pad := g.keyW - lipgloss.Width(h.key); pad > 0 {
 			key += strings.Repeat(" ", pad)
 		}
@@ -2721,7 +2740,7 @@ func defaultActionHints() []keyHint {
 	hs := make([]keyHint, 0, len(actionOrder))
 	for _, k := range actionOrder {
 		if a, ok := acts[k]; ok {
-			hs = append(hs, keyHint{a.Key, a.Label})
+			hs = append(hs, keyHint{a.Key, a.Label, nil})
 		}
 	}
 	return hs
@@ -2749,7 +2768,7 @@ func (m Model) actionHints() (label string, hints []keyHint) {
 		if !ok || (batch && !batchCapable(a)) {
 			continue
 		}
-		hints = append(hints, keyHint{a.Key, a.Label})
+		hints = append(hints, keyHint{a.Key, a.Label, nil})
 	}
 	if batch {
 		return fmt.Sprintf("batch · %d", m.sel.count()), hints

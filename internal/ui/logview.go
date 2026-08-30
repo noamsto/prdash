@@ -412,7 +412,7 @@ func (m Model) logLegendGroups() []legendGroup {
 		word = "failed only"
 	}
 	return []legendGroup{{"", []keyHint{
-		{"j/k", "move"}, {"y", "line"}, {"s", "step"}, {"Y", "all"}, {"a", word}, {"esc", "back"},
+		{"j/k", "move", nil}, {"y", "line", nil}, {"s", "step", nil}, {"Y", "all", nil}, {"a", word, nil}, {"esc", "back", nil},
 	}}}
 }
 
