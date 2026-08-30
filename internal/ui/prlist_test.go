@@ -2078,8 +2078,9 @@ func TestEscTwoStageOnIssueBoard(t *testing.T) {
 }
 
 // TestLegendGlyphsAreUnambiguous: the legend explains glyphs, so listing one glyph
-// under two meanings makes it useless. It shipped with ● as both "CI running" and
-// "selected"; this pins that the row markers each keep one meaning.
+// under two meanings makes it useless. Duplicate glyph keys must diverge in rendered
+// appearance (e.g. closed dim ✗ vs CI-fail red ✗), not just in label text. Row
+// markers ▌/▎ and ciRunningGlyph each keep a single pinned meaning.
 func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 	for _, mode := range []string{"pr", "issue"} {
 		// width/height are set because legendGroups reaches computeLayout for the
@@ -2095,8 +2096,10 @@ func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 			t.Fatalf("mode %q: legend has no glyphs group", mode)
 		}
 		labels := map[string][]string{}
+		rendered := map[string][]string{}
 		for _, h := range glyphs {
 			labels[h.key] = append(labels[h.key], h.label)
+			rendered[h.key] = append(rendered[h.key], h.renderKey())
 		}
 		for _, c := range []struct{ glyph, want string }{
 			{"▌", "selected"},
@@ -2105,6 +2108,19 @@ func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 		} {
 			if got := labels[c.glyph]; len(got) != 1 || got[0] != c.want {
 				t.Errorf("mode %q: want %s labelled exactly [%s], got %v", mode, c.glyph, c.want, got)
+			}
+		}
+		for key, rs := range rendered {
+			if len(rs) < 2 {
+				continue
+			}
+			seen := make(map[string]struct{}, len(rs))
+			for _, r := range rs {
+				seen[r] = struct{}{}
+			}
+			if len(seen) <= 1 {
+				t.Errorf("mode %q: glyph %q appears %d times but all render identically (%q); duplicate keys must diverge in style",
+					mode, key, len(rs), rs[0])
 			}
 		}
 	}

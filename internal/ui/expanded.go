@@ -491,12 +491,12 @@ func (m Model) expandedFooter() string {
 func (m Model) expandedLegendGroups() []legendGroup {
 	if m.expandedTab == tabChecks {
 		return []legendGroup{{"", []keyHint{
-			{"↵", "logs"}, {"o", "open"}, {"Y", "url"}, {"r", "rerun"}, {"R", "all"},
-			{"j/k", "move"}, {"esc", "back"},
+			{"↵", "logs", nil}, {"o", "open", nil}, {"Y", "url", nil}, {"r", "rerun", nil}, {"R", "all", nil},
+			{"j/k", "move", nil}, {"esc", "back", nil},
 		}}}
 	}
 	return []legendGroup{{"", []keyHint{
-		{"j/k", "scroll"}, {"h/l", "tabs"}, {"J/K", "PR"}, {"↵", "worktree"}, {"esc", "back"},
+		{"j/k", "scroll", nil}, {"h/l", "tabs", nil}, {"J/K", "PR", nil}, {"↵", "worktree", nil}, {"esc", "back", nil},
 	}}}
 }
 
