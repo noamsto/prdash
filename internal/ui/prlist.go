@@ -2660,17 +2660,11 @@ func (m Model) titleGlyph() string {
 }
 
 // listTitle is the list pane's border title — the current view: state glyph +
-// label (custom author body, the active omni query, or "all") + state + shown count.
+// label (the active omni query, else "all") + state + shown count.
 func (m Model) listTitle() string {
-	label := m.body
-	if m.mode == "issue" {
-		label = "all"
-	} else if m.mode == "pr" {
-		if m.omniServer != "" {
-			label = m.omniServer
-		} else {
-			label = "all"
-		}
+	label := "all"
+	if m.mode == "pr" && m.omniServer != "" { // omni is PR-only; the issue board's / is local fuzzy
+		label = m.omniServer
 	}
 	return fmt.Sprintf("%s %s · %s · %d", m.titleGlyph(), label, m.state, m.section.Len())
 }

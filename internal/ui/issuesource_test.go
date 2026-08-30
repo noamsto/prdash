@@ -2,6 +2,7 @@ package ui
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/noamsto/prdash/internal/cache"
@@ -9,22 +10,28 @@ import (
 )
 
 // fakeIssueSource mirrors fakeDetailSource (detailbatch_test.go) for the
-// issue-list seam.
+// issue-list seam. err lets a caller drive the failure path; mu guards calls
+// since issueSectionsFetchCmd fans out three concurrent FetchIssues calls
+// against a single shared instance.
 type fakeIssueSource struct {
+	mu    sync.Mutex
 	calls []struct {
 		filter string
 		limit  int
 	}
 	issues []gh.Issue
 	raw    []byte
+	err    error
 }
 
 func (f *fakeIssueSource) FetchIssues(filter string, limit int) ([]gh.Issue, []byte, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, struct {
 		filter string
 		limit  int
 	}{filter, limit})
-	return f.issues, f.raw, nil
+	f.mu.Unlock()
+	return f.issues, f.raw, f.err
 }
 
 // fakeIssueDetailSource mirrors fakeDetailSource for the per-issue detail seam.
