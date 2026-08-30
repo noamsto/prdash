@@ -43,6 +43,15 @@ type Section interface {
 	SetShown(idx []int)
 }
 
+// grouper is a section that paints group headers. groupLabelAt keys the header
+// divider; unitLabelAt keys the tightest selectable cluster inside it. On the issue
+// board the two coincide — a category has no author sub-cluster.
+type grouper interface {
+	isGrouped() bool
+	groupLabelAt(i int) string
+	unitLabelAt(i int) string
+}
+
 // --- PR section ---
 type PRSection struct {
 	filter     string
@@ -97,6 +106,13 @@ func (s *PRSection) unitLabel(i int) string {
 	p := s.prAt(i)
 	return s.groupLabel(i) + "\x00" + p.Author.Login
 }
+
+// isGrouped, groupLabelAt, unitLabelAt satisfy grouper — wrappers over the
+// existing grouped field/groupLabel/unitLabel, not renames (a sibling worker
+// holds #89 in this file and owns unitLabel).
+func (s *PRSection) isGrouped() bool           { return s.grouped }
+func (s *PRSection) groupLabelAt(i int) string { return s.groupLabel(i) }
+func (s *PRSection) unitLabelAt(i int) string  { return s.unitLabel(i) }
 
 func (s *PRSection) Len() int           { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
@@ -324,20 +340,86 @@ func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
 
 // --- Issue section ---
 type IssueSection struct {
-	filter string
-	issues []gh.Issue
-	shown  []int
+	filter    string
+	issues    []gh.Issue
+	shown     []int
+	forceFlat bool // suppress grouping — keep the incoming (fuzzy rank) order
+	grouped   bool // true when the board renders group headers (see setShownOrdered)
+
+	cats     map[int]string // issue number → category label (Mine, Others)
+	catOrder []string       // category header order
 }
 
 func NewIssueSection(filter string) *IssueSection { return &IssueSection{filter: filter} }
 func (s *IssueSection) Kind() string              { return "issue" }
 func (s *IssueSection) Filter() string            { return s.filter }
-func (s *IssueSection) SetIssues(is []gh.Issue)   { s.issues = is; s.shown = allIdx(len(is)) }
 func (s *IssueSection) Len() int                  { return len(s.shown) }
-func (s *IssueSection) SetShown(idx []int)        { s.shown = idx }
+func (s *IssueSection) SetForceFlat(v bool)       { s.forceFlat = v }
+
+// sortIssues orders by issue number descending, one arm only — issues have no
+// draft axis and no ClosedAt field, so sortPRs' state switch has no analogue.
+// A key that changes under the cursor moves rows while you read them (#62).
+func sortIssues(is []gh.Issue) {
+	slices.SortStableFunc(is, func(a, b gh.Issue) int { return b.Number - a.Number })
+}
+
+func (s *IssueSection) SetIssues(is []gh.Issue) {
+	s.cats, s.catOrder = nil, nil // flat; SetCategorized opts into category grouping
+	sortIssues(is)
+	s.issues = is
+	s.setShownOrdered(allIdx(len(is)))
+}
+
+// SetCategorized paints issues grouped under category headers (order) — used by
+// the open issue board (Mine / Others).
+func (s *IssueSection) SetCategorized(is []gh.Issue, cats map[int]string, order []string) {
+	sortIssues(is)
+	s.issues = is
+	s.cats = cats
+	s.catOrder = order
+	s.setShownOrdered(allIdx(len(is)))
+}
+
+// setShownOrdered records the shown subset in display order and decides grouping.
+// grouped is assigned on every exit — never derived as len(catOrder) > 0 — because
+// forceFlat can be true while catOrder is still populated (a "/" query on a
+// categorized board), and a derived value would paint interleaved
+// Mine/Others/Mine/Others… headers.
+func (s *IssueSection) setShownOrdered(idx []int) {
+	if s.forceFlat || len(s.catOrder) == 0 {
+		s.grouped = false
+		s.shown = idx
+		return
+	}
+	s.grouped = true
+	s.shown = groupIssuesByCategory(s.issues, idx, s.cats, s.catOrder)
+}
+
+// groupIssuesByCategory reorders idx so rows cluster under their category in
+// header order, preserving idx order within each category. No author
+// sub-grouping — that's a PR-board affordance.
+func groupIssuesByCategory(is []gh.Issue, idx []int, cats map[int]string, order []string) []int {
+	out := make([]int, 0, len(idx))
+	for _, cat := range order {
+		for _, i := range idx {
+			if cats[is[i].Number] == cat {
+				out = append(out, i)
+			}
+		}
+	}
+	return out
+}
+
+func (s *IssueSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
 // issueAt returns the gh.Issue at shown-row i (mirrors prAt).
 func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
+
+// isGrouped, groupLabelAt, unitLabelAt satisfy grouper. Group and unit coincide
+// here — a category has no author sub-cluster.
+func (s *IssueSection) isGrouped() bool           { return s.grouped }
+func (s *IssueSection) groupLabelAt(i int) string { return s.cats[s.issueAt(i).Number] }
+func (s *IssueSection) unitLabelAt(i int) string  { return s.groupLabelAt(i) }
 
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
 	is := s.issues[s.shown[i]]

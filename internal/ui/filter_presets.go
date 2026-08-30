@@ -2,8 +2,6 @@ package ui
 
 import "strings"
 
-type filterPreset struct{ name, search string }
-
 // prStates / issueStates are the `s`-toggle cycles per board. Order = cycle order.
 var prStates = []string{"open", "merged", "closed"}
 var issueStates = []string{"open", "closed"}
@@ -48,52 +46,23 @@ func nextState(s string, states []string) string {
 	return states[0]
 }
 
-// mineBody / reviewBody are the state-agnostic qualifiers the PR sections view
-// combines. reviewedBody re-catches PRs GitHub drops from review-requested:@me
-// once the viewer submits a review, so a commented-by-me PR keeps its place.
-// Issues use a single assignee qualifier (assigneeBody), no multi fetch.
+// reviewBody / reviewedBody are the state-agnostic qualifiers the PR sections
+// view combines. reviewedBody re-catches PRs GitHub drops from
+// review-requested:@me once the viewer submits a review, so a commented-by-me
+// PR keeps its place. assigneeBody / authorBody are the issue-side pair: the
+// issue board's Mine category is their union, fetched as two of the three
+// sections halves.
 const (
-	mineBody     = "author:@me"
+	authorBody   = "author:@me"
 	reviewBody   = "review-requested:@me"
 	reviewedBody = "reviewed-by:@me -author:@me"
 	assigneeBody = "assignee:@me"
 )
 
-var defaultPresets = []filterPreset{
-	{"mine", mineBody},
-	{"all", ""},
-}
-
-var issuePresets = []filterPreset{
-	{"mine", assigneeBody},
-	{"all", ""},
-}
-
-// statesFor / presetsFor select the cycle tables for the active board mode.
+// statesFor selects the s-toggle cycle table for the active board mode.
 func statesFor(mode string) []string {
 	if mode == "issue" {
 		return issueStates
 	}
 	return prStates
-}
-
-func presetsFor(mode string) []filterPreset {
-	if mode == "issue" {
-		return issuePresets
-	}
-	return defaultPresets
-}
-
-// nextPreset returns the index after i, wrapping to 0.
-func nextPreset(i int, presets []filterPreset) int { return (i + 1) % len(presets) }
-
-// presetIndexFor returns the index of the preset whose body equals body, or -1
-// when it is a custom (author) query.
-func presetIndexFor(body string, presets []filterPreset) int {
-	for i, p := range presets {
-		if p.search == body {
-			return i
-		}
-	}
-	return -1
 }

@@ -12,15 +12,14 @@ key.
   demoted, grouped by author outside the "mine" view.
 - **Triage preview** — the focused PR's recommended next action, check rollup,
   requested reviewers, and a folded comment timeline (rendered markdown).
-- **Filter presets** (`f` cycles mine / review-requested / all) plus an author
-  picker (`F`) and a fuzzy find (`/`).
+- **Fuzzy find** (`/`) narrows either board to the rows you type.
 - **Actions** run against the focused PR or a multi-selected set — merge, rerun
   failed checks, update branch, mark ready, copy URL/branch, open in browser, and
   open a git worktree.
 - **Stale-while-revalidate caching** — the PR list, per-PR detail, and the
   assignable-members list are cached to disk (`$XDG_STATE_HOME/prdash`) and
-  painted instantly on launch, then refreshed in the background. All filter
-  presets are pre-warmed at startup so `f` is instant.
+  painted instantly on launch, then refreshed in the background. Each board's
+  section halves are pre-warmed at startup, too.
 
 ## Install
 
@@ -44,7 +43,6 @@ go build -o prdash . && ./prdash
 | `⇥` (Tab) | toggle PRs ⟷ Issues |
 | `p` | unfold all comments in the preview's timeline (PR only) |
 | `z` | maximize the preview; `ctrl+j` / `ctrl+k` scroll it |
-| `f` | cycle filter presets (mine · review-requested · all) |
 | `s` | cycle state (open · merged · closed · …) |
 | `F` | filter by author (PR only) |
 | `R` | assign reviewers (PR only) |

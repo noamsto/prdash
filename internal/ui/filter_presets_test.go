@@ -46,19 +46,6 @@ func TestNextStateWraps(t *testing.T) {
 	}
 }
 
-func TestFilterPresetCycleWraps(t *testing.T) {
-	p := defaultPresets
-	if p[0].name != "mine" {
-		t.Fatalf("first preset should be mine, got %q", p[0].name)
-	}
-	for i := range p {
-		want := (i + 1) % len(p)
-		if got := nextPreset(i, defaultPresets); got != want {
-			t.Fatalf("nextPreset(%d) = %d, want %d", i, got, want)
-		}
-	}
-}
-
 func TestStatesFor(t *testing.T) {
 	if got := statesFor("issue"); len(got) != 2 || got[0] != "open" || got[1] != "closed" {
 		t.Errorf("issue states = %v", got)
@@ -75,13 +62,5 @@ func TestNextStateIssueWraps(t *testing.T) {
 	}
 	if got := nextState("closed", st); got != "open" {
 		t.Errorf("closed -> %q, want open (wrap)", got)
-	}
-}
-
-func TestIssueMinePreset(t *testing.T) {
-	ps := presetsFor("issue")
-	i := presetIndexFor("assignee:@me", ps)
-	if i < 0 || ps[i].name != "mine" {
-		t.Errorf("issue mine preset not found: idx=%d", i)
 	}
 }
