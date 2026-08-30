@@ -466,6 +466,49 @@ func TestFailedAutoMergeDoesNotPaintGlyph(t *testing.T) {
 	}
 }
 
+func TestOptimisticDisableAutoMergeClearsGlyph(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{
+		Number: 13, ID: "pr13node", State: "OPEN", Title: "x", Author: author("alice"),
+		AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"},
+	}})
+	m.width, m.height = 120, 40
+	m.actionStatus = statFor(action.AutoMergeAction(true))
+	m.actionStatus.nums = []int{13}
+	m.actionStatus.refresh = true
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	p := ps.prAt(0)
+	if p.AutoMergeEnabled() {
+		t.Fatal("successful disable auto-merge must clear AutoMergeRequest on the in-memory PR")
+	}
+	m.renderList()
+	if strings.Contains(m.rowText[0], autoMergeGlyph(true)) {
+		t.Fatalf("row should clear auto-merge glyph immediately:\n%s", m.rowText[0])
+	}
+}
+
+func TestOptimisticMarkReadyAndConvertDraftPaintDraftState(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN", IsDraft: true}})
+	m.actionStatus = statFor(action.ReadyAction(true))
+	m.actionStatus.nums = []int{13}
+
+	u, _ := m.Update(actionDoneMsg{})
+	m = u.(Model)
+	if m.section.(*PRSection).prAt(0).IsDraft {
+		t.Fatal("successful mark-ready must clear IsDraft on the in-memory PR")
+	}
+
+	m.actionStatus = statFor(action.ReadyAction(false))
+	m.actionStatus.nums = []int{13}
+	u, _ = m.Update(actionDoneMsg{})
+	m = u.(Model)
+	if !m.section.(*PRSection).prAt(0).IsDraft {
+		t.Fatal("successful convert-to-draft must set IsDraft on the in-memory PR")
+	}
+}
+
 func TestOptimisticApprovePaintsReviewGlyph(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{
 		Number: 13, ID: "pr13node", State: "OPEN",

@@ -37,6 +37,17 @@ func (s GraphSource) EnableAutoMerge(prID string) error {
 	return s.client.Mutate(context.Background(), &m, input, nil)
 }
 
+// DisableAutoMerge disarms auto-merge on a pull request.
+func (s GraphSource) DisableAutoMerge(prID string) error {
+	var m struct {
+		DisablePullRequestAutoMerge struct {
+			PullRequest struct{ ID string }
+		} `graphql:"disablePullRequestAutoMerge(input: $input)"`
+	}
+	input := githubv4.DisablePullRequestAutoMergeInput{PullRequestID: githubv4.ID(prID)}
+	return s.client.Mutate(context.Background(), &m, input, nil)
+}
+
 // MarkReady marks a draft PR ready for review, replacing `gh pr ready`.
 func (s GraphSource) MarkReady(prID string) error {
 	var m struct {
@@ -45,6 +56,17 @@ func (s GraphSource) MarkReady(prID string) error {
 		} `graphql:"markPullRequestReadyForReview(input: $input)"`
 	}
 	input := githubv4.MarkPullRequestReadyForReviewInput{PullRequestID: githubv4.ID(prID)}
+	return s.client.Mutate(context.Background(), &m, input, nil)
+}
+
+// ConvertToDraft converts a ready pull request to draft.
+func (s GraphSource) ConvertToDraft(prID string) error {
+	var m struct {
+		ConvertPullRequestToDraft struct {
+			PullRequest struct{ ID string }
+		} `graphql:"convertPullRequestToDraft(input: $input)"`
+	}
+	input := githubv4.ConvertPullRequestToDraftInput{PullRequestID: githubv4.ID(prID)}
 	return s.client.Mutate(context.Background(), &m, input, nil)
 }
 

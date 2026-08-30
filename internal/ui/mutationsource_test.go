@@ -15,9 +15,9 @@ import (
 // mutation seam: it records every call's PR node ID (and, for RequestReviews,
 // the full desired login set) instead of hitting GitHub.
 type fakeMutationSource struct {
-	mergeCalls, autoMergeCalls, markReadyCalls, updateBranchCalls, approveCalls []string
-	reviewCalls                                                                 []reviewCall
-	err                                                                         error // returned by every call, to test failure propagation
+	mergeCalls, autoMergeCalls, disableAutoMergeCalls, markReadyCalls, convertToDraftCalls, updateBranchCalls, approveCalls []string
+	reviewCalls                                                                                                             []reviewCall
+	err                                                                                                                     error // returned by every call, to test failure propagation
 }
 
 type reviewCall struct {
@@ -34,9 +34,17 @@ func (f *fakeMutationSource) EnableAutoMerge(prID string) error {
 	f.autoMergeCalls = append(f.autoMergeCalls, prID)
 	return f.err
 }
+func (f *fakeMutationSource) DisableAutoMerge(prID string) error {
+	f.disableAutoMergeCalls = append(f.disableAutoMergeCalls, prID)
+	return f.err
+}
 
 func (f *fakeMutationSource) MarkReady(prID string) error {
 	f.markReadyCalls = append(f.markReadyCalls, prID)
+	return f.err
+}
+func (f *fakeMutationSource) ConvertToDraft(prID string) error {
+	f.convertToDraftCalls = append(f.convertToDraftCalls, prID)
 	return f.err
 }
 
@@ -141,6 +149,72 @@ func TestAutoMergeRoutesToNativeSource(t *testing.T) {
 	}
 }
 
+func TestAutoMergeReversesFromFocusedState(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 9, ID: "pr9node", State: "OPEN", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}}})
+	if got := m.resolvePRAction(action.DefaultPRActions()["A"]).Command.Native; got != "disable-auto-merge" {
+		t.Fatalf("native = %q, want disable-auto-merge", got)
+	}
+	if done := driveBulk(t, m.runBulk(action.DefaultPRActions()["A"])); done == nil {
+		t.Fatal("expected completion")
+	}
+	if len(fs.disableAutoMergeCalls) != 1 || len(fs.autoMergeCalls) != 0 {
+		t.Fatalf("disable calls = %v, enable calls = %v", fs.disableAutoMergeCalls, fs.autoMergeCalls)
+	}
+}
+
+func TestActionHintsUseFocusedPRState(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{
+		{Number: 1, ID: "armed", State: "OPEN", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}},
+		{Number: 2, ID: "draft", State: "OPEN", IsDraft: true},
+	})
+
+	_, hints := m.actionHints()
+	if got := hintLabel(hints, "A"); got != "Disable auto-merge" {
+		t.Fatalf("A hint = %q, want Disable auto-merge", got)
+	}
+	if got := hintLabel(hints, "M"); got != "Convert to draft" {
+		t.Fatalf("M hint = %q, want Convert to draft", got)
+	}
+
+	m.cursor = 1
+	_, hints = m.actionHints()
+	if got := hintLabel(hints, "A"); got != "Auto-merge (squash)" {
+		t.Fatalf("A hint = %q, want Auto-merge (squash)", got)
+	}
+	if got := hintLabel(hints, "M"); got != "Mark ready" {
+		t.Fatalf("M hint = %q, want Mark ready", got)
+	}
+}
+
+func hintLabel(hints []keyHint, key string) string {
+	for _, h := range hints {
+		if h.key == key {
+			return h.label
+		}
+	}
+	return ""
+}
+
+func TestAutoMergeMixedSelectionUsesFocusedDirection(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{
+		{Number: 1, ID: "enabled", State: "OPEN", AutoMergeRequest: &gh.AutoMergeRequest{MergeMethod: "SQUASH"}},
+		{Number: 2, ID: "disabled", State: "OPEN"},
+	})
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+	for i := 0; i < m.section.Len(); i++ {
+		if m.section.VarsAt(i).ID == "enabled" {
+			m.cursor = i
+		}
+	}
+	if done := driveBulk(t, m.runBulk(action.DefaultPRActions()["A"])); done == nil {
+		t.Fatal("expected completion")
+	}
+	if len(fs.disableAutoMergeCalls) != 1 || fs.disableAutoMergeCalls[0] != "enabled" || len(fs.autoMergeCalls) != 0 {
+		t.Fatalf("disable calls = %v, enable calls = %v", fs.disableAutoMergeCalls, fs.autoMergeCalls)
+	}
+}
+
 func TestMarkReadyRoutesWhenDraft(t *testing.T) {
 	m, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "OPEN", IsDraft: true}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["M"]))
@@ -149,6 +223,44 @@ func TestMarkReadyRoutesWhenDraft(t *testing.T) {
 	}
 	if len(fs.markReadyCalls) != 1 || fs.markReadyCalls[0] != "pr11node" {
 		t.Errorf("markReadyCalls = %v, want [pr11node]", fs.markReadyCalls)
+	}
+}
+
+func TestMarkReadyReversesFromFocusedState(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 11, ID: "pr11node", State: "OPEN"}})
+	if got := m.resolvePRAction(action.DefaultPRActions()["M"]).Command.Native; got != "convert-to-draft" {
+		t.Fatalf("native = %q, want convert-to-draft", got)
+	}
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["M"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	if len(fs.convertToDraftCalls) != 1 || fs.convertToDraftCalls[0] != "pr11node" {
+		t.Errorf("convertToDraftCalls = %v, want [pr11node]", fs.convertToDraftCalls)
+	}
+	if len(fs.markReadyCalls) != 0 {
+		t.Errorf("markReadyCalls = %v, want none", fs.markReadyCalls)
+	}
+}
+
+func TestMarkReadyMixedSelectionUsesFocusedDirection(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{
+		{Number: 1, ID: "ready", State: "OPEN"},
+		{Number: 2, ID: "draft", State: "OPEN", IsDraft: true},
+	})
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+	m.cursor = 0
+
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["M"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	if len(fs.convertToDraftCalls) != 1 || fs.convertToDraftCalls[0] != "ready" {
+		t.Errorf("convertToDraftCalls = %v, want [ready]", fs.convertToDraftCalls)
+	}
+	if len(fs.markReadyCalls) != 0 {
+		t.Errorf("markReadyCalls = %v, want none", fs.markReadyCalls)
 	}
 }
 

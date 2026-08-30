@@ -234,6 +234,18 @@ func (m *Model) applyOptimisticAction() {
 				p.AutoMergeRequest = &gh.AutoMergeRequest{MergeMethod: "SQUASH"}
 			})
 		}
+	case "disable-auto-merge":
+		for _, n := range m.actionStatus.nums {
+			ps.updatePR(n, func(p *gh.PR) { p.AutoMergeRequest = nil })
+		}
+	case "mark-ready":
+		for _, n := range m.actionStatus.nums {
+			ps.updatePR(n, func(p *gh.PR) { p.IsDraft = false })
+		}
+	case "convert-to-draft":
+		for _, n := range m.actionStatus.nums {
+			ps.updatePR(n, func(p *gh.PR) { p.IsDraft = true })
+		}
 	case "approve":
 		for _, n := range m.actionStatus.nums {
 			ps.updatePR(n, func(p *gh.PR) {
@@ -3017,7 +3029,7 @@ func (m Model) actionHints() (label string, hints []keyHint) {
 		if !ok || (batch && !batchCapable(a)) {
 			continue
 		}
-		hints = append(hints, keyHint{a.Key, a.Label, nil})
+		hints = append(hints, keyHint{a.Key, m.resolvePRAction(a).Label, nil})
 	}
 	if batch {
 		return fmt.Sprintf("batch · %d", m.sel.count()), hints
