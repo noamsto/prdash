@@ -1032,6 +1032,18 @@ func (m *Model) hydrate() bool {
 		return false
 	}
 	if m.mode == "issue" {
+		if m.issueSectionsDefault() {
+			assignedF, authoredF, wideF := issueSectionFilters()
+			assigned, ok1 := m.cachedIssues(assignedF, issueListLimit)
+			authored, _ := m.cachedIssues(authoredF, issueListLimit)
+			wide, ok2 := m.cachedIssues(wideF, issueListLimit)
+			if !ok1 && !ok2 {
+				return false
+			}
+			m.setIssueSections(assigned, authored, wide, m.viewerLogin)
+			m.hydrateIssueDetail()
+			return true
+		}
 		is, ok := m.cachedIssues(m.filter, defaultLimit)
 		if !ok {
 			return false
@@ -1458,6 +1470,13 @@ func (m Model) pollChecksCmd() tea.Cmd {
 // the same fetch path as a filter switch, minus the row reset.
 func (m *Model) backgroundRefresh() tea.Cmd {
 	m.refreshing = true
+	if m.mode == "issue" {
+		fetch := m.issueFetchCmd(m.filter)
+		if m.issueSectionsDefault() {
+			fetch = m.issueSectionsFetchCmd()
+		}
+		return tea.Batch(fetch, m.startSpinner())
+	}
 	fetch := m.fetchCmd(m.filter)
 	if m.sectionsDefault() {
 		fetch = m.sectionsFetchCmd()
@@ -1477,9 +1496,17 @@ func (m *Model) switchToFilter() tea.Cmd {
 	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
 	if m.mode == "issue" {
 		if !hit {
-			m.setIssues(nil)
+			if m.issueSectionsDefault() {
+				m.setIssueSections(nil, nil, nil, m.viewerLogin) // drop stale rows while the fetch is in flight
+			} else {
+				m.setIssues(nil)
+			}
 		}
-		return tea.Batch(m.issueFetchCmd(m.filter), m.startSpinner())
+		fetch := m.issueFetchCmd(m.filter)
+		if m.issueSectionsDefault() {
+			fetch = m.issueSectionsFetchCmd()
+		}
+		return tea.Batch(fetch, m.startSpinner())
 	}
 	if !hit {
 		if m.sectionsDefault() {
@@ -1630,6 +1657,23 @@ func (m Model) launchGateKeys() []string {
 	}
 }
 
+// issueLaunchGateKeys are launchGateKeys' issue-side counterpart: the three
+// issueSectionFilters halves at issueListLimit, used by launchFetchCmds' issue
+// gate. A separate helper, not folded into launchGateKeys, because the two
+// gates govern different fetches (R3.1): launchGateKeys' keys back the
+// foreground PR view's skip decision and its fetchSkippedMsg, while these back
+// a background prewarm that never emits fetchSkippedMsg. Merging them would
+// let a stale issue cache force a redundant PR refetch, and a stale PR cache
+// suppress the issue prewarm.
+func (m Model) issueLaunchGateKeys() []string {
+	assignedF, authoredF, wideF := issueSectionFilters()
+	return []string{
+		issueKey(m.repo, assignedF, issueListLimit),
+		issueKey(m.repo, authoredF, issueListLimit),
+		issueKey(m.repo, wideF, issueListLimit),
+	}
+}
+
 // invalidateLaunchCache marks the launch-gate keys and the given PRs' detail
 // keys Stale. Call it when a mutation is dispatched — not on success — so a
 // quit while the mutation is still in flight leaves the pre-mutation snapshot
@@ -1665,9 +1709,18 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	} else {
 		cmds = append(cmds, m.sectionsFetchCmd())
 	}
-	issueF := searchFor("issue", "open", assigneeBody)
-	if !m.cacheFresh(issueKey(m.repo, issueF, defaultLimit)) {
-		cmds = append(cmds, m.issueFetchCmd(issueF))
+	// All-or-nothing, like the PR gate above: a fresh assigned half plus a
+	// missing wide half paints a board with no Others at all, so any one
+	// stale key re-fetches all three.
+	issueSectionsFresh := true
+	for _, key := range m.issueLaunchGateKeys() {
+		if !m.cacheFresh(key) {
+			issueSectionsFresh = false
+			break
+		}
+	}
+	if !issueSectionsFresh {
+		cmds = append(cmds, m.issueSectionsFetchCmd())
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
 		cmds = append(cmds, m.fetchMembersCmd())
@@ -1739,6 +1792,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repaintActive()
 		return m, tea.Batch(m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll())
+	case issueSectionsFetchedMsg:
+		if m.cache != nil {
+			assignedF, authoredF, wideF := issueSectionFilters()
+			if msg.assignedRaw != nil {
+				m.cache.Set(issueKey(m.repo, assignedF, issueListLimit), msg.assignedRaw)
+			}
+			if msg.authoredRaw != nil {
+				m.cache.Set(issueKey(m.repo, authoredF, issueListLimit), msg.authoredRaw)
+			}
+			if msg.openRaw != nil {
+				m.cache.Set(issueKey(m.repo, wideF, issueListLimit), msg.openRaw)
+			}
+		}
+		if !m.issueSectionsDefault() {
+			return m, nil // launch prewarm while on the PR board: cache only
+		}
+		m.refreshing = false
+		m.loaded = true
+		m.sel.clear()
+		m.setIssueSections(msg.assigned, msg.authored, msg.open, m.viewerLogin)
+		if m.expanded && m.section.Len() == 0 {
+			m.expanded = false
+		}
+		m.repaintActive()
+		return m, m.detailCmdForCursor()
 	case fetchFailedMsg:
 		if msg.mode != "" && msg.mode != m.mode {
 			return m, nil // wrong board entirely
@@ -1778,6 +1856,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			open, ok := m.cachedPRs("is:open", openListLimit)
 			if ok {
 				m.setSections(rev, revd, open, m.viewerLogin)
+			}
+		}
+		if m.issueSectionsDefault() {
+			assignedF, authoredF, wideF := issueSectionFilters()
+			assigned, _ := m.cachedIssues(assignedF, issueListLimit)
+			authored, _ := m.cachedIssues(authoredF, issueListLimit)
+			wide, ok := m.cachedIssues(wideF, issueListLimit)
+			if ok {
+				m.setIssueSections(assigned, authored, wide, m.viewerLogin)
 			}
 		}
 		return m, nil
@@ -2607,6 +2694,21 @@ func (m Model) listTitle() string {
 // qualifier or a non-open state drops to the flat setPRs path.
 func (m Model) sectionsDefault() bool {
 	return m.mode == "pr" && m.state == "open" && m.omniServer == ""
+}
+
+// issueSectionsDefault reports whether the issue board is the empty-default
+// open view — the sole state that shows the Mine/Others sections. It is not
+// sectionsDefault generalized across mode: the issue board has no omni-server
+// qualifier dimension to gate on (that's a PR-only concept, guarded by
+// m.mode == "pr" everywhere else it's read), so the two predicates can't
+// share a body without inventing a clause that means nothing on this side.
+// The mode term is what does the real work: at launch the user is still on
+// the PR board (m.mode == "pr"), so this reads false while
+// issueSectionsFetchedMsg's handler composes cache-only — trimming the
+// predicate down to just m.state == "open" would make that handler paint
+// the issue sections onto the PR board on every launch.
+func (m Model) issueSectionsDefault() bool {
+	return m.mode == "issue" && m.state == "open"
 }
 
 // cursorCard is the triage card for the focused PR, when its detail is cached.

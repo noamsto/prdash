@@ -857,7 +857,10 @@ func warmLaunchCache(m Model, c *cache.Cache) {
 	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit), json.RawMessage("[]"))
 	c.Set(prKey(m.repo, "is:open", openListLimit), json.RawMessage("[]"))
-	c.Set(issueKey(m.repo, searchFor("issue", "open", assigneeBody), defaultLimit), json.RawMessage("[]"))
+	assignedF, authoredF, wideF := issueSectionFilters()
+	c.Set(issueKey(m.repo, assignedF, issueListLimit), json.RawMessage("[]"))
+	c.Set(issueKey(m.repo, authoredF, issueListLimit), json.RawMessage("[]"))
+	c.Set(issueKey(m.repo, wideF, issueListLimit), json.RawMessage("[]"))
 	c.Set(membersKey(m.repo), json.RawMessage("[]"))
 	c.Set(viewerKey(), json.RawMessage(`"me"`))
 }
@@ -887,9 +890,9 @@ func TestLaunchFetchesWhenCacheCold(t *testing.T) {
 			cmd()
 		}
 	}
-	// sections (review+reviewed+is:open) + issues + members + viewer = 6 source fetches.
-	if n := cs.calls.Load(); n != 6 {
-		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 6", n)
+	// sections (review+reviewed+is:open) + issue sections (assigned+authored+wide) + members + viewer = 8 source fetches.
+	if n := cs.calls.Load(); n != 8 {
+		t.Fatalf("cold cache should fire the full launch fan-out, got %d source calls, want 8", n)
 	}
 }
 
