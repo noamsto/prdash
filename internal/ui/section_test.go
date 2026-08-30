@@ -474,6 +474,171 @@ func TestSetHideDraftsExcludesDrafts(t *testing.T) {
 	}
 }
 
+func TestPRStacksStayTogetherAcrossCategoriesAndDraftFilter(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 4}
+	root := gh.PR{Number: 100, Title: "root", Stack: stack, StackPosition: 1}
+	root.Author.Login = "alice"
+	middle := gh.PR{Number: 102, Title: "middle", IsDraft: true, Stack: stack, StackPosition: 2}
+	middle.Author.Login = "bob"
+	tip := gh.PR{Number: 101, Title: "tip", Stack: stack, StackPosition: 3}
+	tip.Author.Login = "carol"
+	other := gh.PR{Number: 200, Title: "other"}
+	other.Author.Login = "dave"
+
+	s := NewPRSection("")
+	s.SetCategorized([]gh.PR{root, middle, tip, other}, map[int]string{
+		100: "Review requested", 101: "Others", 102: "Others", 200: "Others",
+	}, []string{"Review requested", "Others"})
+	s.SetHideDrafts(true)
+	s.SetShown([]int{0, 1, 2, 3})
+
+	got := make([]int, s.Len())
+	for i := range got {
+		got[i] = s.prAt(i).Number
+	}
+	if want := []int{100, 102, 101, 200}; !slices.Equal(got, want) {
+		t.Fatalf("stack/category order = %v, want %v", got, want)
+	}
+	for i, want := range []string{"⧉+1", "├─", "╰─"} {
+		row := ansi.Strip(s.RenderRow(i, RowOpts{Width: 100, NumWidth: 4}))
+		if !strings.Contains(row, want) {
+			t.Errorf("stack row %d = %q, want tree %q", i, row, want)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if got := s.groupLabel(i); got != "Review requested" {
+			t.Errorf("stack member %d category = %q, want root category", i, got)
+		}
+	}
+}
+
+func TestPRStackUnitLabelSelectsWholeChain(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := make([]gh.PR, 3)
+	for i := range prs {
+		prs[i] = gh.PR{Number: 100 + i, Stack: stack, StackPosition: i + 1}
+		prs[i].Author.Login = []string{"alice", "bob", "carol"}[i]
+	}
+	s := NewPRSection("")
+	s.SetForceGroup(true)
+	s.SetPRs(prs)
+	if s.unitLabel(1) != "stack:900" {
+		t.Fatalf("middle stack unit = %q, want stack identity", s.unitLabel(1))
+	}
+}
+
+func TestPRSectionResolvesOnlyVisibleImmediateStackParent(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := []gh.PR{
+		{Number: 100, Stack: stack, StackPosition: 1},
+		{Number: 101, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+	}
+	s := NewPRSection("")
+	s.SetPRs(prs)
+	for i, want := range []int{0, 100, 101} {
+		if got := s.stackParentNumber(i); got != want {
+			t.Errorf("stack parent for #%d = #%d, want #%d", s.prAt(i).Number, got, want)
+		}
+	}
+
+	// Once #100 merges it leaves the open board. #101 becomes the visible root;
+	// #102 remains blocked only on its exact immediate predecessor.
+	s.SetPRs([]gh.PR{
+		{Number: 101, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+	})
+	if got := s.stackParentNumber(0); got != 0 {
+		t.Errorf("visible root parent = #%d, want none", got)
+	}
+	if got := s.stackParentNumber(1); got != 101 {
+		t.Errorf("tip parent = #%d, want #101", got)
+	}
+
+	// A just-merged predecessor can be held briefly on the open board. It is not
+	// a blocker: the next open link is the visible root while its child remains
+	// blocked on that immediate link.
+	s.SetPRs([]gh.PR{
+		{Number: 100, State: "MERGED", Stack: stack, StackPosition: 1},
+		{Number: 101, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+	})
+	for i := 0; i < s.Len(); i++ {
+		switch s.prAt(i).Number {
+		case 101:
+			if got := s.stackParentNumber(i); got != 0 {
+				t.Errorf("post-merge visible root parent = #%d, want none", got)
+			}
+		case 102:
+			if got := s.stackParentNumber(i); got != 101 {
+				t.Errorf("post-merge tip parent = #%d, want #101", got)
+			}
+		}
+	}
+}
+
+func TestPRStackMissingCountUsesTitleTagBudget(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 13}
+	prs := []gh.PR{
+		{Number: 100, Title: "root", Stack: stack, StackPosition: 1},
+		{Number: 101, Title: "middle", Stack: stack, StackPosition: 2},
+		{Number: 102, Title: "tip", Stack: stack, StackPosition: 3},
+	}
+	s := NewPRSection("")
+	s.SetPRs(prs)
+	row := s.RenderRow(0, RowOpts{Width: 90, NumWidth: 4})
+	if got := ansi.Strip(row); !strings.Contains(got, "⧉+10") {
+		t.Fatalf("missing count = %q, want complete ⧉+10", got)
+	}
+	if want := dimStyle.Render(" ⧉+10"); !strings.Contains(row, want) {
+		t.Errorf("missing count should be dim: %q does not contain %q", row, want)
+	}
+	if got := lipgloss.Width(row); got != 90 {
+		t.Errorf("row width = %d, want 90", got)
+	}
+	root := ansi.Strip(row)
+	child := ansi.Strip(s.RenderRow(1, RowOpts{Width: 90, NumWidth: 4}))
+	rootCol := lipgloss.Width(strings.Split(root, "#100")[0])
+	childCol := lipgloss.Width(strings.Split(child, "#101")[0])
+	if rootCol != childCol {
+		t.Errorf("number column drifted: root=%q child=%q", root, child)
+	}
+}
+
+func TestSetShownExpandsPartialStackMatch(t *testing.T) {
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := []gh.PR{
+		{Number: 100, Stack: stack, StackPosition: 1},
+		{Number: 101, IsDraft: true, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+		{Number: 200, Title: "unstacked"},
+	}
+	s := NewPRSection("")
+	s.SetHideDrafts(true)
+	s.SetPRs(prs)
+	match := -1
+	for i, p := range s.prs {
+		if p.Number == 102 {
+			match = i
+		}
+	}
+	s.SetShown([]int{match})
+	if s.Len() != 3 {
+		t.Fatalf("partial stack match shows %d rows, want full 3-link chain", s.Len())
+	}
+	for i, want := range []int{100, 101, 102} {
+		if got := s.prAt(i).Number; got != want {
+			t.Errorf("stack row %d = #%d, want #%d", i, got, want)
+		}
+	}
+	if row := ansi.Strip(s.RenderRow(0, RowOpts{Width: 90, NumWidth: 4})); !strings.Contains(row, "⧉") {
+		t.Errorf("lowest visible member should be the root: %q", row)
+	}
+	if got := s.stackParentNumber(2); got != 101 {
+		t.Errorf("expanded tip parent = #%d, want #101", got)
+	}
+}
+
 func TestSetPRsMergedSortsByMergeTime(t *testing.T) {
 	mk := func(num int, merged string) gh.PR {
 		ts, _ := time.Parse(time.RFC3339, merged)

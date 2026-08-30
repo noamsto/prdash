@@ -353,9 +353,10 @@ func (m Model) renderOverview(w int) string {
 		if body := previewDescriptionBody(pr, m.viewerLogin, bw); body != "" {
 			blocks = append(blocks, section(descriptionGlyph, "description", body))
 		}
-		tc := triage.Preliminary(pr, m.viewerLogin)
+		parentNumber := ps.stackParentNumber(m.cursor)
+		tc := triage.Preliminary(pr, m.viewerLogin, parentNumber)
 		if cached {
-			tc = triage.Compute(pr, d, m.viewerLogin)
+			tc = triage.Compute(pr, d, m.viewerLogin, parentNumber)
 		}
 		if card := renderCard(tc, bw); card != "" {
 			blocks = append(blocks, section(blockerGlyph, "blocker", card))

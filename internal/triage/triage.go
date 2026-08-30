@@ -39,21 +39,24 @@ type Card struct {
 // Compute returns the highest-priority triage card for pr given its detail.
 // Merge-state comes from detail (reliable per-PR); checks come from the PR rollup.
 // viewer is the authenticated user's login ("" when unresolved) — it gates the
-// approve suggestion, which GitHub forbids on your own PR.
-func Compute(pr gh.PR, d gh.PRDetail, viewer string) Card {
+// approve suggestion, which GitHub forbids on your own PR. parentNumber is the
+// current board's visible immediate stack parent, or zero when there is none.
+func Compute(pr gh.PR, d gh.PRDetail, viewer string, parentNumber int) Card {
 	mss := d.MergeStateStatus
 	failing := checksByState(pr, "fail")
 	pending := checksByState(pr, "pending")
 
-	c := computeCard(pr, d, mss, failing, pending, viewer)
+	c := computeCard(pr, d, mss, failing, pending, viewer, parentNumber)
 	c.AutoMerge = pr.AutoMergeEnabled()
 	return c
 }
 
 // computeCard is Compute's original branch logic, unchanged, extracted so
 // Compute can stamp AutoMerge onto whichever branch fires.
-func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string, viewer string) Card {
+func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string, viewer string, parentNumber int) Card {
 	switch {
+	case parentNumber != 0:
+		return Card{Kind: KindBlocked, Headline: fmt.Sprintf("Blocked on #%d", parentNumber)}
 	case pr.IsDraft || mss == "DRAFT":
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
 			ActionKey: "M", ActionLabel: "Mark ready"}
@@ -92,16 +95,18 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string,
 // Preliminary builds a best-effort card from list-only fields (no merge-state),
 // so the quick view can show something the instant the cursor lands — before the
 // per-PR detail fetch returns. Compute supersedes it once detail is cached.
-func Preliminary(pr gh.PR, viewer string) Card {
-	c := preliminaryCard(pr, viewer)
+func Preliminary(pr gh.PR, viewer string, parentNumber int) Card {
+	c := preliminaryCard(pr, viewer, parentNumber)
 	c.AutoMerge = pr.AutoMergeEnabled()
 	return c
 }
 
-func preliminaryCard(pr gh.PR, viewer string) Card {
+func preliminaryCard(pr gh.PR, viewer string, parentNumber int) Card {
 	failing := checksByState(pr, "fail")
 	pending := checksByState(pr, "pending")
 	switch {
+	case parentNumber != 0:
+		return Card{Kind: KindBlocked, Headline: fmt.Sprintf("Blocked on #%d", parentNumber)}
 	case pr.IsDraft:
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
 			ActionKey: "M", ActionLabel: "Mark ready"}

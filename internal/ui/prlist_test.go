@@ -2281,6 +2281,51 @@ func TestVSelectsClusterThenCategoryThenAllThenNone(t *testing.T) {
 	}
 }
 
+func TestVSelectsStackFromAnyMember(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := make([]gh.PR, 3)
+	for i := range prs {
+		prs[i] = gh.PR{Number: 100 + i, Stack: stack, StackPosition: i + 1}
+		prs[i].Author.Login = []string{"alice", "bob", "carol"}[i]
+	}
+	m.setPRs(prs)
+	ps := m.section.(*PRSection)
+	for i := 0; i < ps.Len(); i++ {
+		if ps.prAt(i).StackPosition == 2 {
+			m.cursor = i
+			break
+		}
+	}
+	m.advanceSelection()
+	if got := m.sel.count(); got != 3 {
+		t.Fatalf("V on a stack middle selected %d rows, want the full 3-row chain", got)
+	}
+}
+
+func TestDKeyKeepsStackedDraftLinks(t *testing.T) {
+	m := NewModel("/tmp", "is:open", nil)
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	prs := []gh.PR{
+		{Number: 100, Stack: stack, StackPosition: 1},
+		{Number: 101, IsDraft: true, Stack: stack, StackPosition: 2},
+		{Number: 102, Stack: stack, StackPosition: 3},
+		{Number: 200, IsDraft: true},
+	}
+	m.setPRs(prs)
+	u, _ := m.Update(keyMsg("D"))
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	if !m.hideDrafts || ps.Len() != 3 {
+		t.Fatalf("D leaves hideDrafts=%v and %d rows, want true and the 3-link stack", m.hideDrafts, ps.Len())
+	}
+	for i, want := range []int{100, 101, 102} {
+		if got := ps.prAt(i).Number; got != want {
+			t.Errorf("D stack row %d = #%d, want #%d", i, got, want)
+		}
+	}
+}
+
 func TestVKeyAdvancesSelection(t *testing.T) {
 	m := NewModel("/tmp", "is:open", nil)
 	m.width, m.height = 120, 40

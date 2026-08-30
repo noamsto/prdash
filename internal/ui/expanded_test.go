@@ -227,7 +227,7 @@ func TestEnterExpandedDeepLinks(t *testing.T) {
 		t.Fatalf("deep-link to Checks tab expected (%d), got %d", tabChecks, m.expandedTab)
 	}
 	// sanity: the triage card for this PR really is checks-failing
-	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}, "").JumpTab != "checks" {
+	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}, "", 0).JumpTab != "checks" {
 		t.Fatal("precondition: expected checks JumpTab")
 	}
 }
@@ -340,6 +340,31 @@ func TestRenderOverviewShowsBlockerAndLatest(t *testing.T) {
 	out := ansi.Strip(m.renderOverview(60))
 	if !strings.Contains(out, latestGlyph+" Latest") {
 		t.Fatalf("overview missing Latest section:\n%s", out)
+	}
+}
+
+func TestStackedPRTriageUsesImmediateVisibleParent(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 150, 40
+	stack := &gh.PRStack{Number: 900, Size: 3}
+	m.setPRs([]gh.PR{
+		{Number: 100, Title: "root", Stack: stack, StackPosition: 1},
+		{Number: 101, Title: "middle", Stack: stack, StackPosition: 2},
+		{Number: 102, Title: "tip", Stack: stack, StackPosition: 3},
+	})
+	m.cursor = 2
+	m.detail[102] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+
+	card, ok := m.cursorCard()
+	if !ok || card.Headline != "Blocked on #101" {
+		t.Fatalf("cursor card = %+v, %v; want Blocked on #101", card, ok)
+	}
+	out := ansi.Strip(m.renderOverview(60))
+	if !strings.Contains(out, "Blocked on #101") {
+		t.Fatalf("overview missing immediate-parent blocker:\n%s", out)
+	}
+	if strings.Contains(out, "Blocked on #100") {
+		t.Fatalf("overview used stack root instead of immediate parent:\n%s", out)
 	}
 }
 
