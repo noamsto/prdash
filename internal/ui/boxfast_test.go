@@ -24,7 +24,7 @@ type boxFixture struct{ name, content string }
 
 // boxFixtureCount is asserted against the executed case count so a fixture that
 // falls out of the table below shows up as a failure rather than as silence.
-const boxFixtureCount = 27
+const boxFixtureCount = 31
 
 // boxFixtures spans the shapes a width comparison alone cannot decide: the ones
 // Style.Render rewrites before measuring (tabs, CRLF, pens left open at a line
@@ -52,6 +52,13 @@ func boxFixtures(w int) []boxFixture {
 		{"osc8Balanced", "\x1b]8;;https://x.com\x1b\\a\x1b]8;;\x1b\\\n\x1b]8;;https://y.com\x1b\\b\x1b]8;;\x1b\\"},
 		{"osc8OpenAtEnd", "\x1b]8;;https://x.com\x1b\\click"},
 		{"osc8URISemicolon", "\x1b]8;;https://x.com/a;\x1b\\click\nhere\x1b]8;;\x1b\\"},
+		{"oscUnterminated", strings.Repeat("\x1b]", 64) + "tail"},
+		// A CSI cut short by a fresh escape: '[' is inside the final-byte range,
+		// so a scan that does not stop at ESC reads the second escape's own
+		// introducer as the first's terminator and loses the SGR behind it.
+		{"csiAbortedByEscape", "\x1b[\x1b[31mred\nplain"},
+		{"csiTruncatedParamsThenEscape", "\x1b[38;5\x1b[31mred\nplain"},
+		{"csiTrailingSemicolonThenEscape", "\x1b[1;\x1b[31mred\nplain"},
 		{"cjk", "重试重试重试"},
 		{"cjkStraddlesEdge", strings.Repeat("x", max(0, inner-1)) + "重"},
 		{"zwjEmoji", "👨‍👩‍👧‍👦 fam"},
@@ -130,6 +137,11 @@ func TestPensOpenAtEnd(t *testing.T) {
 		{"osc8ParamsOnly", "\x1b]8;id=1;\x1b\\click", true},
 		{"osc8UnclosedByURISemicolon", "\x1b]8;;https://x.com/a;\x1b\\click\x1b]8;;\x1b\\", false},
 		{"osc8ThenSGROpen", "\x1b]8;;https://x.com\aclick\x1b]8;;\a\x1b[31m", true},
+		{"csiAbortedByEscape", "\x1b[\x1b[31mred", true},
+		{"csiTruncatedParamsThenEscape", "\x1b[38;5\x1b[31mred", true},
+		{"csiTrailingSemicolonThenEscape", "\x1b[1;\x1b[31mred", true},
+		{"csiAbortedThenBalanced", "\x1b[\x1b[31mred\x1b[0m", false},
+		{"csiTruncatedAtEnd", "abc\x1b[38;5", false},
 	}
 	for _, c := range cases {
 		if got := pensOpenAtEnd(c.s); got != c.want {

@@ -146,9 +146,18 @@ func pensOpenAtEnd(s string) bool {
 		rest := s[i+1:]
 		switch rest[0] {
 		case '[': // CSI, up to its final byte
-			j := strings.IndexFunc(rest[1:], func(r rune) bool { return r >= '@' && r <= '~' })
+			// A fresh ESC cancels a CSI still collecting parameters, so it has to
+			// end the search too: '[' and most letters sit inside '@'..'~', so a
+			// truncated colour code followed by another escape would otherwise
+			// have the second escape's own introducer read as the first's final
+			// byte, swallowing a real SGR and missing the pen it opens.
+			j := strings.IndexFunc(rest[1:], func(r rune) bool { return r == 0x1b || (r >= '@' && r <= '~') })
 			if j < 0 {
 				return style || link
+			}
+			if rest[1+j] == 0x1b {
+				s = rest[1+j:] // cancelled: it sets nothing, so resume at the new escape
+				continue
 			}
 			if rest[1+j] == 'm' {
 				p := rest[1 : 1+j]
@@ -204,8 +213,12 @@ func joinBoard(stack []string, side string, gap int) string {
 		return joinBoardLipgloss(stack, side, gap)
 	}
 
-	var leftLines []string
-	var leftWidths []int
+	rows := 0
+	for _, s := range stack {
+		rows += strings.Count(s, "\n") + 1
+	}
+	leftLines := make([]string, 0, rows)
+	leftWidths := make([]int, 0, rows)
 	commonW := 0
 	for _, s := range stack {
 		for _, ln := range strings.Split(s, "\n") {
@@ -224,9 +237,9 @@ func joinBoard(stack []string, side string, gap int) string {
 		sideW = max(sideW, sideWidths[i])
 	}
 
-	rows := max(len(leftLines), len(sideLines))
-	lines := make([]string, rows)
-	for i := range rows {
+	height := max(len(leftLines), len(sideLines))
+	lines := make([]string, height)
+	for i := range height {
 		left, leftW := "", 0
 		if i < len(leftLines) {
 			left, leftW = leftLines[i], leftWidths[i]
