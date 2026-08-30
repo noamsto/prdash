@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,7 +20,11 @@ func main() {
 
 	repo, err := gh.RepoFromGit(dir)
 	if err != nil {
-		ui.RunNotice("prdash", "Not inside a GitHub repository.\n\ncd into a repo with a github.com origin remote, then run prdash again.")
+		body := "Not inside a GitHub repository.\n\ncd into a repo with a github.com origin remote, then run prdash again."
+		if !errors.Is(err, gh.ErrNoRepo) {
+			body = fmt.Sprintf("Could not resolve the GitHub repo.\n\n%s", err)
+		}
+		ui.RunNotice("prdash", body)
 		os.Exit(1)
 	}
 
@@ -26,8 +32,12 @@ func main() {
 	// comes from GH_TOKEN/GITHUB_TOKEN or, failing that, `gh auth token`.
 	tok, err := gh.Token()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "prdash: no GitHub token found.")
-		fmt.Fprintln(os.Stderr, "Set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.")
+		if errors.Is(err, context.DeadlineExceeded) {
+			ui.RunNotice("prdash", fmt.Sprintf("%s\n\nSet GH_TOKEN or GITHUB_TOKEN to bypass `gh auth token` entirely.", err))
+		} else {
+			fmt.Fprintln(os.Stderr, "prdash:", err)
+			fmt.Fprintln(os.Stderr, "Set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.")
+		}
 		os.Exit(1)
 	}
 

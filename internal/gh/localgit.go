@@ -1,14 +1,18 @@
 package gh
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
 // BranchExists reports whether branch is a local branch of the repo at dir.
 func BranchExists(dir, branch string) bool {
-	err := exec.Command("git", "-C", dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	defer cancel()
+	// A timeout collapses into false, same as "branch not found" — acceptable
+	// here since callers already treat "can't tell" the same as "doesn't exist".
+	err := newBoundedCmd(ctx, "git", "-C", dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch).Run()
 	return err == nil
 }
 
@@ -36,14 +40,21 @@ func remoteBranchExists(dir, branch string) bool {
 	if branch == "" {
 		return false
 	}
-	err := exec.Command("git", "-C", dir, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	defer cancel()
+	// Same reasoning as BranchExists: a timeout collapses into false.
+	err := newBoundedCmd(ctx, "git", "-C", dir, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch).Run()
 	return err == nil
 }
 
 // WorktreeForBranch returns the path of the worktree branch is checked out in, if
 // any. A branch with no worktree of its own reports false.
 func WorktreeForBranch(dir, branch string) (string, bool) {
-	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	defer cancel()
+	// A timeout collapses into ("", false), same as "no worktree list
+	// available" — acceptable here since no caller distinguishes why.
+	out, err := newBoundedCmd(ctx, "git", "-C", dir, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return "", false
 	}
@@ -65,8 +76,13 @@ func WorktreeForBranch(dir, branch string) (string, bool) {
 // RemoveWorktree removes the worktree at path. It deliberately omits --force, so
 // uncommitted work blocks the removal instead of being discarded.
 func RemoveWorktree(dir, path string) error {
-	out, err := exec.Command("git", "-C", dir, "worktree", "remove", path).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), mutatingGitTimeout)
+	defer cancel()
+	out, err := newBoundedCmd(ctx, "git", "-C", dir, "worktree", "remove", path).CombinedOutput()
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("git worktree remove timed out after %s (the worktree may be half-removed or its lock stale — check `git worktree list`): %w", mutatingGitTimeout, ctx.Err())
+		}
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -77,8 +93,13 @@ func RemoveWorktree(dir, path string) error {
 // so -d refuses it. Callers gate this on GitHub reporting the PR as merged, which
 // is the authority on whether the work landed.
 func DeleteBranch(dir, branch string) error {
-	out, err := exec.Command("git", "-C", dir, "branch", "-D", branch).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), mutatingGitTimeout)
+	defer cancel()
+	out, err := newBoundedCmd(ctx, "git", "-C", dir, "branch", "-D", branch).CombinedOutput()
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("git branch -D timed out after %s: %w", mutatingGitTimeout, ctx.Err())
+		}
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil

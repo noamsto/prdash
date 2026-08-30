@@ -1,8 +1,9 @@
 package gh
 
 import (
+	"context"
 	"errors"
-	"os/exec"
+	"fmt"
 	"strings"
 )
 
@@ -10,11 +11,17 @@ var ErrNoRepo = errors.New("not in a GitHub repo")
 
 // RepoFromGit resolves owner/name from the origin remote of the git repo at dir,
 // without invoking gh. Returns ErrNoRepo when dir isn't a git repo or its origin
-// isn't a github.com remote. (git — not gh — is a legitimate dependency: prdash
-// only runs inside a repo.)
+// isn't a github.com remote, or a distinct error if the underlying git call times
+// out or otherwise fails to run. (git — not gh — is a legitimate dependency:
+// prdash only runs inside a repo.)
 func RepoFromGit(dir string) (string, error) {
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	defer cancel()
+	out, err := newBoundedCmd(ctx, "git", "-C", dir, "remote", "get-url", "origin").Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git remote get-url origin timed out after %s: %w", execTimeout, ctx.Err())
+		}
 		return "", ErrNoRepo
 	}
 	repo, ok := parseGitHubRemote(string(out))
