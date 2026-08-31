@@ -3,6 +3,7 @@ package ui
 import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/noamsto/themestate"
 )
 
 // noticeModel is a full-screen message that stays put until the user presses a
@@ -42,7 +43,7 @@ func (m noticeModel) View() tea.View {
 // RunNotice paints title + body full-screen in the active palette and blocks
 // until a keypress. Used for fatal startup conditions that aren't crashes.
 func RunNotice(title, body string) error {
-	applyTheme(themeFor(detectTheme()))
+	applyTheme(themeFor(themestate.Detect()))
 	_, err := tea.NewProgram(noticeModel{title: title, body: body}).Run()
 	return err
 }

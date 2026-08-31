@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/noamsto/themestate"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -1391,10 +1392,10 @@ func (m Model) checksPollDelay() time.Duration {
 // paints in the right palette. NOT called from NewModel, so tests keep the default
 // Mocha globals regardless of the machine's live theme.
 func (m *Model) InitTheme() {
-	m.themeMode = detectTheme()
+	m.themeMode = themestate.Detect()
 	applyTheme(themeFor(m.themeMode))
 	preview.SetMode(m.themeMode)
-	m.themeModTime, _ = statModTime(themeStatePath())
+	m.themeModTime, _ = themestate.ModTime(themestate.Path())
 }
 
 // themePollMsg fires the theme-watch beat. lastMod is the state-file mtime seen
@@ -1979,12 +1980,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rate = s
 			}
 		}
-		mod, err := statModTime(themeStatePath())
+		mod, err := themestate.ModTime(themestate.Path())
 		if err != nil || mod.Equal(msg.lastMod) {
 			return m, themeWatchTick(msg.lastMod) // gone or unchanged: keep watching
 		}
 		m.themeModTime = mod
-		if mode := detectTheme(); mode != m.themeMode {
+		if mode := themestate.Detect(); mode != m.themeMode {
 			m.themeMode = mode
 			applyTheme(themeFor(mode))
 			preview.SetMode(mode)

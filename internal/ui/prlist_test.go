@@ -14,6 +14,7 @@ import (
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
+	"github.com/noamsto/themestate"
 )
 
 func TestSetPRsBuildsRows(t *testing.T) {
@@ -690,7 +691,7 @@ func TestThemePollAppliesChange(t *testing.T) {
 func TestThemePollNoChangeWhenMtimeSame(t *testing.T) {
 	t.Cleanup(func() { applyTheme(Mocha()) })
 	writeState(t, `{"theme":"light","version":1}`)
-	mod, err := statModTime(themeStatePath())
+	mod, err := themestate.ModTime(themestate.Path())
 	if err != nil {
 		t.Fatal(err)
 	}
