@@ -87,6 +87,8 @@ type qlPR struct {
 	BaseRefName       string
 	IsCrossRepository bool
 	ReviewDecision    string
+	Mergeable         string
+	MergeStateStatus  string
 	Additions         int
 	Deletions         int
 	ChangedFiles      int
@@ -180,6 +182,8 @@ func mapPR(g qlPR) PR {
 		BaseRefName:       g.BaseRefName,
 		IsCrossRepository: g.IsCrossRepository,
 		ReviewDecision:    g.ReviewDecision,
+		Mergeable:         g.Mergeable,
+		MergeStateStatus:  g.MergeStateStatus,
 		UpdatedAt:         g.UpdatedAt.Time,
 		Additions:         g.Additions,
 		Deletions:         g.Deletions,

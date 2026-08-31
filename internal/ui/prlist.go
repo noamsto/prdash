@@ -694,8 +694,10 @@ func (m *Model) renderList() {
 		}
 		flag := ""
 		if isPR && ps.prAt(i).State == "OPEN" {
-			d, cached := m.detail[ps.prAt(i).Number]
-			flag = flagGlyph(d, cached)
+			p := ps.prAt(i)
+			d, hasDetail := m.detail[p.Number]
+			mergeable, mss := mergeState(p, d, hasDetail)
+			flag = flagGlyph(mergeable, mss)
 		}
 		landed := isPR && m.isLanded(ps.prAt(i).Number)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
@@ -2025,6 +2027,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.backgroundRefresh())
 		}
+		if msg.err != nil && m.actionStatus.native == "merge-squash" {
+			for _, n := range m.actionStatus.nums {
+				delete(m.fresh, n)
+			}
+			cmds = append(cmds, m.batchDetailCmd(m.actionStatus.nums))
+		}
 		if msg.err == nil && m.actionStatus.rerunCI {
 			stamp := time.Now()
 			for _, n := range m.actionStatus.nums {
@@ -3090,8 +3098,10 @@ func (m Model) statusBar() string {
 
 // schemaVer is bumped whenever the requested gh --json field set changes.
 // v5 adds additions/deletions/changedFiles and the stack fields; a v4 cache
-// entry has none of them and would paint "+0 -0".
-const schemaVer = "v5"
+// entry has none of them and would paint "+0 -0". v6 adds mergeable and
+// mergeStateStatus; a v5 cache entry has neither and would paint a blank
+// board "!" column for a conflicted PR until its detail happens to be fetched.
+const schemaVer = "v6"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.

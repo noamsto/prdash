@@ -1,6 +1,10 @@
 package gh
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +83,50 @@ func TestMapRollupUnion(t *testing.T) {
 	}
 	if p.CIState() != "fail" {
 		t.Errorf("CIState = %q, want fail", p.CIState())
+	}
+}
+
+func TestMapPRCarriesMergeState(t *testing.T) {
+	p := mapPR(qlPR{Mergeable: "CONFLICTING", MergeStateStatus: "DIRTY"})
+	if p.Mergeable != "CONFLICTING" || p.MergeStateStatus != "DIRTY" {
+		t.Errorf("Mergeable/MergeStateStatus = %q/%q, want CONFLICTING/DIRTY", p.Mergeable, p.MergeStateStatus)
+	}
+}
+
+func testQuerySource(srv *httptest.Server, repo string) GraphSource {
+	hc := &http.Client{}
+	st := newRateStore()
+	hc.Transport = &rateTransport{next: http.DefaultTransport, store: st}
+	return GraphSource{repo: repo, http: hc, client: githubv4.NewEnterpriseClient(srv.URL+"/graphql", hc), rate: st}
+}
+
+// TestFetchPRsSendsMergeInfoHeaderAndParsesMergeState exercises the typed
+// githubv4.Client list-query path end to end: the Accept header injected by
+// rateTransport and qlPR's untagged field names must work together against a
+// real (stubbed) HTTP round trip.
+func TestFetchPRsSendsMergeInfoHeaderAndParsesMergeState(t *testing.T) {
+	var gotAccept, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"search":{"nodes":[{"number":1,"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}]}}}`))
+	}))
+	defer srv.Close()
+
+	s := testQuerySource(srv, "owner/repo")
+	prs, _, err := s.FetchPRs("is:open", 10)
+	if err != nil {
+		t.Fatalf("FetchPRs: %v", err)
+	}
+	if gotAccept != "application/vnd.github.merge-info-preview+json" {
+		t.Errorf("Accept = %q, want merge-info-preview", gotAccept)
+	}
+	if !strings.Contains(gotBody, "mergeable") || !strings.Contains(gotBody, "mergeStateStatus") {
+		t.Errorf("query body missing merge fields: %s", gotBody)
+	}
+	if len(prs) != 1 || prs[0].Mergeable != "CONFLICTING" || prs[0].MergeStateStatus != "DIRTY" {
+		t.Errorf("prs = %+v, want one PR with CONFLICTING/DIRTY", prs)
 	}
 }

@@ -2,8 +2,10 @@ package gh
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -260,6 +262,43 @@ func TestJobLogRecordsAuthHopNotBlob(t *testing.T) {
 	}
 	if got.Remaining != 4200 || got.Resource != "core" {
 		t.Errorf("RateLimit() = %+v, want 4200 remaining on core", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRateTransportSetsMergeInfoAcceptHeaderOnGraphQL(t *testing.T) {
+	var captured *http.Request
+	stub := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
+	})
+	rt := &rateTransport{next: stub, store: newRateStore()}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
+	if _, err := rt.RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := captured.Header.Get("Accept"); got != "application/vnd.github.merge-info-preview+json" {
+		t.Errorf("Accept = %q, want merge-info-preview", got)
+	}
+}
+
+func TestRateTransportPreservesExistingAcceptHeader(t *testing.T) {
+	var captured *http.Request
+	stub := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
+	})
+	rt := &rateTransport{next: stub, store: newRateStore()}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
+	req.Header.Set("Accept", "application/vnd.github.something-else+json")
+	if _, err := rt.RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := captured.Header.Get("Accept"); got != "application/vnd.github.something-else+json" {
+		t.Errorf("Accept = %q, want untouched, got overwritten", got)
 	}
 }
 

@@ -109,7 +109,22 @@ type rateTransport struct {
 	store *rateStore
 }
 
+// RoundTrip injects the merge-info-preview Accept header on every outgoing
+// GraphQL request that doesn't already carry one. Because GraphSource's checks,
+// issues, viewer, members, and mutation calls all share this one transport,
+// this header goes out on every one of them, not just the PR list query. That's
+// expected to be harmless: GitHub's preview media types are additive — they
+// unlock extra fields on the shapes that ask for them, and change nothing for
+// queries that don't. It never overwrites an Accept header a caller already
+// set, so detail_graphql.go's own explicit header (set directly on a raw
+// http.Request built from s.http, not through this typed client) is untouched.
 func (t *rateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == "/graphql" && req.Header.Get("Accept") == "" {
+		r2 := *req
+		r2.Header = req.Header.Clone()
+		r2.Header.Set("Accept", "application/vnd.github.merge-info-preview+json")
+		req = &r2
+	}
 	resp, err := t.next.RoundTrip(req)
 	if err != nil {
 		return resp, err
