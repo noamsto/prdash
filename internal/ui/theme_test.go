@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -164,5 +166,18 @@ func TestApplyThemeReassignsGlobals(t *testing.T) {
 	applyTheme(Mocha())
 	if latteRender == accentStyle.Render("x") {
 		t.Error("accentStyle must render differently under Latte vs Mocha")
+	}
+}
+
+// writeState points XDG_STATE_HOME at a temp dir and writes theme-state.json.
+// An empty body writes no file (simulating a missing state file).
+func writeState(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	if body != "" {
+		if err := os.WriteFile(filepath.Join(dir, "theme-state.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
