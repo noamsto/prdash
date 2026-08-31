@@ -149,7 +149,7 @@ func TestWarnGlyphIsSingleCell(t *testing.T) {
 	if got := lipgloss.Width(warnGlyph); got != 1 {
 		t.Fatalf("warnGlyph must be one cell, got %d (%q)", got, warnGlyph)
 	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "DIRTY"}, true), warnGlyph) {
+	if !strings.Contains(flagGlyph("", "DIRTY"), warnGlyph) {
 		t.Fatalf("flagGlyph(DIRTY) should render warnGlyph")
 	}
 }

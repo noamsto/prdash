@@ -218,12 +218,13 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 }
 
 // nativeMutationFn resolves the client-side pre-checks the research contracts
-// specify (merge/auto-merge: PR state + cached mergeable; mark-ready: IsDraft;
-// approve: PR state + self-approval) against live Model state on the calling
-// returns a closure that performs the actual network call. The closure only
-// closes over plain values (mutationSource, p.ID, a precomputed error) — never
-// m itself — so it's safe to run later from runBulkNative's async batch. ok is
-// false for any native marker this dispatcher doesn't recognize.
+// specify (merge/auto-merge: PR state + best-known mergeable, via mergeState;
+// mark-ready: IsDraft; approve: PR state + self-approval) against live Model
+// state on the calling goroutine, and returns a closure that performs the
+// actual network call. The closure only closes over plain values
+// (mutationSource, p.ID, a precomputed error) — never m itself — so it's safe
+// to run later from runBulkNative's async batch. ok is false for any native
+// marker this dispatcher doesn't recognize.
 //
 // p.ID is guarded here, once, for every marker that needs it: a stale cache
 // entry written by the old gh-CLI prdash (no node id) can outlive the
@@ -240,10 +241,29 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 	src := m.mutationSource
 	switch native {
 	case "merge-squash":
-		if err := m.mergePreCheck(p); err != nil {
+		if p.State != "OPEN" {
+			err := fmt.Errorf("PR #%d is not open", p.Number)
 			return func() error { return err }, true
 		}
-		return func() error { return src.MergePR(p.ID) }, true
+		d, hasDetail := m.detail[p.Number]
+		mergeable, mss := mergeState(p, d, hasDetail)
+		detailSrc := m.detailSource
+		return func() error {
+			if mergeUnresolved(mergeable) && detailSrc != nil {
+				if details, _, err := detailSrc.FetchDetails([]int{p.Number}); err == nil {
+					if fresh, ok := details[p.Number]; ok {
+						mergeable, mss = fresh.Mergeable, fresh.MergeStateStatus
+					}
+				}
+			}
+			if mergeConflicted(mergeable, mss) {
+				return fmt.Errorf("PR #%d has conflicts", p.Number)
+			}
+			if mergeUnresolved(mergeable) {
+				return fmt.Errorf("PR #%d merge state is still pending — try again shortly", p.Number)
+			}
+			return src.MergePR(p.ID)
+		}, true
 	case "auto-merge-squash":
 		if err := m.mergePreCheck(p); err != nil {
 			return func() error { return err }, true
@@ -297,16 +317,32 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 	return nil, false
 }
 
+// mergeConflicted reports whether mergeable/mergeStateStatus indicate a real,
+// resolved conflict with the base branch.
+func mergeConflicted(mergeable, mergeStateStatus string) bool {
+	return mergeable == "CONFLICTING" || mergeStateStatus == "DIRTY"
+}
+
+// mergeUnresolved reports whether mergeable is not yet a real answer — GitHub
+// computes mergeability lazily and returns UNKNOWN (or omits it) while it
+// works in the background.
+func mergeUnresolved(mergeable string) bool {
+	return !mergeStateResolved(mergeable)
+}
+
 // mergePreCheck mirrors gh CLI's client-side guard for merge/auto-merge —
 // state and conflicts — using data prdash already has, instead of depending on
-// GitHub's free-text GraphQL error (research/merge.md §4). mergeable is only
-// checked when this PR's detail happens to be cached; the list fetch alone
-// doesn't carry it.
+// GitHub's free-text GraphQL error (research/merge.md §4). mergeable falls
+// back to the list-sourced value via mergeState when no cached detail (or an
+// unresolved one) is available; unlike nativeMutationFn's merge-squash path,
+// it never blocks on an unresolved state, only a confirmed conflict.
 func (m *Model) mergePreCheck(p gh.PR) error {
 	if p.State != "OPEN" {
 		return fmt.Errorf("PR #%d is not open", p.Number)
 	}
-	if d, cached := m.detail[p.Number]; cached && d.Mergeable == "CONFLICTING" {
+	d, hasDetail := m.detail[p.Number]
+	mergeable, mss := mergeState(p, d, hasDetail)
+	if mergeConflicted(mergeable, mss) {
 		return fmt.Errorf("PR #%d has conflicts", p.Number)
 	}
 	return nil

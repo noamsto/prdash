@@ -87,6 +87,8 @@ type PR struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	ReviewDecision    string  `json:"reviewDecision"`
+	Mergeable         string  `json:"mergeable"`
+	MergeStateStatus  string  `json:"mergeStateStatus"`
 	StatusCheckRollup []Check `json:"statusCheckRollup"`
 	Labels            []Label `json:"labels"`
 	Assignees         []struct {

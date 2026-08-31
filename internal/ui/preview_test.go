@@ -197,20 +197,63 @@ func TestReviewRosterShowsEveryState(t *testing.T) {
 }
 
 func TestFlagGlyph(t *testing.T) {
-	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, false) != "" {
-		t.Fatal("uncached detail must render no flag")
-	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "DIRTY"}, true), warnGlyph) {
-		t.Fatal("DIRTY should show the conflict flag")
-	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{MergeStateStatus: "BEHIND"}, true), warnGlyph) {
-		t.Fatal("BEHIND should show the behind flag")
-	}
-	if flagGlyph(gh.PRDetail{MergeStateStatus: "CLEAN"}, true) != "" {
+	if flagGlyph("", "CLEAN") != "" {
 		t.Fatal("CLEAN should show no flag")
 	}
-	if !strings.Contains(flagGlyph(gh.PRDetail{Mergeable: "CONFLICTING"}, true), warnGlyph) {
+	if !strings.Contains(flagGlyph("", "DIRTY"), warnGlyph) {
+		t.Fatal("DIRTY should show the conflict flag")
+	}
+	if !strings.Contains(flagGlyph("", "BEHIND"), warnGlyph) {
+		t.Fatal("BEHIND should show the behind flag")
+	}
+	if !strings.Contains(flagGlyph("CONFLICTING", ""), warnGlyph) {
 		t.Fatal("CONFLICTING should show the conflict flag")
+	}
+}
+
+func TestFlagGlyphUnknownRendersBlank(t *testing.T) {
+	if flagGlyph("UNKNOWN", "") != "" {
+		t.Error("UNKNOWN mergeable should render no flag")
+	}
+	if flagGlyph("", "") != "" {
+		t.Error("no signal at all should render no flag")
+	}
+}
+
+func TestFlagGlyphDistinguishesConflictFromBehind(t *testing.T) {
+	conflict := flagGlyph("CONFLICTING", "")
+	behind := flagGlyph("", "BEHIND")
+	if conflict == "" || behind == "" {
+		t.Fatalf("both should render a warning glyph: conflict=%q behind=%q", conflict, behind)
+	}
+	if conflict == behind {
+		t.Errorf("conflict (failStyle, red) and behind (pendStyle, yellow) must render with different styles, both got %q", conflict)
+	}
+}
+
+func TestMergeStateListFallbackWhenNoDetail(t *testing.T) {
+	p := gh.PR{Mergeable: "CONFLICTING"}
+	mergeable, _ := mergeState(p, gh.PRDetail{}, false)
+	if mergeable != "CONFLICTING" {
+		t.Errorf("mergeable = %q, want CONFLICTING (from the list value)", mergeable)
+	}
+}
+
+func TestMergeStateDetailWinsWhenResolved(t *testing.T) {
+	p := gh.PR{Mergeable: "CONFLICTING"} // stale list value
+	cached := gh.PRDetail{Mergeable: "MERGEABLE"}
+	mergeable, _ := mergeState(p, cached, true)
+	if mergeable != "MERGEABLE" {
+		t.Errorf("mergeable = %q, want MERGEABLE (resolved detail wins over a differing list value)", mergeable)
+	}
+}
+
+func TestMergeStateFallsBackWhenDetailUnresolved(t *testing.T) {
+	p := gh.PR{Mergeable: "CONFLICTING"}
+	cached := gh.PRDetail{Mergeable: "UNKNOWN"} // e.g. painted by hydrateDetail from a stale disk cache
+	mergeable, _ := mergeState(p, cached, true)
+	if mergeable != "CONFLICTING" {
+		t.Errorf("mergeable = %q, want CONFLICTING — an unresolved cached value must not mask a resolved list value", mergeable)
 	}
 }
 

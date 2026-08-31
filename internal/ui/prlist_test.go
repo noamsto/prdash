@@ -2353,3 +2353,13 @@ func TestVKeyAdvancesSelection(t *testing.T) {
 		t.Fatalf("third V should clear, got %d", m.sel.count())
 	}
 }
+
+func TestFlagGlyphPaintsFromListOnFirstRender(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 40
+	m.setPRs([]gh.PR{{Number: 1, State: "OPEN", Mergeable: "CONFLICTING", Author: author("a")}})
+	m.renderList()
+	if !strings.Contains(m.rowText[0], warnGlyph) {
+		t.Fatalf("row should show the conflict flag from the list value alone, before any detail fetch:\n%s", m.rowText[0])
+	}
+}

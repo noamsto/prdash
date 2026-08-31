@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -105,7 +107,7 @@ func mutationModel(t *testing.T, prs []gh.PR) (m Model, fs *fakeMutationSource) 
 }
 
 func TestMergeRoutesToNativeSource(t *testing.T) {
-	m, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN", Mergeable: "MERGEABLE"}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
@@ -138,6 +140,106 @@ func TestMergeSkipsWhenConflicting(t *testing.T) {
 	}
 }
 
+// mutationModelWithDetail wires both a fakeMutationSource and a
+// fakeDetailSource onto one Model — neither mutationModel above (mutation
+// only) nor batchModel (detailbatch_test.go, detail only) does both.
+func mutationModelWithDetail(t *testing.T, prs []gh.PR, fd *fakeDetailSource) (m Model, fs *fakeMutationSource) {
+	t.Helper()
+	m, fs = mutationModel(t, prs)
+	if fd != nil {
+		m.SetDetailSource(fd)
+	}
+	return m, fs
+}
+
+func TestMergeFetchesDetailWhenUnknownThenBlocks(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{7: {Mergeable: "CONFLICTING"}}}
+	m, fs := mutationModelWithDetail(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}}, fd)
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+	if len(fs.mergeCalls) != 0 {
+		t.Errorf("mergeCalls = %v, want none — blocked before reaching GitHub", fs.mergeCalls)
+	}
+	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 7 {
+		t.Errorf("detail source called with %v, want exactly one fetch for [7]", fd.got)
+	}
+}
+
+func TestMergeFetchesDetailWhenUnknownThenSucceeds(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{7: {Mergeable: "MERGEABLE"}}}
+	m, fs := mutationModelWithDetail(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}}, fd)
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	if len(fs.mergeCalls) != 1 || fs.mergeCalls[0] != "pr7node" {
+		t.Errorf("mergeCalls = %v, want [pr7node]", fs.mergeCalls)
+	}
+}
+
+func TestMergeBlocksWhenStillUnknownAfterFetch(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{7: {Mergeable: "UNKNOWN"}}}
+	m, fs := mutationModelWithDetail(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}}, fd)
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+	if !strings.Contains(done.err.Error(), "pending") {
+		t.Errorf("error = %q, want it to mention the state is still pending (distinguish from a conflict)", done.err.Error())
+	}
+	if len(fs.mergeCalls) != 0 {
+		t.Errorf("mergeCalls = %v, want none", fs.mergeCalls)
+	}
+}
+
+func TestMergeSkipsFetchWhenListValueAlreadyClean(t *testing.T) {
+	fd := &fakeDetailSource{}
+	m, fs := mutationModelWithDetail(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN", Mergeable: "MERGEABLE"}}, fd)
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	if len(fs.mergeCalls) != 1 {
+		t.Errorf("mergeCalls = %v, want one merge — a clean list value needs no fetch", fs.mergeCalls)
+	}
+	if len(fd.got) != 0 {
+		t.Errorf("detail source called %v times, want zero — a clean list value needs no fetch", fd.got)
+	}
+}
+
+func TestFailedMergeRefreshesDetail(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{7: {Mergeable: "CONFLICTING", MergeStateStatus: "DIRTY"}}}
+	m, fs := mutationModelWithDetail(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN", Mergeable: "MERGEABLE"}}, fd)
+	fs.err = errors.New("Pull Request has merge conflicts")
+
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+
+	u, cmd := m.Update(done)
+	m = u.(Model)
+	if cmd == nil {
+		t.Fatal("expected a follow-up refresh command after a failed merge")
+	}
+	if len(m.actionStatus.nums) != 1 || m.actionStatus.nums[0] != 7 {
+		t.Fatalf("actionStatus.nums = %v, want [7]", m.actionStatus.nums)
+	}
+	// Don't drain cmd directly: it batches the real clearStatusCmd tea.Tick
+	// (3s) alongside the refresh. Exercise the exact same production call
+	// (m.batchDetailCmd(m.actionStatus.nums)) the actionDoneMsg handler
+	// invokes for the failure-refresh path instead.
+	u2, _ := m.Update(m.batchDetailCmd(m.actionStatus.nums)())
+	m = u2.(Model)
+	if got := m.detail[7]; got.Mergeable != "CONFLICTING" {
+		t.Errorf("detail[7] = %+v, want the refreshed CONFLICTING value", got)
+	}
+}
+
 func TestAutoMergeRoutesToNativeSource(t *testing.T) {
 	m, fs := mutationModel(t, []gh.PR{{Number: 9, ID: "pr9node", State: "OPEN"}})
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["A"]))
@@ -146,6 +248,17 @@ func TestAutoMergeRoutesToNativeSource(t *testing.T) {
 	}
 	if len(fs.autoMergeCalls) != 1 || fs.autoMergeCalls[0] != "pr9node" {
 		t.Errorf("autoMergeCalls = %v, want [pr9node]", fs.autoMergeCalls)
+	}
+}
+
+func TestAutoMergeSkipsWhenListConflicting(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{{Number: 9, ID: "pr9node", State: "OPEN", Mergeable: "CONFLICTING"}})
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["A"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (list-level conflict)", msg)
+	}
+	if len(fs.autoMergeCalls) != 0 {
+		t.Errorf("autoMergeCalls = %v, want none", fs.autoMergeCalls)
 	}
 }
 
@@ -303,7 +416,7 @@ func TestUpdateBranchRoutesToNativeSource(t *testing.T) {
 // today), but a Scope:"single" custom action with the same Command.Native
 // marker must route identically.
 func TestSingleNativeCmdRoutesToNativeSource(t *testing.T) {
-	m, fs := mutationModel(t, []gh.PR{{Number: 21, ID: "pr21node", State: "OPEN"}})
+	m, fs := mutationModel(t, []gh.PR{{Number: 21, ID: "pr21node", State: "OPEN", Mergeable: "MERGEABLE"}})
 	a := action.Action{
 		Key:     "m-single",
 		Command: action.Command{Native: "merge-squash"},

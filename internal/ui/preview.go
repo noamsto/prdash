@@ -542,17 +542,40 @@ func reviewRoster(d gh.PRDetail) string {
 	return strings.Join(lines, "\n")
 }
 
-// flagGlyph is the board's ! column: a conflict (red) or behind-base (yellow)
-// marker. It is detail-derived — blank unless the PR's detail is cached, so the
-// board never guesses a blocker from the unreliable bulk list.
-func flagGlyph(d gh.PRDetail, cached bool) string {
-	if !cached {
-		return ""
+// mergeStateResolved reports whether v is a real, computed answer rather than
+// GitHub's "still working on it" placeholder. GitHub's mergeable enum is
+// MERGEABLE|CONFLICTING|UNKNOWN and mergeStateStatus has several more values,
+// but both share UNKNOWN (and "", for a field that was never fetched) as the
+// "not yet known" sentinel.
+func mergeStateResolved(v string) bool { return v != "" && v != "UNKNOWN" }
+
+// mergeState resolves the best-known mergeable/mergeStateStatus pair for p.
+// Each field is decided independently: a cached PRDetail value wins only when
+// it is itself resolved. GitHub computes mergeability lazily, and
+// hydrateDetail can paint an old, still-unresolved detail into the cache at
+// launch well after a fresher list fetch landed a real value — an unresolved
+// cached value must defer to the list rather than mask it. A resolved cached
+// value always wins over the list: detail is fresher and richer once GitHub
+// has actually computed it.
+func mergeState(p gh.PR, cached gh.PRDetail, hasDetail bool) (mergeable, mergeStateStatus string) {
+	mergeable, mergeStateStatus = p.Mergeable, p.MergeStateStatus
+	if hasDetail && mergeStateResolved(cached.Mergeable) {
+		mergeable = cached.Mergeable
 	}
+	if hasDetail && mergeStateResolved(cached.MergeStateStatus) {
+		mergeStateStatus = cached.MergeStateStatus
+	}
+	return mergeable, mergeStateStatus
+}
+
+// flagGlyph renders the board's ! column from the resolved merge signal: a
+// real conflict (DIRTY/CONFLICTING) is red, a branch that's fallen behind is
+// yellow, anything else — including a still-unresolved UNKNOWN — is blank.
+func flagGlyph(mergeable, mergeStateStatus string) string {
 	switch {
-	case d.MergeStateStatus == "DIRTY" || d.Mergeable == "CONFLICTING":
+	case mergeStateStatus == "DIRTY" || mergeable == "CONFLICTING":
 		return failStyle.Render(warnGlyph)
-	case d.MergeStateStatus == "BEHIND":
+	case mergeStateStatus == "BEHIND":
 		return pendStyle.Render(warnGlyph)
 	default:
 		return ""
