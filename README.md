@@ -76,6 +76,8 @@ items are selected with `space`.
 
 On a wide terminal the preview shows beside the list and a keys/actions panel
 docks under it; narrow terminals drop the preview and show a compact status bar.
+Scroll the preview with `alt+j` / `alt+k`, or with the mouse wheel while the
+pointer is over the visible preview pane.
 
 ## Worktree handoff
 

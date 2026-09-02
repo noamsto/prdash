@@ -1750,6 +1750,12 @@ func (m Model) debounceDetailCmd() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case previewMouseScrollMsg:
+		if _, _, _, _, ok := m.previewMouseBounds(); !ok {
+			return m, nil
+		}
+		m.previewScrollBy(msg.delta)
+		return m, nil
 	case prsFetchedMsg:
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(prKey(m.repo, msg.filter, defaultLimit), msg.raw)
@@ -2361,7 +2367,62 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	v.OnMouse = m.previewMouseHandler()
 	return v
+}
+
+// previewMouseHandler translates wheel gestures over the rendered preview pane
+// into the same message path used by the keyboard scroll bindings.
+func (m Model) previewMouseHandler() func(tea.MouseMsg) tea.Cmd {
+	x, y, w, h, ok := m.previewMouseBounds()
+	if !ok {
+		return nil
+	}
+	return func(msg tea.MouseMsg) tea.Cmd {
+		wheel, ok := msg.(tea.MouseWheelMsg)
+		if !ok {
+			return nil
+		}
+		mouse := wheel.Mouse()
+		if mouse.X < x || mouse.X >= x+w || mouse.Y < y || mouse.Y >= y+h {
+			return nil
+		}
+		var delta int
+		switch mouse.Button {
+		case tea.MouseWheelDown:
+			delta = 1
+		case tea.MouseWheelUp:
+			delta = -1
+		default:
+			return nil
+		}
+		return func() tea.Msg { return previewMouseScrollMsg{delta: delta} }
+	}
+}
+
+// previewMouseBounds reports the preview box's terminal-cell bounds when it is
+// visible and unobscured. The outer frame shifts the inner board by one cell.
+func (m Model) previewMouseBounds() (x, y, w, h int, ok bool) {
+	if m.logView || m.expanded || m.pending != nil || m.showPicker || m.showLegend || m.showActions || m.omniSuggestDropdown() != "" || (m.err != nil && m.section.Len() == 0) {
+		return 0, 0, 0, 0, false
+	}
+	l := computeLayout(m.width, m.height)
+	y = lipgloss.Height(m.header()) + 1
+	switch {
+	case m.previewMax:
+		y += m.filterBarRows()
+		w, h = m.width, m.previewHeight(l)
+	case l.ShowSide:
+		x, w, h = l.ListWidth+l.Gap, l.SideWidth, m.previewHeight(l)
+	default:
+		return 0, 0, 0, 0, false
+	}
+	if m.outerFrame && m.termW >= 4 && m.termH >= 4 {
+		x++
+		y++
+	}
+	return x, y, w, h, w > 0 && h > 0
 }
 
 // SetOuterFrame enables the float chrome: a mauve-titled rounded border around
