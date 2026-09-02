@@ -300,7 +300,7 @@ func TestCtrlRRefreshesAndResumesWhileIdle(t *testing.T) {
 // TestThemePollUnaffectedByIdlePause proves the checks-poll idle gate doesn't
 // reach themePollMsg — the theme watch and rate-limit countdown keep ticking.
 func TestThemePollUnaffectedByIdlePause(t *testing.T) {
-	writeState(t, "") // no state file: statModTime errors, the case early-returns
+	writeState(t, "") // no state file: themestate.ModTime errors, the case early-returns
 
 	m := pollModel(t, &fakeChecksSource{}, []gh.PR{{Number: 1, StatusCheckRollup: pending()}})
 	m.pollQuietBeats = pollIdleBeats // idle
