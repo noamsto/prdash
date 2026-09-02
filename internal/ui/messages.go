@@ -71,6 +71,11 @@ type viewerFetchedMsg struct{ login string }
 
 type detailDebounceMsg struct{ seq int }
 
+// previewMouseScrollMsg carries a wheel gesture accepted by the visible preview
+// pane. Keeping the geometry check in View lets Update retain the same scroll
+// path as the keyboard bindings.
+type previewMouseScrollMsg struct{ delta int }
+
 // omniDebounceMsg fires ~250ms after the omni server-qualifier last changed; only
 // the latest seq issues the SWR refetch for the composed query.
 type omniDebounceMsg struct{ seq int }

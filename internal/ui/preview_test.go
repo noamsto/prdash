@@ -543,6 +543,119 @@ func TestPreviewScrollNoOpWhenContentFits(t *testing.T) {
 	}
 }
 
+func mouseScrollablePreview(t *testing.T, previewMax bool) Model {
+	t.Helper()
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("r")
+	m.width, m.height = 150, 8
+	m.previewMax = previewMax
+	p := gh.PR{Number: 1, Title: "x", Body: strings.Repeat("A long preview body. ", 80)}
+	p.Author.Login = "a"
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.renderList()
+	return m
+}
+
+func wheelPreview(t *testing.T, m Model, x, y int, button tea.MouseButton) (Model, bool) {
+	t.Helper()
+	v := m.View()
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("preview view must enable mouse wheel reporting")
+	}
+	if v.OnMouse == nil {
+		return m, false
+	}
+	cmd := v.OnMouse(tea.MouseWheelMsg{X: x, Y: y, Button: button})
+	if cmd == nil {
+		return m, false
+	}
+	next, _ := m.Update(cmd())
+	return next.(Model), true
+}
+
+func TestMouseWheelScrollsPreviewOnlyInsideVisiblePane(t *testing.T) {
+	for _, previewMax := range []bool{false, true} {
+		t.Run(map[bool]string{false: "wide", true: "maximized"}[previewMax], func(t *testing.T) {
+			m := mouseScrollablePreview(t, previewMax)
+			x, y, w, h, ok := m.previewMouseBounds()
+			if !ok {
+				t.Fatal("fixture must show a preview pane")
+			}
+			next, handled := wheelPreview(t, m, x+w/2, y+h/2, tea.MouseWheelDown)
+			if !handled || next.previewOffset != 1 {
+				t.Fatalf("wheel inside preview = handled:%v offset:%d, want true:1", handled, next.previewOffset)
+			}
+			next, handled = wheelPreview(t, next, x-1, y+h/2, tea.MouseWheelDown)
+			if handled || next.previewOffset != 1 {
+				t.Fatalf("wheel outside preview = handled:%v offset:%d, want false:1", handled, next.previewOffset)
+			}
+		})
+	}
+}
+
+func TestMouseWheelPreviewScrollClampsAndIgnoresOverlays(t *testing.T) {
+	m := mouseScrollablePreview(t, false)
+	x, y, w, h, ok := m.previewMouseBounds()
+	if !ok {
+		t.Fatal("fixture must show a preview pane")
+	}
+	m, handled := wheelPreview(t, m, x+w/2, y+h/2, tea.MouseWheelDown)
+	if !handled {
+		t.Fatal("wheel in preview should be handled")
+	}
+	m, _ = wheelPreview(t, m, x+w/2, y+h/2, tea.MouseWheelUp)
+	if m.previewOffset != 0 {
+		t.Fatalf("wheel up at top should clamp to 0, got %d", m.previewOffset)
+	}
+	head, body := m.previewParts()
+	over := lipgloss.Height(body) - (m.previewHeight(computeLayout(m.width, m.height)) - 2 - lipgloss.Height(head) - 1)
+	next, _ := m.Update(previewMouseScrollMsg{delta: 1 << 20})
+	m = next.(Model)
+	if m.previewOffset != over {
+		t.Fatalf("wheel down should clamp at %d, got %d", over, m.previewOffset)
+	}
+	_, _, _, _, ok = m.previewMouseBounds()
+	if !ok {
+		t.Fatal("preview should remain visible before overlay")
+	}
+	m.showLegend = true
+	if _, handled := wheelPreview(t, m, x+w/2, y+h/2, tea.MouseWheelDown); handled {
+		t.Fatal("wheel should not route through an overlay")
+	}
+	m.showLegend = false
+	v := m.View()
+	cmd := v.OnMouse(tea.MouseWheelMsg{X: x + w/2, Y: y + h/2, Button: tea.MouseWheelUp})
+	if cmd == nil {
+		t.Fatal("wheel message should be queued while the preview is visible")
+	}
+	before := m.previewOffset
+	m.showLegend = true
+	next, _ = m.Update(cmd())
+	if got := next.(Model).previewOffset; got != before {
+		t.Fatalf("queued wheel message under overlay changed offset to %d, want %d", got, before)
+	}
+}
+
+func TestMouseWheelPreviewAccountsForOuterFrameAndNoPreview(t *testing.T) {
+	m := mouseScrollablePreview(t, false)
+	x, y, _, _, ok := m.previewMouseBounds()
+	if !ok {
+		t.Fatal("fixture must show a preview pane")
+	}
+	m.SetOuterFrame(true)
+	m.termW, m.termH = m.width+2, m.height+2
+	framedX, framedY, _, _, ok := m.previewMouseBounds()
+	if !ok || framedX != x+1 || framedY != y+1 {
+		t.Fatalf("outer frame bounds = (%d,%d), want (%d,%d)", framedX, framedY, x+1, y+1)
+	}
+	m.previewMax = false
+	m.width = sideThreshold - 1
+	if _, _, _, _, ok := m.previewMouseBounds(); ok {
+		t.Fatal("narrow layout must not accept preview mouse scrolling")
+	}
+}
+
 func TestIssuePreviewRendersBody(t *testing.T) {
 	ansi := regexp.MustCompile("\x1b\\[[0-9;]*m")
 	m := NewModel(".", "is:open", nil)
