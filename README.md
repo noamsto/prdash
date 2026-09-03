@@ -6,6 +6,8 @@ PRs, surfaces the one thing each needs (merge conflict, failing checks, missing
 reviewers, ready-to-merge), and turns the focused PR into a worktree with one
 key.
 
+![prdash browsing charmbracelet/bubbletea: cached instant paint, triage preview, expanded PR view](demo/board.gif)
+
 ## Features
 
 - **Dense board** of open PRs with CI, review, and conflict/behind glyphs, drafts
@@ -28,7 +30,7 @@ Run in any GitHub repo checkout (requires the [`gh`](https://cli.github.com) CLI
 authenticated):
 
 ```sh
-nix run git+ssh://git@github.com/noamsto/prdash      # flake (private repo → git+ssh)
+nix run github:noamsto/prdash
 # or
 go build -o prdash . && ./prdash
 ```
