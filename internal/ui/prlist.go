@@ -2805,24 +2805,30 @@ type legendGroup struct {
 // review and auto), so in issue mode none of these columns describe anything
 // that appears and only the row cues survive.
 func (m Model) glyphPanes() []legendGroup {
-	// Selection and focus share one cell and selection wins it, so a selected
-	// row cannot also show the focus bar — say so, rather than let a reader
-	// conclude the focus was lost.
-	bars := []keyHint{
+	// The bar is gutter column 0, so it is a column group like the rest — and
+	// keeping it apart from the word-keyed cues below matters for more than
+	// tidiness: gridHints pads every key in a group to the widest, so a
+	// one-cell glyph filed beside "faint row" renders with an eight-space gap.
+	//
+	// Selection and focus share that one cell and selection wins it, so a
+	// selected row cannot also show the focus bar — say so, rather than let a
+	// reader conclude the focus was lost.
+	bar := legendGroup{"bar", []keyHint{
 		{key: focusBarGlyph, label: "focus", style: &focusBarStyle},
 		{key: selBarGlyph, label: "selected (hides focus)", style: &selMarkStyle},
-	}
+	}}
 	if m.mode != "pr" {
-		return []legendGroup{{"row", append(bars,
-			keyHint{key: "age", label: "last update", style: &dimStyle},
-		)}}
+		return []legendGroup{bar, {"row", []keyHint{
+			{key: "age", label: "last update", style: &dimStyle},
+		}}}
 	}
-	row := legendGroup{"row", append(bars,
-		keyHint{key: "faint row", label: "draft", style: &dimStyle},
-		keyHint{key: strings.TrimSpace(landedTag), label: "merged this session", style: &dimStyle},
-		keyHint{key: "age", label: "last update; merged/closed age from landing", style: &dimStyle},
-	)}
+	row := legendGroup{"row", []keyHint{
+		{key: "faint row", label: "draft", style: &dimStyle},
+		{key: strings.TrimSpace(landedTag), label: "merged this session", style: &dimStyle},
+		{key: "age", label: "last update; merged/closed age from landing", style: &dimStyle},
+	}}
 	return []legendGroup{
+		bar,
 		// Draft and the terminal states are cell-1 overrides, not markers of their
 		// own: PRSection.RenderRow replaces the CI glyph with them, which is why
 		// they belong to `status` rather than to a general marker list.
@@ -2854,7 +2860,7 @@ func (m Model) glyphPanes() []legendGroup {
 		{"stack", []keyHint{
 			{key: stackRootGlyph, label: "stack root", style: &dimStyle},
 			{key: stackMidGlyph + " " + stackLastGlyph, label: "stacked on the row above", style: &dimStyle},
-			{key: stackRootGlyph + "+N", label: "N stack members hidden by the filter", style: &dimStyle},
+			{key: stackRootGlyph + "+N", label: "members hidden by the filter", style: &dimStyle},
 		}},
 		row,
 	}

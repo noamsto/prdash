@@ -2166,6 +2166,95 @@ func TestLegendDocumentsEveryRowGlyph(t *testing.T) {
 	}
 }
 
+// legendModel is a board-sized Model for the legend layout tests. The legend
+// reaches computeLayout for its side-pane hint, so width and height must be set.
+func legendModel(mode string, w, h int) Model {
+	return Model{mode: mode, width: w, height: h, showLegend: true}
+}
+
+// TestLegendNeverOverflowsAcrossWidthSweep: the modal is composited through
+// overlayTop, which crops rather than reflows, so anything wider than the
+// terminal is silently lost rather than visibly broken. Every line must also be
+// equal width, or the box's right border jags.
+func TestLegendNeverOverflowsAcrossWidthSweep(t *testing.T) {
+	for _, mode := range []string{"pr", "issue"} {
+		for w := 40; w <= 220; w += 4 {
+			out := legendModel(mode, w, 44).legendView()
+			lines := strings.Split(out, "\n")
+			first := lipgloss.Width(lines[0])
+			if first > w {
+				t.Fatalf("mode %q width %d: legend is %d wide", mode, w, first)
+			}
+			for i, ln := range lines {
+				if got := lipgloss.Width(ln); got != first {
+					t.Fatalf("mode %q width %d: line %d is %d wide, box is %d", mode, w, i, got, first)
+				}
+			}
+		}
+	}
+}
+
+// TestLegendSplitsOnlyWhenBothPanesFit pins the fallback rules. The threshold is
+// content-derived, so the last assertion is the one that matters: a hint too
+// wide for its pane collapses the split rather than being soft-wrapped.
+func TestLegendSplitsOnlyWhenBothPanesFit(t *testing.T) {
+	// The example row is drawn only by renderLegendPanes, and unlike a "│" sniff
+	// it cannot be confused with the box's own left and right borders.
+	split := func(m Model) bool { return strings.Contains(ansi.Strip(m.legendView()), "example row") }
+
+	if !split(legendModel("pr", 130, 44)) {
+		t.Error("a wide PR board should render two panes")
+	}
+	if split(legendModel("pr", 50, 44)) {
+		t.Error("a narrow board should fall back to one column")
+	}
+	if split(legendModel("issue", 130, 44)) {
+		t.Error("issue mode has an empty gutter, so it should not split")
+	}
+	m := legendModel("pr", 130, 44)
+	m.legendQuery = "merge"
+	if split(m) {
+		t.Error("a filtered legend should render as one column")
+	}
+
+	// Content-derived, not a width constant: a hint wider than the pane must
+	// collapse the split at a width that otherwise splits fine.
+	left, right := m.glyphPanes(), m.keyPanes()
+	if !legendSplits(left, right, 126) {
+		t.Fatal("inner 126 should split before the oversized hint is added")
+	}
+	right[0].hints = append(right[0].hints, keyHint{strings.Repeat("k", 80), "oversized", nil})
+	if legendSplits(left, right, 126) {
+		t.Error("a hint wider than its pane must collapse the split")
+	}
+}
+
+// TestLegendExampleRowSpansTheBox: the specimen row teaches column position, so
+// it has to occupy the same width as the panes beneath it — a short row would
+// put its glyphs at offsets the real board never uses.
+func TestLegendExampleRowSpansTheBox(t *testing.T) {
+	const innerW = 100
+	row := legendExampleRow(innerW, "pr")
+	if got := lipgloss.Width(row); got != innerW {
+		t.Fatalf("example row is %d wide, want %d", got, innerW)
+	}
+	// It must actually carry a glyph from every gutter column, or it teaches
+	// nothing: this is what makes it a specimen rather than decoration.
+	for _, c := range []struct{ what, glyph string }{
+		{"focus bar", focusBarGlyph},
+		{"ci", ansi.Strip(ciGlyph("fail"))},
+		{"review", ansi.Strip(reviewDot("REVIEW_REQUIRED"))},
+		{"auto-merge", ansi.Strip(autoMergeGlyph(true))},
+		{"flag", ansi.Strip(flagGlyph("", "DIRTY"))},
+		{"stack tree", stackMidGlyph},
+		{"stack missing", stackRootGlyph + "+2"},
+	} {
+		if !strings.Contains(ansi.Strip(row), c.glyph) {
+			t.Errorf("example row is missing its %s glyph %q", c.what, c.glyph)
+		}
+	}
+}
+
 func TestGroupRangeCategorized(t *testing.T) {
 	m := NewModel("/tmp", "is:open", nil)
 	m.setSections(
