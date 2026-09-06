@@ -2794,27 +2794,82 @@ type legendGroup struct {
 	hints []keyHint
 }
 
-// legendGroups is every board-view legend section, board-mode-aware (issue
-// mode drops the PR-only rows). Order is display order.
-func (m Model) legendGroups() []legendGroup {
-	groups := []legendGroup{
-		{"glyphs", []keyHint{
-			{key: "✓", label: "CI pass", style: &passStyle},
+// glyphPanes is the left modal pane: one group per gutter column, in the order
+// renderItemRow draws them, then the whole-row cues. Splitting per column is
+// what makes the board's two silent encodings legible — a glyph's meaning
+// depends on which column it sits in (red ✗ is a failed check in `status` and
+// changes requested in `review`) and on its hue (red vs yellow warnGlyph). A
+// single flat list can express neither.
+//
+// Issue rows draw an empty gutter (IssueSection.RenderRow passes "" for ci,
+// review and auto), so in issue mode none of these columns describe anything
+// that appears and only the row cues survive.
+func (m Model) glyphPanes() []legendGroup {
+	// The bar is gutter column 0, so it is a column group like the rest — and
+	// keeping it apart from the word-keyed cues below matters for more than
+	// tidiness: gridHints pads every key in a group to the widest, so a
+	// one-cell glyph filed beside "faint row" renders with an eight-space gap.
+	//
+	// Selection and focus share that one cell and selection wins it, so a
+	// selected row cannot also show the focus bar — say so, rather than let a
+	// reader conclude the focus was lost.
+	bar := legendGroup{"bar", []keyHint{
+		{key: focusBarGlyph, label: "focus", style: &focusBarStyle},
+		{key: selBarGlyph, label: "selected (hides focus)", style: &selMarkStyle},
+	}}
+	if m.mode != "pr" {
+		return []legendGroup{bar, {"row", []keyHint{
+			{key: "age", label: "last update", style: &dimStyle},
+		}}}
+	}
+	row := legendGroup{"row", []keyHint{
+		{key: "faint row", label: "draft", style: &dimStyle},
+		{key: strings.TrimSpace(landedTag), label: "merged this session", style: &dimStyle},
+		{key: "age", label: "last update; merged/closed age from landing", style: &dimStyle},
+	}}
+	return []legendGroup{
+		bar,
+		// Draft and the terminal states are cell-1 overrides, not markers of their
+		// own: PRSection.RenderRow replaces the CI glyph with them, which is why
+		// they belong to `status` rather than to a general marker list.
+		{"status", []keyHint{
+			{key: "✓", label: "checks passing", style: &passStyle},
 			{key: "✗", label: "checks failed", style: &failStyle},
-			{key: ciRunningGlyph, label: "CI running", style: &pendStyle},
-			{key: "·", label: "no CI", style: &dimStyle},
+			{key: ciRunningGlyph, label: "checks running", style: &pendStyle},
+			{key: "·", label: "no checks", style: &dimStyle},
+			{key: draftGlyph, label: "draft", style: &dimStyle},
 			{key: mergedGlyph, label: "merged", style: &mergedStyle},
 			{key: closedGlyph, label: "closed", style: &dimStyle},
-			{key: draftGlyph, label: "draft", style: &dimStyle},
-			{key: warnGlyph, label: "conflict / behind base", style: &failStyle},
-			{key: autoMergeGlyphRune, label: "auto-merge armed", style: &mergedStyle},
+		}},
+		{"review", []keyHint{
+			{key: reviewApprovedGlyph, label: "approved", style: &passStyle},
 			{key: "●", label: "review required", style: &pendStyle},
 			{key: "✗", label: "changes requested", style: &failStyle},
 			{key: reviewCommentedGlyph, label: "commented by me", style: &pendStyle},
-			{key: focusBarGlyph, label: "focus", style: &focusBarStyle},
-			{key: selBarGlyph, label: "selected", style: &selMarkStyle},
+			{key: "·", label: "no decision yet", style: &dimStyle},
 		}},
+		{"auto", []keyHint{
+			{key: autoMergeGlyphRune, label: "auto-merge armed", style: &mergedStyle},
+		}},
+		// Each flag names its remedy, not just its state: the column exists to
+		// prompt an action, and "conflict" alone is what sent a reader here.
+		{"flag", []keyHint{
+			{key: warnGlyph, label: "conflicts with base → resolve in a worktree (↵)", style: &failStyle},
+			{key: warnGlyph, label: "behind base → u update", style: &pendStyle},
+		}},
+		{"stack", []keyHint{
+			{key: stackRootGlyph, label: "stack root", style: &dimStyle},
+			{key: stackMidGlyph + " " + stackLastGlyph, label: "stacked on the row above", style: &dimStyle},
+			{key: stackRootGlyph + "+N", label: "members hidden by the filter", style: &dimStyle},
+		}},
+		row,
 	}
+}
+
+// keyPanes is the right modal pane: what the operator can press, as against the
+// left pane's what the row is telling them.
+func (m Model) keyPanes() []legendGroup {
+	var groups []legendGroup
 
 	nav := []keyHint{{"↑↓/jk", "move", nil}}
 	if m.mode == "pr" {
@@ -2854,6 +2909,14 @@ func (m Model) legendGroups() []legendGroup {
 	return groups
 }
 
+// legendGroups is both panes as one list, in reading order — the single-column
+// form used when filtering, in issue mode, and on a terminal too narrow to
+// split. It is also the surface the glyph tests assert completeness against.
+func (m Model) legendGroups() []legendGroup {
+	glyphs := m.glyphPanes()
+	return append(glyphs[:len(glyphs):len(glyphs)], m.keyPanes()...)
+}
+
 // renderLegendGroups lays out grouped keyHints as a titled, column-aligned
 // float: each group gets its own gridHints-aligned block (so a wide glyph
 // column doesn't force every key elsewhere to the same gutter width), wrapped
@@ -2861,7 +2924,17 @@ func (m Model) legendGroups() []legendGroup {
 // floor the box can exceed a terminal that's smaller still, but every call
 // site composites through overlayTop, whose canvas crops any overflow.
 func renderLegendGroups(title string, groups []legendGroup, termW, termH int) string {
-	maxW := max(20, termW-4)
+	lines := legendBlock(groups, max(20, termW-4))
+	body := strings.Join(lines, "\n")
+	w := min(lipgloss.Width(body)+4, termW)
+	h := min(len(lines)+2, max(2, termH))
+	return titledBox(body, w, h, title)
+}
+
+// legendBlock is the group stack both legend forms are built from: a blank line
+// between groups, an optional header, then the group's own gridHints-aligned
+// packing at width w.
+func legendBlock(groups []legendGroup, w int) []string {
 	var lines []string
 	for i, g := range groups {
 		if i > 0 {
@@ -2870,24 +2943,24 @@ func renderLegendGroups(title string, groups []legendGroup, termW, termH int) st
 		if g.title != "" {
 			lines = append(lines, panelHeader(g.title))
 		}
-		lines = append(lines, gridHints(g.hints, maxW, true)...)
+		lines = append(lines, gridHints(g.hints, w, true)...)
 	}
-	body := strings.Join(lines, "\n")
-	w := min(lipgloss.Width(body)+4, termW)
-	h := min(len(lines)+2, max(2, termH))
-	return titledBox(body, w, h, title)
+	return lines
 }
 
 // legendView is the ?-toggled glyph + key reference, as a centered modal. It
 // lists every board-view key; expanded-view keys live in that view's own
 // legend (see expandedLegendView/logLegendView).
+// Three cases take the single-column form. A filtered legend is a handful of
+// hints, where two panes of two entries would be absurd and every empty-pane
+// case would exist for that path alone. Issue mode has an empty gutter, so the
+// left pane would be the row cues alone against the full key list. And a narrow
+// terminal cannot give both panes their widest cell.
 func (m Model) legendView() string {
-	groups := m.legendGroups()
-	title := "Legend"
 	if m.legendQuery != "" {
 		q := strings.ToLower(m.legendQuery)
 		var filtered []legendGroup
-		for _, g := range groups {
+		for _, g := range m.legendGroups() {
 			var hints []keyHint
 			for _, h := range g.hints {
 				if strings.Contains(strings.ToLower(h.key+" "+h.label), q) {
@@ -2898,10 +2971,73 @@ func (m Model) legendView() string {
 				filtered = append(filtered, legendGroup{g.title, hints})
 			}
 		}
-		groups = filtered
-		title = "Legend: " + m.legendQuery
+		return renderLegendGroups("Legend: "+m.legendQuery, filtered, m.width, m.height)
 	}
-	return renderLegendGroups(title, groups, m.width, m.height)
+	// listInnerMax, not a legend-specific cap: past it a wider window only
+	// stretches the box, and no pane gains a grid column until far beyond it.
+	innerW := min(m.width-4, listInnerMax)
+	left, right := m.glyphPanes(), m.keyPanes()
+	if m.mode != "pr" || !legendSplits(left, right, innerW) {
+		return renderLegendGroups("Legend", m.legendGroups(), m.width, m.height)
+	}
+	return renderLegendPanes("Legend", left, right, legendExampleRow(innerW, m.mode), innerW, m.height)
+}
+
+// legendExampleRow is the specimen above the panes: one board row carrying a
+// glyph in every gutter column at once, so the column blocks below are read
+// against a live example rather than an invented column index.
+//
+// Drawn by renderItemRow, not hand-assembled, so it cannot drift from the
+// grammar it documents. Focused is load-bearing rather than decorative — the
+// leftmost cell stays blank unless a row is focused or selected, so without it
+// the focus bar is never demonstrated. Landed is deliberately left off: it
+// shares the title budget with the stack-missing marker, and crowding both
+// teaches nothing the row block does not already say.
+func legendExampleRow(w int, mode string) string {
+	o := RowOpts{Width: w, Focused: true, NumWidth: 5, TicketWidth: 7, AuthorWidth: 6, DiffWidth: 8}
+	if mode != "pr" {
+		return renderItemRow(o, issueAccentStyle, "#123", "example row", "", "you", "2h", "", "", "", "")
+	}
+	o.Tree, o.StackMissing, o.Flag = stackMidGlyph, stackRootGlyph+"+2", flagGlyph("", "DIRTY")
+	return renderItemRow(o, accentStyle, "#123", "example row", "ENG-1", "you", "2h",
+		diffstat(120, 8), ciGlyph("fail"), reviewDot("REVIEW_REQUIRED"), autoMergeGlyph(true))
+}
+
+// legendSplits reports whether the two-pane form fits: every group must pack
+// without panelColumn's Width().Render soft-wrapping its widest cell. Derived
+// from the content rather than pinned to a width constant, so adding a longer
+// hint moves the threshold instead of silently producing a wrapped cell.
+func legendSplits(left, right []legendGroup, innerW int) bool {
+	lw, rw := panelSplit(innerW)
+	fits := func(groups []legendGroup, w int) bool {
+		if w < 1 {
+			return false
+		}
+		for _, g := range groups {
+			if gridLayout(g.hints, w, true).cellW-hintGutter > w {
+				return false
+			}
+		}
+		return true
+	}
+	return fits(left, lw) && fits(right, rw)
+}
+
+// renderLegendPanes is the board legend's two-pane form: the example row across
+// the top, then "what the row is telling you" beside "what you can press".
+func renderLegendPanes(title string, left, right []legendGroup, example string, innerW, termH int) string {
+	lw, rw := panelSplit(innerW)
+	col := func(groups []legendGroup, w int) string {
+		return lipgloss.NewStyle().Width(w).Render(strings.Join(legendBlock(groups, w), "\n"))
+	}
+	l, r := col(left, lw), col(right, rw)
+	// Each separator line carries its own padding: wrapping the whole multi-line
+	// rule in " "+…+" " pads only the first and last rows, jagging the divider
+	// and the right border. Same reasoning as panelBody.
+	sepLine := " " + sepStyle.Render("│") + " "
+	sep := strings.TrimSuffix(strings.Repeat(sepLine+"\n", max(lipgloss.Height(l), lipgloss.Height(r))), "\n")
+	body := example + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top, l, sep, r)
+	return titledBox(body, innerW+2, min(lipgloss.Height(body)+2, max(2, termH)), title)
 }
 
 // actionOrder is the display order for the docked panel's actions section, so

@@ -475,14 +475,14 @@ func (s *PRSection) setShownStacks(shown []int) {
 			s.stackRoots[p.Number] = root.Number
 			switch {
 			case n == 0 && missing > 0:
-				s.stackTrees[p.Number] = "⧉"
-				s.stackMissing[p.Number] = "⧉+" + strconv.Itoa(missing)
+				s.stackTrees[p.Number] = stackRootGlyph
+				s.stackMissing[p.Number] = stackRootGlyph + "+" + strconv.Itoa(missing)
 			case n == 0:
-				s.stackTrees[p.Number] = "⧉"
+				s.stackTrees[p.Number] = stackRootGlyph
 			case n == len(members)-1:
-				s.stackTrees[p.Number] = "╰─"
+				s.stackTrees[p.Number] = stackLastGlyph
 			default:
-				s.stackTrees[p.Number] = "├─"
+				s.stackTrees[p.Number] = stackMidGlyph
 			}
 		}
 	}
