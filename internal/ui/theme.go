@@ -369,6 +369,17 @@ func draftMark() string { return dimStyle.Render(draftGlyph) }
 // cannot shrink an over-wide glyph.
 const warnGlyph = "\uF421" // nerd: nf-oct-alert
 
+// Stack tree glyphs, drawn unstyled into renderItemRow's 3-cell tree slot.
+// stackRootGlyph does double duty — alone in the tree slot it marks the root of
+// a visible chain, and as stackRootGlyph+N in the title budget it counts the
+// members the active filter is hiding. Named rather than inline so the legend
+// and setShownStacks cannot drift apart.
+const (
+	stackRootGlyph = "⧉"  // nerd: nf-oct-stack
+	stackMidGlyph  = "├─" // a chain member with another below it
+	stackLastGlyph = "╰─" // the last member of the visible chain
+)
+
 // focusBarGlyph and selBarGlyph share the row's single leftmost cell;
 // renderItemRow resolves which one wins. selBarGlyph is the heavier block on
 // purpose: selection must read by weight and not by hue alone. Both are

@@ -3,7 +3,9 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2073,51 +2075,93 @@ func TestEscTwoStageOnIssueBoard(t *testing.T) {
 	}
 }
 
-// TestLegendGlyphsAreUnambiguous: the legend explains glyphs, so listing one glyph
-// under two meanings makes it useless. Duplicate glyph keys must diverge in rendered
-// appearance (e.g. closed dim ✗ vs CI-fail red ✗), not just in label text. Row
-// markers ▌/▎ and ciRunningGlyph each keep a single pinned meaning.
+// TestLegendGlyphsAreUnambiguous pins the invariant the board actually relies
+// on: within one gutter column, a rendered glyph — shape AND colour — resolves
+// to exactly one meaning. Across columns the same shape may repeat, because the
+// column disambiguates it: red ✗ is a failed check in `status` and changes
+// requested in `review`, which is precisely why the legend groups per column
+// rather than listing every glyph in one bag.
 func TestLegendGlyphsAreUnambiguous(t *testing.T) {
 	for _, mode := range []string{"pr", "issue"} {
-		// width/height are set because legendGroups reaches computeLayout for the
+		// width/height are set because the key panes reach computeLayout for the
 		// side-pane hint; a zero-size Model would exercise a degenerate layout.
 		m := Model{mode: mode, width: 120, height: 40}
-		var glyphs []keyHint
-		for _, g := range m.legendGroups() {
-			if g.title == "glyphs" {
-				glyphs = g.hints
+		groups := m.glyphPanes()
+		if len(groups) == 0 {
+			t.Fatalf("mode %q: legend has no glyph groups", mode)
+		}
+		for _, g := range groups {
+			byRender := map[string]map[string]struct{}{}
+			for _, h := range g.hints {
+				r := h.renderKey()
+				if byRender[r] == nil {
+					byRender[r] = map[string]struct{}{}
+				}
+				byRender[r][h.label] = struct{}{}
+			}
+			for r, ls := range byRender {
+				if len(ls) > 1 {
+					t.Errorf("mode %q group %q: %q renders identically under %d meanings %v; within a column a glyph must resolve to one label",
+						mode, g.title, r, len(ls), slices.Sorted(maps.Keys(ls)))
+				}
 			}
 		}
-		if len(glyphs) == 0 {
-			t.Fatalf("mode %q: legend has no glyphs group", mode)
+	}
+}
+
+// TestLegendDocumentsEveryRowGlyph enumerates the producers the board row draws
+// from and asserts each one's output has a legend entry. The gap it exists to
+// close is silent: reviewApprovedGlyph was the commonest review state on the
+// board and had no entry at all, because nothing tied the legend's hand-written
+// list to the functions that actually paint the row.
+//
+// Compared unstyled — colour is the previous test's contract, and the stack
+// glyphs reach the row as bare strings with no style to match against.
+func TestLegendDocumentsEveryRowGlyph(t *testing.T) {
+	m := Model{mode: "pr", width: 120, height: 40}
+	var keys []string
+	for _, g := range m.legendGroups() {
+		for _, h := range g.hints {
+			keys = append(keys, ansi.Strip(h.key))
 		}
-		labels := map[string][]string{}
-		rendered := map[string][]string{}
-		for _, h := range glyphs {
-			labels[h.key] = append(labels[h.key], h.label)
-			rendered[h.key] = append(rendered[h.key], h.renderKey())
-		}
-		for _, c := range []struct{ glyph, want string }{
-			{"▌", "selected"},
-			{"▎", "focus"},
-			{ciRunningGlyph, "CI running"},
-		} {
-			if got := labels[c.glyph]; len(got) != 1 || got[0] != c.want {
-				t.Errorf("mode %q: want %s labelled exactly [%s], got %v", mode, c.glyph, c.want, got)
+	}
+	documented := func(glyph string) bool {
+		for _, k := range keys {
+			if strings.Contains(k, ansi.Strip(glyph)) {
+				return true
 			}
 		}
-		for key, rs := range rendered {
-			if len(rs) < 2 {
-				continue
-			}
-			seen := make(map[string]struct{}, len(rs))
-			for _, r := range rs {
-				seen[r] = struct{}{}
-			}
-			if len(seen) <= 1 {
-				t.Errorf("mode %q: glyph %q appears %d times but all render identically (%q); duplicate keys must diverge in style",
-					mode, key, len(rs), rs[0])
-			}
+		return false
+	}
+	for _, c := range []struct{ what, glyph string }{
+		{"ci pass", ciGlyph("pass")},
+		{"ci fail", ciGlyph("fail")},
+		{"ci pending", ciGlyph("pending")},
+		{"ci none", ciGlyph("none")},
+		{"review approved", reviewDot("APPROVED")},
+		{"review changes requested", reviewDot("CHANGES_REQUESTED")},
+		{"review required", reviewDot("REVIEW_REQUIRED")},
+		{"review none", reviewDot("")},
+		{"review commented by me", pendStyle.Render(reviewCommentedGlyph)},
+		{"auto-merge armed", autoMergeGlyph(true)},
+		{"flag conflict", flagGlyph("", "DIRTY")},
+		{"flag behind", flagGlyph("", "BEHIND")},
+		{"draft", draftMark()},
+		{"merged", mergedMark()},
+		{"closed", closedMark()},
+		{"focus bar", focusBarGlyph},
+		{"selection bar", selBarGlyph},
+		{"stack root", stackRootGlyph},
+		{"stack member", stackMidGlyph},
+		{"stack last member", stackLastGlyph},
+		{"landed tag", strings.TrimSpace(landedTag)},
+	} {
+		if c.glyph == "" {
+			t.Errorf("%s: producer returned empty, test is not exercising it", c.what)
+			continue
+		}
+		if !documented(c.glyph) {
+			t.Errorf("the row draws %s (%q) but no legend entry mentions it", c.what, ansi.Strip(c.glyph))
 		}
 	}
 }
