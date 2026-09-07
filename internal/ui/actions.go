@@ -169,6 +169,11 @@ func switchNoticeBody(r gh.SwitchPreflight, branch string) string {
 // runAction executes a single-scope action against the cursor row. exits-tui
 // actions hand off (or queue) the command and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
+	if m.cascade != nil && !a.ExitsTUI {
+		// A live cascade owns the mutation sequence; interleaving a second one
+		// would break the sequencing guarantee the whole feature exists for.
+		return nil
+	}
 	a = m.resolvePRAction(a)
 	v, ok := m.cursorVars()
 	if !ok {
@@ -429,6 +434,7 @@ type actionStat struct {
 	nums    []int   // PR numbers the action touched, for detail-freshness invalidation
 	merged  []gh.PR // PRs a merge targeted, snapshotted pre-merge → mergedSticky on success
 	native  string  // a.Command.Native — drives optimistic row patches on success
+	partial []int   // PRs that succeeded even though the run as a whole failed
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -514,8 +520,13 @@ func (m Model) assignReviewersCmd(number int, prID string, add, remove []string,
 func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	a := m.pending
 	m.pending = nil
+	p := m.pendingCascade
+	m.pendingCascade = nil // the field's whole lifetime: written by startBulk, consumed or cleared here
 	if !yes || a == nil {
 		return nil
+	}
+	if p.cascades() {
+		return m.runCascade(*a, p)
 	}
 	if a.Scope == "per-selected" {
 		return m.runBulk(*a)
@@ -528,12 +539,26 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 const bulkWarnThreshold = 4
 
 // startBulk runs a per-selected action, first prompting when it needs confirming,
-// targets a PR the viewer didn't author or fans out across a bulk selection, or
-// when it would open more than bulkWarnThreshold worktrees.
+// targets a PR the viewer didn't author or fans out across a bulk selection, would
+// cascade up a stack, or when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
+	if m.cascade != nil && !a.ExitsTUI {
+		return nil // a live cascade owns the mutation sequence
+	}
 	a = m.resolvePRAction(a)
+
+	// A cascade plan is built only for update-branch on the PR board with a wait
+	// mechanism available; otherwise it is nil'd so an earlier press's plan can
+	// never be read by an unrelated later prompt.
+	ps, isPR := m.section.(*PRSection)
+	if a.Command.Native == "update-branch" && isPR && m.detailSource != nil {
+		m.pendingCascade = m.buildCascadePlan(ps)
+	} else {
+		m.pendingCascade = nil
+	}
+
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
-	if a.Confirm || overThreshold || m.needsOthersConfirm(a) {
+	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
 		m.pending = &a
 		return nil
 	}
@@ -706,4 +731,59 @@ func statForBulk(a action.Action, n int) *actionStat {
 		s.ok = fmt.Sprintf("%s ×%d", s.ok, n)
 	}
 	return s
+}
+
+// buildCascadePlan gathers the shown set and this press's seeds — bounds-checked
+// the same way runBulkNative is, since prAt indexes s.shown unguarded — and
+// walks each seed's stack via the package-level buildCascadePlan.
+func (m *Model) buildCascadePlan(ps *PRSection) *cascadePlan {
+	shown := make([]gh.PR, ps.Len())
+	for i := range shown {
+		shown[i] = ps.prAt(i)
+	}
+	var seeds []gh.PR
+	for _, i := range m.selectedOrCursor() {
+		if i < 0 || i >= ps.Len() {
+			continue
+		}
+		seeds = append(seeds, ps.prAt(i))
+	}
+	state := func(p gh.PR) (mergeable, mss string) {
+		d, hasDetail := m.detail[p.Number]
+		return mergeState(p, d, hasDetail)
+	}
+	return buildCascadePlan(shown, seeds, state)
+}
+
+// runCascade starts a confirmed cascade plan. The run gets its own *actionStat
+// rather than sharing m.actionStatus (see cascadeRun.stat's doc comment) —
+// seven sites in expanded.go/logview.go overwrite m.actionStatus directly,
+// bypassing runAction/startBulk, and entering those views mid-run is ordinary.
+func (m *Model) runCascade(a action.Action, p *cascadePlan) tea.Cmd {
+	nums := make([]int, 0, p.count())
+	for _, c := range p.chains {
+		for _, l := range c {
+			nums = append(nums, l.pr.Number)
+		}
+	}
+	stat := statForBulk(a, p.count())
+	stat.refresh = a.Refresh
+	stat.nums = nums
+	m.cascade = &cascadeRun{plan: p, stat: stat, skipped: p.dropped} // plan.dropped seeds skipped — cascadeRun.failed() depends on it
+	m.actionStatus = stat
+	m.invalidateLaunchCache(nums...)
+	m.sel.clear() // the run consumes the selection, exactly as runBulkNative does
+	return tea.Batch(m.cascadeMutateCmd(), m.startSpinner())
+}
+
+// cascadeMutateCmd fires the current link's UpdateBranch, resolved through
+// nativeMutationFn so its p.ID=="" stale-cache guard is reused rather than
+// reimplemented. Badge wording is written to the run's own stat, never
+// m.actionStatus, for the same reason runCascade gives the run its own stat.
+func (m *Model) cascadeMutateCmd() tea.Cmd {
+	r := m.cascade
+	link := r.plan.chains[r.chain][r.link]
+	r.stat.run = fmt.Sprintf("Updating stack %d/%d · #%d", len(r.done)+1, r.plan.count(), link.pr.Number)
+	fn, _ := m.nativeMutationFn("update-branch", link.pr)
+	return func() tea.Msg { return cascadeUpdatedMsg{err: fn()} }
 }
