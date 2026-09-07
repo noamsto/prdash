@@ -1,11 +1,78 @@
 package gh
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestPreflightSwitchFixtureCollisionAndRebase(t *testing.T) {
+	oldList, oldGit := runWtList, gitOutput
+	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
+	path := filepath.Join(root, "feature")
+	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runWtList = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q,"working_tree":{"staged":false,"modified":false,"untracked":false},"remote":{"ahead":1,"behind":2}}]`, path)), nil
+	}
+	gitOutput = func(dir string, args ...string) (string, error) {
+		if len(args) == 2 && args[0] == "rev-parse" {
+			return filepath.Join(path, ".git"), nil
+		}
+		if len(args) > 0 && args[0] == "status" {
+			return "# branch.head (detached)\nu UU 1 2 3 4 5 6 7 8 9", nil
+		}
+		return "", nil
+	}
+	r, err := PreflightSwitch(filepath.Join(root, "main"), "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path != path || r.Occupant != "tmp4" || !strings.Contains(r.Remedy, "git switch feature") {
+		t.Fatalf("collision = %+v", r)
+	}
+	warnings := strings.Join(r.Warnings, " ")
+	for _, want := range []string{"rebase-merge in progress", "unresolved conflicts", "detached HEAD", "diverges from PR head"} {
+		if !strings.Contains(warnings, want) {
+			t.Errorf("warnings %q missing %q", warnings, want)
+		}
+	}
+}
+
+func TestPreflightSwitchFixtureCleanTarget(t *testing.T) {
+	old := runWtList
+	t.Cleanup(func() { runWtList = old })
+	runWtList = func(string) ([]byte, error) { return []byte(`[{"branch":"feature","path":"/tmp/other"}]`), nil }
+	r, err := PreflightSwitch("/tmp/repo", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path != "" {
+		t.Fatalf("clean target = %+v", r)
+	}
+}
+
+func TestPreflightSwitchSlugifiesBranchSeparators(t *testing.T) {
+	old := runWtList
+	t.Cleanup(func() { runWtList = old })
+	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
+	path := filepath.Join(root, "feat-123-x")
+	runWtList = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q}]`, path)), nil
+	}
+	oldGit := gitOutput
+	t.Cleanup(func() { gitOutput = oldGit })
+	gitOutput = func(string, ...string) (string, error) { return filepath.Join(path, ".git"), nil }
+	r, err := PreflightSwitch(filepath.Join(root, "main"), "feat/123-x")
+	if err != nil || r.Path != path || r.Occupant != "tmp4" {
+		t.Fatalf("slash collision = %+v, %v", r, err)
+	}
+}
 
 // initRepo builds a real one-commit repo in a temp dir, since these helpers are
 // thin wrappers over git and only exercising git proves anything about them.
