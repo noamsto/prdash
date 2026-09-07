@@ -2,10 +2,10 @@ package gh
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -15,46 +15,31 @@ type SwitchPreflight struct {
 	Warnings               []string
 }
 
-type wtListEntry struct {
-	Branch string `json:"branch"`
-	Path   string `json:"path"`
-	Remote struct {
-		Ahead  int `json:"ahead"`
-		Behind int `json:"behind"`
-	} `json:"remote"`
+type worktreeEntry struct {
+	Branch string
+	Path   string
 }
 
-var runWtList = func(dir string) ([]byte, error) {
+var runWorktreeListCommand = func(dir, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
 	defer cancel()
-	cmd := newBoundedCmd(ctx, "wt", "list", "--format", "json")
+	cmd := newBoundedCmd(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.Output() // stderr intentionally excluded
+}
+
+var runWorktreeList = func(dir string) ([]byte, error) {
+	return runWorktreeListCommand(dir, "git", "-C", dir, "worktree", "list", "--porcelain")
 }
 
 // PreflightSwitch checks the path worktrunk is likely to use and inspects an
 // occupant directly. It never changes either repository.
 func PreflightSwitch(dir, branch string) (SwitchPreflight, error) {
-	out, err := runWtList(dir)
+	out, err := runWorktreeList(dir)
 	if err != nil {
 		return SwitchPreflight{}, err
 	}
-	var entries []wtListEntry
-	if err := json.Unmarshal(out, &entries); err != nil {
-		// Be permissive about a future envelope while retaining schema-1 support.
-		var envelope map[string]json.RawMessage
-		if e := json.Unmarshal(out, &envelope); e != nil {
-			return SwitchPreflight{}, fmt.Errorf("parse wt list: %w", err)
-		}
-		for _, key := range []string{"worktrees", "entries", "list"} {
-			if raw, ok := envelope[key]; ok && json.Unmarshal(raw, &entries) == nil {
-				break
-			}
-		}
-		if entries == nil {
-			return SwitchPreflight{}, fmt.Errorf("parse wt list: %w", err)
-		}
-	}
+	entries := parseWorktreeList(out)
 	path := expectedWorktreePath(branch, entries)
 	if path == "" {
 		return SwitchPreflight{}, nil
@@ -63,9 +48,12 @@ func PreflightSwitch(dir, branch string) (SwitchPreflight, error) {
 		if e.Path == "" || e.Path != path {
 			continue
 		}
-		collision, occupant, warnings := inspectOccupant(e.Path, branch, e.Remote.Ahead, e.Remote.Behind)
+		collision, occupant, warnings := inspectOccupant(e.Path, branch)
 		if !collision {
 			return SwitchPreflight{}, nil
+		}
+		if ahead, behind, ok := worktreeDivergence(e.Path, branch); ok && (ahead != 0 || behind != 0) {
+			warnings = append(warnings, fmt.Sprintf("diverges from PR head (ahead %d, behind %d)", ahead, behind))
 		}
 		return SwitchPreflight{
 			Path:     e.Path,
@@ -83,7 +71,7 @@ func shellQuoteSingle(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func expectedWorktreePath(branch string, entries []wtListEntry) string {
+func expectedWorktreePath(branch string, entries []worktreeEntry) string {
 	// Worktrunk flattens branch separators in the directory name (e.g.
 	// feat/123-x becomes feat-123-x), while retaining the original branch for Git.
 	pathBranch := strings.ReplaceAll(branch, "/", "-")
@@ -103,11 +91,10 @@ func expectedWorktreePath(branch string, entries []wtListEntry) string {
 	return ""
 }
 
-// inspectOccupant asks git the ground truth about what occupies path, since
-// wt list's JSON branch field reports the rebase target's branch even when
-// HEAD is actually detached mid-rebase — exactly the case this feature exists
-// to catch.
-func inspectOccupant(path, branch string, ahead, behind int) (collision bool, occupant string, warnings []string) {
+// inspectOccupant asks git the ground truth about what occupies path, since an
+// inventory branch field can report the rebase target even when HEAD is
+// actually detached mid-rebase — exactly the case this feature exists to catch.
+func inspectOccupant(path, branch string) (collision bool, occupant string, warnings []string) {
 	gitDir, err := gitOutput(path, "rev-parse", "--git-dir")
 	if err != nil {
 		// Fail open: a stale or deleted worktree entry degrades to today's
@@ -157,11 +144,28 @@ func inspectOccupant(path, branch string, ahead, behind int) (collision bool, oc
 	} else {
 		occupant = head
 	}
-	if ahead != 0 || behind != 0 {
-		warnings = append(warnings, fmt.Sprintf("diverges from PR head (ahead %d, behind %d)", ahead, behind))
-	}
 	collision = occupant != branch || mid || hasConflict
 	return collision, occupant, warnings
+}
+
+func worktreeDivergence(path, branch string) (ahead, behind int, ok bool) {
+	out, err := gitOutput(path, "rev-list", "--left-right", "--count", branch+"..."+branch+"@{upstream}")
+	if err != nil {
+		return 0, 0, false
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return 0, 0, false
+	}
+	ahead, err = strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	behind, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return ahead, behind, true
 }
 
 var gitOutput = func(dir string, args ...string) (string, error) {
@@ -215,27 +219,36 @@ func remoteBranchExists(dir, branch string) bool {
 // WorktreeForBranch returns the path of the worktree branch is checked out in, if
 // any. A branch with no worktree of its own reports false.
 func WorktreeForBranch(dir, branch string) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
-	defer cancel()
-	// A timeout collapses into ("", false), same as "no worktree list
-	// available" — acceptable here since no caller distinguishes why.
-	out, err := newBoundedCmd(ctx, "git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	out, err := runWorktreeList(dir)
 	if err != nil {
 		return "", false
 	}
+	for _, entry := range parseWorktreeList(out) {
+		if entry.Branch == branch {
+			return entry.Path, entry.Path != ""
+		}
+	}
+	return "", false
+}
+
+// parseWorktreeList reads the stanza-based format emitted by
+// `git worktree list --porcelain`.
+func parseWorktreeList(out []byte) []worktreeEntry {
+	var entries []worktreeEntry
 	// Porcelain output is stanzas separated by blank lines: "worktree <path>",
 	// then optional "HEAD <sha>" and "branch refs/heads/<name>" lines.
-	path := ""
+	var entry *worktreeEntry
 	for line := range strings.Lines(string(out)) {
 		line = strings.TrimRight(line, "\n")
 		switch {
 		case strings.HasPrefix(line, "worktree "):
-			path = strings.TrimPrefix(line, "worktree ")
-		case line == "branch refs/heads/"+branch:
-			return path, path != ""
+			entries = append(entries, worktreeEntry{Path: strings.TrimPrefix(line, "worktree ")})
+			entry = &entries[len(entries)-1]
+		case entry != nil && strings.HasPrefix(line, "branch refs/heads/"):
+			entry.Branch = strings.TrimPrefix(line, "branch refs/heads/")
 		}
 	}
-	return "", false
+	return entries
 }
 
 // RemoveWorktree removes the worktree at path. It deliberately omits --force, so
