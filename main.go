@@ -35,8 +35,7 @@ func main() {
 		if errors.Is(err, context.DeadlineExceeded) {
 			ui.RunNotice("prdash", fmt.Sprintf("%s\n\nSet GH_TOKEN or GITHUB_TOKEN to bypass `gh auth token` entirely.", err))
 		} else {
-			fmt.Fprintln(os.Stderr, "prdash:", err)
-			fmt.Fprintln(os.Stderr, "Set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.")
+			ui.RunNotice("prdash", fmt.Sprintf("prdash: %s\n\nSet GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.", err))
 		}
 		os.Exit(1)
 	}
