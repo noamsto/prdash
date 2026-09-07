@@ -33,7 +33,7 @@ func TestPreflightSwitchFixtureCollisionAndRebase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Path != path || r.Occupant != "tmp4" || !strings.Contains(r.Remedy, "git switch feature") {
+	if r.Path != path || r.Occupant != "(detached HEAD)" || !strings.Contains(r.Remedy, "switch -- 'feature'") {
 		t.Fatalf("collision = %+v", r)
 	}
 	warnings := strings.Join(r.Warnings, " ")
@@ -67,10 +67,171 @@ func TestPreflightSwitchSlugifiesBranchSeparators(t *testing.T) {
 	}
 	oldGit := gitOutput
 	t.Cleanup(func() { gitOutput = oldGit })
-	gitOutput = func(string, ...string) (string, error) { return filepath.Join(path, ".git"), nil }
+	gitOutput = func(dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return filepath.Join(path, ".git"), nil
+		}
+		if len(args) > 0 && args[0] == "status" {
+			return "# branch.head tmp4", nil
+		}
+		return "", nil
+	}
 	r, err := PreflightSwitch(filepath.Join(root, "main"), "feat/123-x")
 	if err != nil || r.Path != path || r.Occupant != "tmp4" {
 		t.Fatalf("slash collision = %+v, %v", r, err)
+	}
+}
+
+// wt list's branch field reports the rebase target's branch even when HEAD is
+// actually detached mid-rebase with conflicts — this is the exact case the
+// feature exists to catch, so the JSON branch field must never be trusted.
+func TestPreflightSwitchDetectsDetachedRebaseEvenWhenWtListBranchMatches(t *testing.T) {
+	oldList, oldGit := runWtList, gitOutput
+	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
+	path := filepath.Join(root, "feature")
+	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runWtList = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`[{"branch":"feature","path":%q}]`, path)), nil
+	}
+	gitOutput = func(dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return filepath.Join(path, ".git"), nil
+		}
+		if len(args) > 0 && args[0] == "status" {
+			return "# branch.head (detached)\nu UU 1 2 3 4 5 6 7 8 9", nil
+		}
+		return "", nil
+	}
+	r, err := PreflightSwitch(filepath.Join(root, "main"), "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path == "" {
+		t.Fatalf("expected a collision even though wt list's branch field matches the target, got %+v", r)
+	}
+	if r.Occupant != "(detached HEAD)" {
+		t.Errorf("Occupant = %q, want (detached HEAD)", r.Occupant)
+	}
+	warnings := strings.Join(r.Warnings, " ")
+	for _, want := range []string{"rebase-merge in progress", "unresolved conflicts"} {
+		if !strings.Contains(warnings, want) {
+			t.Errorf("warnings %q missing %q", warnings, want)
+		}
+	}
+}
+
+// dir here is both the queried repo and the only listed entry's path — the
+// shape of a plain, non-worktrunk checkout with no .worktrees layout anywhere.
+func TestPreflightSwitchNoFalsePositiveWithoutWorktreesLayout(t *testing.T) {
+	old := runWtList
+	t.Cleanup(func() { runWtList = old })
+	dir := filepath.Join(string(filepath.Separator), "tmp", "x", "prdash")
+	runWtList = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`[{"branch":"main","path":%q}]`, dir)), nil
+	}
+	r, err := PreflightSwitch(dir, "prdash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path != "" {
+		t.Fatalf("expected no collision when no .worktrees-layout entry exists, got %+v", r)
+	}
+}
+
+func TestInspectOccupantReportsIndependentSignals(t *testing.T) {
+	oldGit := gitOutput
+	t.Cleanup(func() { gitOutput = oldGit })
+	dir := t.TempDir()
+
+	gitOutput = func(d string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return filepath.Join(dir, ".git"), nil
+		}
+		if len(args) > 0 && args[0] == "status" {
+			return "# branch.head main\n1 M. N... 100644 100644 100644 abc def file.go\nu UU N... 100644 100644 100644 100644 abc def ghi file2.go", nil
+		}
+		return "", nil
+	}
+	_, _, warnings := inspectOccupant(dir, "main", 0, 0)
+	joined := strings.Join(warnings, " ")
+	if !strings.Contains(joined, "staged or uncommitted work") || !strings.Contains(joined, "unresolved conflicts") {
+		t.Fatalf("warnings = %q, want both staged/uncommitted work and unresolved conflicts reported independently", joined)
+	}
+
+	gitOutput = func(d string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return filepath.Join(dir, ".git"), nil
+		}
+		if len(args) > 0 && args[0] == "status" {
+			return "# branch.head main\n? untracked.txt", nil
+		}
+		return "", nil
+	}
+	_, _, warnings = inspectOccupant(dir, "main", 0, 0)
+	joined = strings.Join(warnings, " ")
+	if !strings.Contains(joined, "untracked files") {
+		t.Errorf("warnings = %q, want untracked files", joined)
+	}
+	if strings.Contains(joined, "staged or uncommitted work") {
+		t.Errorf("warnings = %q, want no staged or uncommitted work for an untracked-only status", joined)
+	}
+}
+
+func TestPreflightSwitchRemedyEscapesShellMetacharacters(t *testing.T) {
+	oldList, oldGit := runWtList, gitOutput
+	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
+	branch := "feat/`; touch pwned`"
+	path := filepath.Join(root, strings.ReplaceAll(branch, "/", "-"))
+	runWtList = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q}]`, path)), nil
+	}
+	gitOutput = func(dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return filepath.Join(path, ".git"), nil
+		}
+		if len(args) > 0 && args[0] == "status" {
+			return "# branch.head tmp4", nil
+		}
+		return "", nil
+	}
+	r, err := PreflightSwitch(filepath.Join(root, "main"), branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path == "" {
+		t.Fatal("expected a collision to exercise the remedy")
+	}
+	// Single quotes neutralize shell metacharacters, so the metacharacter
+	// sequence itself still appears in the remedy — but only inside quotes.
+	if !strings.Contains(r.Remedy, "'"+branch+"'") {
+		t.Errorf("Remedy = %q, want the branch wrapped in single quotes", r.Remedy)
+	}
+}
+
+func TestPreflightSwitchFailsOpenWhenGitCannotBeInspected(t *testing.T) {
+	oldList, oldGit := runWtList, gitOutput
+	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
+	path := filepath.Join(root, "feature")
+	runWtList = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q}]`, path)), nil
+	}
+	gitOutput = func(dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return "", fmt.Errorf("not a git repository")
+		}
+		return "", nil
+	}
+	r, err := PreflightSwitch(filepath.Join(root, "main"), "feature")
+	if err != nil {
+		t.Fatalf("expected fail-open with no error, got %v", err)
+	}
+	if r.Path != "" {
+		t.Fatalf("expected no collision when git state can't be inspected, got %+v", r)
 	}
 }
 

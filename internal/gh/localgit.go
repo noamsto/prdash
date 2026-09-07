@@ -16,11 +16,8 @@ type SwitchPreflight struct {
 }
 
 type wtListEntry struct {
-	Branch   string `json:"branch"`
-	Path     string `json:"path"`
-	Worktree struct {
-		Detached bool `json:"detached"`
-	} `json:"worktree"`
+	Branch string `json:"branch"`
+	Path   string `json:"path"`
 	Remote struct {
 		Ahead  int `json:"ahead"`
 		Behind int `json:"behind"`
@@ -58,19 +55,35 @@ func PreflightSwitch(dir, branch string) (SwitchPreflight, error) {
 			return SwitchPreflight{}, fmt.Errorf("parse wt list: %w", err)
 		}
 	}
-	path := expectedWorktreePath(dir, branch, entries)
+	path := expectedWorktreePath(branch, entries)
+	if path == "" {
+		return SwitchPreflight{}, nil
+	}
 	for _, e := range entries {
-		if e.Path == "" || e.Path != path || e.Branch == "" || e.Branch == branch {
+		if e.Path == "" || e.Path != path {
 			continue
 		}
-		r := SwitchPreflight{Path: e.Path, Occupant: e.Branch, Remedy: fmt.Sprintf("cd %s && git switch %s", e.Path, branch)}
-		r.Warnings = inspectWorktree(e.Path, e.Remote.Ahead, e.Remote.Behind)
-		return r, nil
+		collision, occupant, warnings := inspectOccupant(e.Path, branch, e.Remote.Ahead, e.Remote.Behind)
+		if !collision {
+			return SwitchPreflight{}, nil
+		}
+		return SwitchPreflight{
+			Path:     e.Path,
+			Occupant: occupant,
+			Remedy:   fmt.Sprintf("git -C %s switch -- %s", shellQuoteSingle(e.Path), shellQuoteSingle(branch)),
+			Warnings: warnings,
+		}, nil
 	}
 	return SwitchPreflight{}, nil
 }
 
-func expectedWorktreePath(dir, branch string, entries []wtListEntry) string {
+// shellQuoteSingle wraps s in single quotes for safe use in a shell command,
+// escaping any embedded single quotes with the standard POSIX trick.
+func shellQuoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func expectedWorktreePath(branch string, entries []wtListEntry) string {
 	// Worktrunk flattens branch separators in the directory name (e.g.
 	// feat/123-x becomes feat-123-x), while retaining the original branch for Git.
 	pathBranch := strings.ReplaceAll(branch, "/", "-")
@@ -87,47 +100,68 @@ func expectedWorktreePath(dir, branch string, entries []wtListEntry) string {
 			}
 		}
 	}
-	root := dir
-	if p, err := filepath.Abs(dir); err == nil {
-		root = p
-	}
-	return filepath.Join(filepath.Dir(root), pathBranch)
+	return ""
 }
 
-func inspectWorktree(path string, ahead, behind int) []string {
-	var warnings []string
+// inspectOccupant asks git the ground truth about what occupies path, since
+// wt list's JSON branch field reports the rebase target's branch even when
+// HEAD is actually detached mid-rebase — exactly the case this feature exists
+// to catch.
+func inspectOccupant(path, branch string, ahead, behind int) (collision bool, occupant string, warnings []string) {
 	gitDir, err := gitOutput(path, "rev-parse", "--git-dir")
 	if err != nil {
-		return []string{"could not inspect Git state"}
+		// Fail open: a stale or deleted worktree entry degrades to today's
+		// silent handoff, not a hard error or a false-positive collision.
+		return false, "", nil
 	}
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(path, gitDir)
 	}
+	var mid bool
 	for _, marker := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
 		if _, err := os.Stat(filepath.Join(gitDir, marker)); err == nil {
 			warnings = append(warnings, marker+" in progress")
+			mid = true
 		}
 	}
 	status, err := gitOutput(path, "status", "--porcelain=v2", "--branch")
-	if err == nil {
-		for _, line := range strings.Split(status, "\n") {
-			if strings.HasPrefix(line, "u ") {
-				warnings = append(warnings, "unresolved conflicts")
-				break
-			}
-			if strings.HasPrefix(line, "1 ") || strings.HasPrefix(line, "2 ") || strings.HasPrefix(line, "? ") {
-				warnings = append(warnings, "staged or uncommitted work")
-				break
-			}
+	if err != nil {
+		return false, "", nil
+	}
+	var hasConflict, hasDirty, hasUntracked bool
+	head := ""
+	for _, line := range strings.Split(status, "\n") {
+		switch {
+		case strings.HasPrefix(line, "# branch.head "):
+			head = strings.TrimPrefix(line, "# branch.head ")
+		case strings.HasPrefix(line, "u "):
+			hasConflict = true
+		case strings.HasPrefix(line, "1 "), strings.HasPrefix(line, "2 "):
+			hasDirty = true
+		case strings.HasPrefix(line, "? "):
+			hasUntracked = true
 		}
-		if strings.Contains(status, "# branch.head (detached)") {
-			warnings = append(warnings, "detached HEAD")
-		}
+	}
+	if hasConflict {
+		warnings = append(warnings, "unresolved conflicts")
+	}
+	if hasDirty {
+		warnings = append(warnings, "staged or uncommitted work")
+	}
+	if hasUntracked {
+		warnings = append(warnings, "untracked files")
+	}
+	if head == "" || head == "(detached)" {
+		warnings = append(warnings, "detached HEAD")
+		occupant = "(detached HEAD)"
+	} else {
+		occupant = head
 	}
 	if ahead != 0 || behind != 0 {
 		warnings = append(warnings, fmt.Sprintf("diverges from PR head (ahead %d, behind %d)", ahead, behind))
 	}
-	return warnings
+	collision = occupant != branch || mid || hasConflict
+	return collision, occupant, warnings
 }
 
 var gitOutput = func(dir string, args ...string) (string, error) {
