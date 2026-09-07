@@ -496,6 +496,14 @@ func enterExec(t *testing.T, dir string, pr gh.PR) []string {
 	if cmd == nil {
 		t.Fatal("enter should still quit the TUI")
 	}
+	// The worktree pre-flight runs off the Update goroutine now: pump its
+	// result back through Update before the exec queue is populated.
+	msg := firstBatchMsg(t, cmd)
+	u, cmd = m.Update(msg)
+	m = u.(Model)
+	if cmd == nil {
+		t.Fatal("a clean pre-flight result should still quit the TUI")
+	}
 	got := m.PendingExec()
 	if len(got) != 1 {
 		t.Fatalf("enter should queue one exec command standalone, got %d", len(got))

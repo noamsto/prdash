@@ -125,3 +125,13 @@ type logFetchedMsg struct {
 	raw []byte
 	err error
 }
+
+// switchPreflightMsg reports the pre-flight check's result for one or more
+// exits-TUI worktree switches, computed off the Update goroutine since
+// `wt list` can take 150ms+ in a large repo.
+type switchPreflightMsg struct {
+	key      string
+	queue    [][]string // argv sets to run after quit; nil when notice holds the screen
+	notice   string
+	exitsTUI bool // whether a clean result should tea.Quit, mirroring the sync path's a.ExitsTUI check
+}

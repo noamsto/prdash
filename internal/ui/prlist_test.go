@@ -368,6 +368,40 @@ func TestHeaderClampsLongFailBadge(t *testing.T) {
 	}
 }
 
+// TestSwitchNoticeClipsToScreen guards against the notice shearing the
+// terminal: a long .worktrees/... path plus a long warnings list must not
+// push any rendered line past the model's width or the block past its height.
+func TestSwitchNoticeClipsToScreen(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.SetRepo("r")
+	m.width, m.height = 30, 10
+	m.switchNotice = "path: /home/user/.worktrees/owner/some-very-long-repo-name/feat-123-a-much-longer-branch-name-than-fits\n" +
+		"occupied by branch: eng-8237-4-table-and-multi-property-name\n\n" +
+		"worktrunk remedy: git -C '/home/user/.worktrees/owner/some-very-long-repo-name/feat-123-a-much-longer-branch-name-than-fits' switch -- 'feature'\n\n" +
+		"Safety warnings:\n• rebase-merge in progress\n• unresolved conflicts\n• detached HEAD\n• diverges from PR head (ahead 3, behind 12)"
+
+	out := m.renderInner()
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("rendered line width = %d, want <= model width %d: %q", w, m.width, line)
+		}
+	}
+	if h := lipgloss.Height(out); h > m.height {
+		t.Fatalf("rendered height = %d, want <= model height %d:\n%s", h, m.height, out)
+	}
+}
+
+// TestSwitchNoticeUnsizedModelStillRenders guards the m.width>0/m.height>0
+// clipping guard: an unsized model must not make the notice vanish entirely.
+func TestSwitchNoticeUnsizedModelStillRenders(t *testing.T) {
+	m := NewModel("/repo", "", nil)
+	m.switchNotice = "path: /occupied\noccupied by branch: tmp4"
+
+	if out := m.renderInner(); !strings.Contains(out, "Cannot switch worktree") {
+		t.Fatalf("unsized model dropped the notice entirely: %q", out)
+	}
+}
+
 func TestDraftsToggleHighlightedInBar(t *testing.T) {
 	mk := func(hide bool) string {
 		m := NewModel("/repo", "", nil)
