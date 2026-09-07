@@ -111,6 +111,37 @@ func (m *Model) queueExit(key string, argv []string) {
 	m.pendingExec = append(m.pendingExec, argv)
 }
 
+func isWorktreeSwitch(argv []string) bool {
+	return len(argv) >= 2 && argv[0] == "wt" && argv[1] == "switch"
+}
+
+var preflightSwitchFn = gh.PreflightSwitch
+
+func (m *Model) preflightSwitch(argv []string, branch string) bool {
+	if !isWorktreeSwitch(argv) {
+		return true
+	}
+	// Test doubles and callers constructing a model before selecting a repo do
+	// not have a working directory yet; preserve the existing handoff behavior.
+	if _, err := os.Stat(m.dir); err != nil {
+		return true
+	}
+	r, err := preflightSwitchFn(m.dir, branch)
+	if err != nil {
+		m.switchNotice = "Pre-flight could not inspect worktrunk or Git state:\n" + err.Error()
+		return false
+	}
+	if r.Path == "" {
+		return true
+	}
+	body := fmt.Sprintf("path: %s\noccupied by branch: %s\n\nworktrunk remedy: %s", r.Path, r.Occupant, r.Remedy)
+	if len(r.Warnings) > 0 {
+		body += "\n\nSafety warnings:\n• " + strings.Join(r.Warnings, "\n• ")
+	}
+	m.switchNotice = body
+	return false
+}
+
 // runAction executes a single-scope action against the cursor row. exits-tui
 // actions hand off (or queue) the command and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
@@ -124,6 +155,9 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		argv, err := a.ExpandArgv(m.withSwitchRef(v, m.cursor))
 		if err != nil {
 			m.err = err
+			return nil
+		}
+		if !m.preflightSwitch(argv, v.Branch) {
 			return nil
 		}
 		m.queueExit(a.Key, argv)
@@ -505,6 +539,8 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return m.runBulkNative(a)
 	}
 	// The only non-native bulk actions are exits-TUI worktree fan-outs.
+	type queuedAction struct{ argv []string }
+	var queued []queuedAction
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -516,7 +552,13 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 			m.err = err
 			continue
 		}
-		m.queueExit(a.Key, argv)
+		if !m.preflightSwitch(argv, v.Branch) {
+			return nil
+		}
+		queued = append(queued, queuedAction{argv: argv})
+	}
+	for _, item := range queued {
+		m.queueExit(a.Key, item.argv)
 	}
 	if a.ExitsTUI {
 		return tea.Quit

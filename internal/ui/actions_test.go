@@ -28,6 +28,64 @@ func TestRunActionExitsTUIWritesHandoff(t *testing.T) {
 	}
 }
 
+func TestRunActionSwitchCollisionHoldsScreenAndDoesNotQueue(t *testing.T) {
+	old := preflightSwitchFn
+	t.Cleanup(func() { preflightSwitchFn = old })
+	preflightSwitchFn = func(string, string) (gh.SwitchPreflight, error) {
+		return gh.SwitchPreflight{Path: "/occupied", Occupant: "tmp4", Remedy: "cd /occupied && git switch feature"}, nil
+	}
+	m := NewModel(t.TempDir(), "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 7, HeadRefName: "feature"}})
+	a := action.Action{Key: "enter", Command: action.Command{Argv: []string{"wt", "switch", "feature"}}, ExitsTUI: true}
+	if cmd := m.runAction(a); cmd != nil || len(m.PendingExec()) != 0 || !strings.Contains(m.switchNotice, "/occupied") {
+		t.Fatalf("collision action: cmd=%v pending=%v notice=%q", cmd, m.PendingExec(), m.switchNotice)
+	}
+}
+
+func TestRunBulkSwitchCollisionDoesNotWriteHandoff(t *testing.T) {
+	oldFn := preflightSwitchFn
+	t.Cleanup(func() { preflightSwitchFn = oldFn })
+	var gotBranch string
+	preflightSwitchFn = func(_ string, branch string) (gh.SwitchPreflight, error) {
+		gotBranch = branch
+		return gh.SwitchPreflight{Path: "/occupied", Occupant: "tmp4", Remedy: "cd /occupied && git switch feature"}, nil
+	}
+	p := filepath.Join(t.TempDir(), "actions")
+	t.Setenv("PRDASH_ACTION_FILE", p)
+	m := NewModel(t.TempDir(), "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{{Number: 7, HeadRefName: "feature"}, {Number: 9, HeadRefName: "other"}})
+	m.section = sec
+	m.sel.toggle(0)
+	if cmd := m.runBulk(action.Action{Key: "W", Command: action.Command{Argv: []string{"wt", "switch", "{{.HeadRefName}}"}}, ExitsTUI: true, Scope: "per-selected"}); cmd != nil {
+		t.Fatal("collision bulk must stay in TUI")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("handoff written on collision: %v", err)
+	}
+	if gotBranch == "" {
+		t.Fatal("preflight branch was empty")
+	}
+}
+
+func TestRunActionIssueSwitchPreflightUsesBranch(t *testing.T) {
+	old := preflightSwitchFn
+	t.Cleanup(func() { preflightSwitchFn = old })
+	var got string
+	preflightSwitchFn = func(_ string, branch string) (gh.SwitchPreflight, error) {
+		got = branch
+		return gh.SwitchPreflight{Path: "/occupied", Occupant: "tmp4", Remedy: "git switch feat/7"}, nil
+	}
+	m := NewModel(t.TempDir(), "is:open", nil)
+	sec := NewIssueSection("is:open")
+	sec.SetIssues([]gh.Issue{{Number: 7, Title: "Feature"}})
+	m.section = sec
+	a := action.Action{Key: "W", Command: action.Command{Argv: []string{"wt", "switch", "{{.Branch}}"}}, ExitsTUI: true}
+	if cmd := m.runAction(a); cmd != nil || got == "" {
+		t.Fatalf("issue collision: cmd=%v branch=%q", cmd, got)
+	}
+}
+
 func TestConfirmDefaultNoCancels(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	a := action.Action{Key: "m", Confirm: true}

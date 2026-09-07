@@ -122,6 +122,7 @@ type Model struct {
 	members           []gh.User  // cached assignable users for this repo
 	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
+	switchNotice      string     // read-only wt preflight failure; held until a keypress
 	themeMode         string     // "light"|"dark"; active palette mode
 	themeModTime      time.Time  // last-seen mtime of the theme-state file
 }
@@ -2067,6 +2068,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
+		if m.switchNotice != "" {
+			m.switchNotice = ""
+			return m, nil
+		}
 		if m.logView {
 			return m.updateLogView(msg)
 		}
@@ -2438,6 +2443,12 @@ func (m Model) render() string {
 }
 
 func (m Model) renderInner() string {
+	if m.switchNotice != "" {
+		block := lipgloss.JoinVertical(lipgloss.Left,
+			headerStyle.Render("Cannot switch worktree"), "",
+			failStyle.Render(m.switchNotice), "", dimStyle.Render("press any key to return"))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, block)
+	}
 	if m.logView {
 		base := m.logViewRender()
 		if m.showLegend {
