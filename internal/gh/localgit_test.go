@@ -5,20 +5,59 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
+func worktreeList(entries ...worktreeEntry) []byte {
+	var out strings.Builder
+	for _, entry := range entries {
+		fmt.Fprintf(&out, "worktree %s\n", entry.Path)
+		if entry.Branch != "" {
+			fmt.Fprintf(&out, "branch refs/heads/%s\n", entry.Branch)
+		}
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
+}
+
+func TestPreflightSwitchUsesGitWorktreeListOnHappyPath(t *testing.T) {
+	oldCommand := runWorktreeListCommand
+	t.Cleanup(func() { runWorktreeListCommand = oldCommand })
+	var gotDir, gotName string
+	var gotArgs []string
+	runWorktreeListCommand = func(dir, name string, args ...string) ([]byte, error) {
+		gotDir, gotName, gotArgs = dir, name, args
+		return worktreeList(worktreeEntry{Path: "/tmp/repo"}), nil
+	}
+
+	r, err := PreflightSwitch("/tmp/repo", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path != "" {
+		t.Fatalf("preflight = %+v", r)
+	}
+	if gotDir != "/tmp/repo" || gotName != "git" {
+		t.Fatalf("inventory command = %s -C %s, want git -C /tmp/repo", gotName, gotDir)
+	}
+	wantArgs := []string{"-C", "/tmp/repo", "worktree", "list", "--porcelain"}
+	if !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("inventory args = %q, want %q", gotArgs, wantArgs)
+	}
+}
+
 func TestPreflightSwitchFixtureCollisionAndRebase(t *testing.T) {
-	oldList, oldGit := runWtList, gitOutput
-	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	oldList, oldGit := runWorktreeList, gitOutput
+	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	path := filepath.Join(root, "feature")
 	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runWtList = func(string) ([]byte, error) {
-		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q,"working_tree":{"staged":false,"modified":false,"untracked":false},"remote":{"ahead":1,"behind":2}}]`, path)), nil
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "tmp4", Path: path}), nil
 	}
 	gitOutput = func(dir string, args ...string) (string, error) {
 		if len(args) == 2 && args[0] == "rev-parse" {
@@ -26,6 +65,9 @@ func TestPreflightSwitchFixtureCollisionAndRebase(t *testing.T) {
 		}
 		if len(args) > 0 && args[0] == "status" {
 			return "# branch.head (detached)\nu UU 1 2 3 4 5 6 7 8 9", nil
+		}
+		if len(args) > 0 && args[0] == "rev-list" {
+			return "1 2", nil
 		}
 		return "", nil
 	}
@@ -45,9 +87,11 @@ func TestPreflightSwitchFixtureCollisionAndRebase(t *testing.T) {
 }
 
 func TestPreflightSwitchFixtureCleanTarget(t *testing.T) {
-	old := runWtList
-	t.Cleanup(func() { runWtList = old })
-	runWtList = func(string) ([]byte, error) { return []byte(`[{"branch":"feature","path":"/tmp/other"}]`), nil }
+	old := runWorktreeList
+	t.Cleanup(func() { runWorktreeList = old })
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "feature", Path: "/tmp/other"}), nil
+	}
 	r, err := PreflightSwitch("/tmp/repo", "feature")
 	if err != nil {
 		t.Fatal(err)
@@ -57,13 +101,48 @@ func TestPreflightSwitchFixtureCleanTarget(t *testing.T) {
 	}
 }
 
+func TestPreflightSwitchSkipsDivergenceWithoutCollision(t *testing.T) {
+	oldList, oldGit := runWorktreeList, gitOutput
+	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
+	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
+	path := filepath.Join(root, "feature")
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "feature", Path: path}), nil
+	}
+	divergenceCalled := false
+	gitOutput = func(dir string, args ...string) (string, error) {
+		switch args[0] {
+		case "rev-parse":
+			return filepath.Join(path, ".git"), nil
+		case "status":
+			return "# branch.head feature", nil
+		case "rev-list":
+			divergenceCalled = true
+			return "", fmt.Errorf("must not calculate divergence without a collision")
+		default:
+			return "", nil
+		}
+	}
+
+	r, err := PreflightSwitch(filepath.Join(root, "main"), "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Path != "" {
+		t.Fatalf("preflight = %+v", r)
+	}
+	if divergenceCalled {
+		t.Fatal("calculated divergence without a collision")
+	}
+}
+
 func TestPreflightSwitchSlugifiesBranchSeparators(t *testing.T) {
-	old := runWtList
-	t.Cleanup(func() { runWtList = old })
+	old := runWorktreeList
+	t.Cleanup(func() { runWorktreeList = old })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	path := filepath.Join(root, "feat-123-x")
-	runWtList = func(string) ([]byte, error) {
-		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q}]`, path)), nil
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "tmp4", Path: path}), nil
 	}
 	oldGit := gitOutput
 	t.Cleanup(func() { gitOutput = oldGit })
@@ -82,26 +161,30 @@ func TestPreflightSwitchSlugifiesBranchSeparators(t *testing.T) {
 	}
 }
 
-// wt list's branch field reports the rebase target's branch even when HEAD is
-// actually detached mid-rebase with conflicts — this is the exact case the
-// feature exists to catch, so the JSON branch field must never be trusted.
+// A porcelain branch line can report the rebase target while HEAD is detached
+// mid-rebase with conflicts, so occupancy must still come from inspectOccupant.
 func TestPreflightSwitchDetectsDetachedRebaseEvenWhenWtListBranchMatches(t *testing.T) {
-	oldList, oldGit := runWtList, gitOutput
-	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	oldList, oldGit := runWorktreeList, gitOutput
+	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	path := filepath.Join(root, "feature")
 	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runWtList = func(string) ([]byte, error) {
-		return []byte(fmt.Sprintf(`[{"branch":"feature","path":%q}]`, path)), nil
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "feature", Path: path}), nil
 	}
+	var divergenceArgs []string
 	gitOutput = func(dir string, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "rev-parse" {
 			return filepath.Join(path, ".git"), nil
 		}
 		if len(args) > 0 && args[0] == "status" {
 			return "# branch.head (detached)\nu UU 1 2 3 4 5 6 7 8 9", nil
+		}
+		if len(args) > 0 && args[0] == "rev-list" {
+			divergenceArgs = args
+			return "1 2", nil
 		}
 		return "", nil
 	}
@@ -110,13 +193,17 @@ func TestPreflightSwitchDetectsDetachedRebaseEvenWhenWtListBranchMatches(t *test
 		t.Fatal(err)
 	}
 	if r.Path == "" {
-		t.Fatalf("expected a collision even though wt list's branch field matches the target, got %+v", r)
+		t.Fatalf("expected a collision even though the porcelain branch matches the target, got %+v", r)
 	}
 	if r.Occupant != "(detached HEAD)" {
 		t.Errorf("Occupant = %q, want (detached HEAD)", r.Occupant)
 	}
+	wantDivergence := []string{"rev-list", "--left-right", "--count", "feature...feature@{upstream}"}
+	if !slices.Equal(divergenceArgs, wantDivergence) {
+		t.Errorf("divergence args = %q, want %q", divergenceArgs, wantDivergence)
+	}
 	warnings := strings.Join(r.Warnings, " ")
-	for _, want := range []string{"rebase-merge in progress", "unresolved conflicts"} {
+	for _, want := range []string{"rebase-merge in progress", "unresolved conflicts", "diverges from PR head"} {
 		if !strings.Contains(warnings, want) {
 			t.Errorf("warnings %q missing %q", warnings, want)
 		}
@@ -126,11 +213,11 @@ func TestPreflightSwitchDetectsDetachedRebaseEvenWhenWtListBranchMatches(t *test
 // dir here is both the queried repo and the only listed entry's path — the
 // shape of a plain, non-worktrunk checkout with no .worktrees layout anywhere.
 func TestPreflightSwitchNoFalsePositiveWithoutWorktreesLayout(t *testing.T) {
-	old := runWtList
-	t.Cleanup(func() { runWtList = old })
+	old := runWorktreeList
+	t.Cleanup(func() { runWorktreeList = old })
 	dir := filepath.Join(string(filepath.Separator), "tmp", "x", "prdash")
-	runWtList = func(string) ([]byte, error) {
-		return []byte(fmt.Sprintf(`[{"branch":"main","path":%q}]`, dir)), nil
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "main", Path: dir}), nil
 	}
 	r, err := PreflightSwitch(dir, "prdash")
 	if err != nil {
@@ -155,7 +242,7 @@ func TestInspectOccupantReportsIndependentSignals(t *testing.T) {
 		}
 		return "", nil
 	}
-	_, _, warnings := inspectOccupant(dir, "main", 0, 0)
+	_, _, warnings := inspectOccupant(dir, "main")
 	joined := strings.Join(warnings, " ")
 	if !strings.Contains(joined, "staged or uncommitted work") || !strings.Contains(joined, "unresolved conflicts") {
 		t.Fatalf("warnings = %q, want both staged/uncommitted work and unresolved conflicts reported independently", joined)
@@ -170,7 +257,7 @@ func TestInspectOccupantReportsIndependentSignals(t *testing.T) {
 		}
 		return "", nil
 	}
-	_, _, warnings = inspectOccupant(dir, "main", 0, 0)
+	_, _, warnings = inspectOccupant(dir, "main")
 	joined = strings.Join(warnings, " ")
 	if !strings.Contains(joined, "untracked files") {
 		t.Errorf("warnings = %q, want untracked files", joined)
@@ -181,13 +268,13 @@ func TestInspectOccupantReportsIndependentSignals(t *testing.T) {
 }
 
 func TestPreflightSwitchRemedyEscapesShellMetacharacters(t *testing.T) {
-	oldList, oldGit := runWtList, gitOutput
-	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	oldList, oldGit := runWorktreeList, gitOutput
+	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	branch := "feat/`; touch pwned`"
 	path := filepath.Join(root, strings.ReplaceAll(branch, "/", "-"))
-	runWtList = func(string) ([]byte, error) {
-		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q}]`, path)), nil
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "tmp4", Path: path}), nil
 	}
 	gitOutput = func(dir string, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "rev-parse" {
@@ -213,12 +300,12 @@ func TestPreflightSwitchRemedyEscapesShellMetacharacters(t *testing.T) {
 }
 
 func TestPreflightSwitchFailsOpenWhenGitCannotBeInspected(t *testing.T) {
-	oldList, oldGit := runWtList, gitOutput
-	t.Cleanup(func() { runWtList, gitOutput = oldList, oldGit })
+	oldList, oldGit := runWorktreeList, gitOutput
+	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	path := filepath.Join(root, "feature")
-	runWtList = func(string) ([]byte, error) {
-		return []byte(fmt.Sprintf(`[{"branch":"tmp4","path":%q}]`, path)), nil
+	runWorktreeList = func(string) ([]byte, error) {
+		return worktreeList(worktreeEntry{Branch: "tmp4", Path: path}), nil
 	}
 	gitOutput = func(dir string, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "rev-parse" {
