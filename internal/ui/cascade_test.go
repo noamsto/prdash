@@ -170,6 +170,34 @@ func TestBuildCascadePlanGapWithTwoSeedsMakesTwoChainsNoneDropped(t *testing.T) 
 	}
 }
 
+// TestBuildCascadePlanTwoDisjointChainsDropHeldGapBetweenThem is the fix for a
+// silent partial cascade: keying "dropped" on the highest position any chain
+// reached let a gap sitting ABOVE a second, higher seed's own chain escape
+// unreported. Held {1,2,4,5,6} with seeds at 1 and 6 makes two disjoint chains
+// ([1,2] and [6]); #4 and #5 sit between them, held, OPEN and unabsorbed by
+// either walk, and must be reported "not attempted".
+func TestBuildCascadePlanTwoDisjointChainsDropHeldGapBetweenThem(t *testing.T) {
+	shown := []gh.PR{
+		stackedPR(1, 1, 6), stackedPR(1, 2, 6),
+		stackedPR(1, 4, 6), stackedPR(1, 5, 6), stackedPR(1, 6, 6),
+	}
+	seeds := []gh.PR{shown[0], stackedPR(1, 6, 6)}
+	plan := buildCascadePlan(shown, seeds, noState)
+
+	if len(plan.chains) != 2 {
+		t.Fatalf("chains = %d, want 2", len(plan.chains))
+	}
+	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2}) {
+		t.Errorf("first chain = %v, want [1 2]", got)
+	}
+	if got := chainNumbers(plan.chains[1]); !intsEqual(got, []int{6}) {
+		t.Errorf("second chain = %v, want [6]", got)
+	}
+	if !intsEqual(plan.dropped, []int{4, 5}) {
+		t.Errorf("dropped = %v, want [4 5]: held OPEN links between two disjoint chains must not be silently skipped", plan.dropped)
+	}
+}
+
 func TestBuildCascadePlanDedupesRegardlessOfSeedOrder(t *testing.T) {
 	shown := []gh.PR{stackedPR(1, 1, 4), stackedPR(1, 2, 4), stackedPR(1, 3, 4), stackedPR(1, 4, 4)}
 
@@ -513,7 +541,11 @@ func TestCascadeTimesOutOnANeverResolvingSource(t *testing.T) {
 	}
 }
 
-func TestCascadeErroredProbesConsumeBudgetAndTimeOut(t *testing.T) {
+// TestCascadeErroredProbesConsumeBudgetAndFailWithTheUnderlyingError covers
+// Fix 2: a persistent probe error (GitHub down, an auth failure, a rate
+// limit) must not be discarded and reported as a bare "timed out" — that
+// reads as a benign polling timeout and throws away the real cause.
+func TestCascadeErroredProbesConsumeBudgetAndFailWithTheUnderlyingError(t *testing.T) {
 	plan := stackPlan(t, []int{1, 2}, 1, map[int]mergeReading{
 		1: {mergeable: "MERGEABLE", mss: "BEHIND"},
 	})
@@ -527,8 +559,12 @@ func TestCascadeErroredProbesConsumeBudgetAndTimeOut(t *testing.T) {
 	if len(p.probed) != cascadeWaitProbes {
 		t.Errorf("probes = %d, want exactly %d: an errored probe consumes budget", len(p.probed), cascadeWaitProbes)
 	}
-	if err := p.failures()[2]; err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Errorf("#2 failed with %v, want a timeout", err)
+	err := p.failures()[2]
+	if err == nil || !strings.Contains(err.Error(), "api down") {
+		t.Fatalf("#2 failed with %v, want the underlying probe error to survive", err)
+	}
+	if strings.Contains(err.Error(), "timed out") {
+		t.Errorf("#2 failed with %v, want a distinct message from a benign timeout", err)
 	}
 	if !intsEqual(p.mutated, []int{1}) {
 		t.Errorf("mutated = %v, want [1]", p.mutated)
@@ -953,6 +989,48 @@ func TestCascadePanelOverflowGuard(t *testing.T) {
 		if w := lipgloss.Width(line); w > m.width {
 			t.Errorf("line %d is %d cells wide, want <= %d: %q", i, w, m.width, line)
 		}
+	}
+}
+
+// TestCascadePanelClosingBorderSurvivesAShortTerminal covers Fix 5: the old
+// h = len(lines)+4 was never clamped to the terminal, so overlayTop's
+// terminal-sized canvas cropped a too-tall panel from the bottom — taking the
+// closing border with it, leaving a box that looks truncated and
+// undismissable, exactly the "one surface whose entire purpose is not to be
+// silent" the fix targets. TestRenderNeverExceedsHeight would not catch this:
+// the canvas always normalizes to exactly h rows regardless of content, so
+// the assertion has to be that a specific piece of the panel's content — its
+// own closing border — is still present at a small m.height, not merely that
+// the frame height is in bounds.
+//
+// One row short of what this report needs in full is the discriminating
+// height: titledBox always reserves its own trailing row for the closing
+// border, so the clamp trades the dismiss-hint line for it at that exact
+// margin (old code, cropped by the canvas instead, keeps the hint but loses
+// the border there) — the border is the one piece of content genuinely fixed
+// by the clamp, so that is what this test pins.
+func TestCascadePanelClosingBorderSurvivesAShortTerminal(t *testing.T) {
+	report := []string{
+		"updated #1 #2",
+		"failed #3 — has conflicts",
+		"not attempted #4 #5",
+	}
+
+	tall := NewModel("/repo", "is:open", nil)
+	tall.width, tall.height = 40, 30
+	tall.setPRs([]gh.PR{{Number: 1}})
+	tall.cascadeReport = report
+	tallLines := strings.Split(ansi.Strip(tall.cascadePanel()), "\n")
+	wantBorder := tallLines[len(tallLines)-1] // the panel's own closing border row, at ample height
+
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 40, 6 // one row short of the 7 this report needs in full
+	m.setPRs([]gh.PR{{Number: 1}})
+	m.cascadeReport = report
+
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, wantBorder) {
+		t.Fatalf("closing border %q missing from a %d-row terminal:\n%s", wantBorder, m.height, out)
 	}
 }
 

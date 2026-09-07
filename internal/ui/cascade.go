@@ -16,9 +16,8 @@ import (
 // The state is snapshotted at plan time so a backgroundRefresh landing mid-run
 // cannot change what the prompt promised or the run acts on.
 type cascadeLink struct {
-	pr        gh.PR
-	mergeable string
-	mss       string
+	pr  gh.PR
+	mss string
 }
 
 type cascadeChain []cascadeLink
@@ -78,8 +77,8 @@ func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss st
 	}
 
 	link := func(pr gh.PR) cascadeLink {
-		mergeable, mss := state(pr)
-		return cascadeLink{pr: pr, mergeable: mergeable, mss: mss}
+		_, mss := state(pr)
+		return cascadeLink{pr: pr, mss: mss}
 	}
 
 	absorbed := make(map[int]bool)
@@ -152,41 +151,47 @@ func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss st
 		}
 	})
 
-	// top is, per stack, the highest position any chain reached. Cascading
-	// downward is a non-goal, so a held member below top was never a target
-	// and must not be reported as skipped — only positions above top were.
-	top := make(map[int]int)
-	for _, chain := range chains {
-		for _, l := range chain {
-			if l.pr.Stack == nil {
-				continue
-			}
-			if l.pr.StackPosition > top[l.pr.Stack.Number] {
-				top[l.pr.Stack.Number] = l.pr.StackPosition
-			}
+	// minSeed is, per stack, the lowest StackPosition among that stack's own
+	// seeds — not the highest position any chain reached. Two seeds on the
+	// same stack can produce two disjoint chains with a held gap between
+	// them (held {1,2,4,5,6}, seeds 1 and 6 → chains [1,2] and [6]); keying
+	// on "highest position any chain reached" would put the mark at 6 and
+	// miss the held, OPEN, unabsorbed #4 and #5 sitting between the two
+	// chains — a silent partial cascade. A walk only ever goes upward from
+	// its seed, so everything above the lowest seed is in scope for this
+	// run, and anything in scope that no chain absorbed was attempted and
+	// missed, not merely out of range.
+	minSeed := make(map[int]int)
+	for _, seed := range seeds {
+		if seed.Stack == nil {
+			continue
+		}
+		if cur, ok := minSeed[seed.Stack.Number]; !ok || seed.StackPosition < cur {
+			minSeed[seed.Stack.Number] = seed.StackPosition
 		}
 	}
-	stackNums := make([]int, 0, len(top))
-	for n := range top {
+	stackNums := make([]int, 0, len(minSeed))
+	for n := range minSeed {
 		stackNums = append(stackNums, n)
 	}
 	slices.Sort(stackNums)
 
-	// A link above top that is OPEN but unreached is what the run skipped; a
-	// MERGED or CLOSED link there is terminal, not skipped, so it is excluded
-	// the same way a non-OPEN link anywhere else in the walk is.
+	// A link above the lowest seed that is OPEN and unabsorbed is what the run
+	// skipped; a MERGED or CLOSED link there is terminal, not skipped, and an
+	// absorbed one is already accounted for inside a chain.
 	var dropped []int
 	for _, num := range stackNums {
 		positions := byStack[num]
 		posKeys := make([]int, 0, len(positions))
 		for pos := range positions {
-			if pos > top[num] {
+			if pos > minSeed[num] {
 				posKeys = append(posKeys, pos)
 			}
 		}
 		slices.Sort(posKeys)
 		for _, pos := range posKeys {
-			if pr := positions[pos]; pr.State == "OPEN" {
+			pr := positions[pos]
+			if pr.State == "OPEN" && !absorbed[pr.Number] {
 				dropped = append(dropped, pr.Number)
 			}
 		}
@@ -227,10 +232,16 @@ type cascadeRun struct {
 	chain, link int // cursor into plan.chains
 	probes      int // probes spent on the current wait
 
-	// observed* is the (mergeable, mss) the wait saw for the link that is about
-	// to mutate; hasObserved is false when no wait preceded it.
-	observedMergeable, observedMSS string
-	hasObserved                    bool
+	// lastProbeErr is the most recent probe's error for the current wait, so
+	// exhaustion can tell "GitHub genuinely never resolved the state" (nil)
+	// from "the probe itself kept failing" (persistent transport/auth/rate-
+	// limit error) — the latter must not be reported as a bare timeout.
+	lastProbeErr error
+
+	// observedMSS is the mss the wait saw for the link that is about to
+	// mutate; hasObserved is false when no wait preceded it.
+	observedMSS string
+	hasObserved bool
 
 	done    []cascadeOutcome
 	skipped []int // chain tails after a failure, plus plan.dropped
@@ -294,6 +305,7 @@ func (r *cascadeRun) onUpdated(err error) cascadeStep {
 	// the whole probe budget waiting for a base that never moves.
 	r.hasObserved = false
 	r.probes = 0
+	r.lastProbeErr = nil
 	return r.setStep(step)
 }
 
@@ -304,6 +316,7 @@ func (r *cascadeRun) onProbed(mergeable, mss string, err error) cascadeStep {
 	// number still consumes one; a source that only ever errors must end in a
 	// timeout rather than spinning forever.
 	r.probes++
+	r.lastProbeErr = err
 	cur := r.plan.chains[r.chain][r.link].pr
 
 	// A failed probe's mergeable/mss carry no answer, so neither terminal test
@@ -317,12 +330,18 @@ func (r *cascadeRun) onProbed(mergeable, mss string, err error) cascadeStep {
 		}
 		if mss == "BEHIND" && !mergeUnresolved(mergeable) {
 			// GitHub has noticed the moved base and finished recomputing.
-			r.observedMergeable, r.observedMSS = mergeable, mss
+			r.observedMSS = mss
 			r.hasObserved = true
 			return r.setStep(cascadeMutate)
 		}
 	}
 	if r.probes >= cascadeWaitProbes {
+		if r.lastProbeErr != nil {
+			// The wait ended on a probe that itself failed — GitHub down, an
+			// auth failure, a rate limit — which reads nothing like a benign
+			// polling timeout and must not be discarded.
+			return r.failLink(fmt.Errorf("probing PR #%d failed: %w", cur.Number, r.lastProbeErr))
+		}
 		return r.failLink(fmt.Errorf("timed out waiting for PR #%d to update", cur.Number))
 	}
 	return r.setStep(cascadeProbe)
@@ -462,6 +481,12 @@ func (m Model) cascadePanel() string {
 	hint = ansi.Truncate(hint, inner, "")
 
 	body := strings.Join(lines, "\n") + "\n\n" + hint
-	h := len(lines) + 4 // report lines + blank + hint, plus titledBox's 2 border rows
+	// overlayTop composites onto a canvas sized to the terminal, so an
+	// unclamped height in a short terminal silently drops the bottom rows —
+	// the dismiss hint and border included — off a box that still looks like
+	// it should be dismissible. Measured off body itself, like
+	// renderLegendPanes, rather than hand-counted: a hand-count desyncs the
+	// moment body's shape changes.
+	h := min(lipgloss.Height(body)+2, max(2, m.height))
 	return titledBox(body, w, h, "Stack update")
 }

@@ -95,7 +95,8 @@ type fetchSkippedMsg struct{}
 type actionDoneMsg struct {
 	err      error
 	ok, fail string
-	cascade  bool // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+	cascade  bool  // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+	partial  []int // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
 }
 
 // cascadeUpdatedMsg carries one link's UpdateBranch result back to the run.

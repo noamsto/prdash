@@ -1431,17 +1431,22 @@ func (m *Model) cascadeProbeFetchCmd() tea.Cmd {
 // settle's own actionDoneMsg could land on a nil or unrelated status.
 func (m *Model) cascadeSettleCmd() tea.Cmd {
 	r := m.cascade
-	r.stat.partial = r.updated()
+	partial := r.updated()
+	r.stat.partial = partial
 	m.actionStatus = r.stat
 	if r.failed() {
 		m.cascadeReport = r.report()
 	}
-	fail := r.badge()
+	// fail is left "" on a fully successful run — statusBadge only ever reads
+	// it when s.err != nil, but leaving it set unconditionally would plant a
+	// "Stack update failed" string as dead state for the next reader of fail.
+	var fail string
 	var err error
 	if r.errored() {
+		fail = r.badge()
 		err = errors.New(fail)
 	}
-	return func() tea.Msg { return actionDoneMsg{cascade: true, err: err, fail: fail} }
+	return func() tea.Msg { return actionDoneMsg{cascade: true, err: err, fail: fail, partial: partial} }
 }
 
 // InitTheme reads the system theme mode, applies the matching palette, and seeds
@@ -2114,15 +2119,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A partial cascade still landed merge commits and re-triggered CI on the
 		// links that succeeded, even though the run as a whole failed — those
 		// rows need the same invalidation an all-success settle would give them.
-		if msg.err != nil && len(m.actionStatus.partial) > 0 {
-			for _, n := range m.actionStatus.partial {
+		// Read off msg.partial, not m.actionStatus.partial: a message delivered
+		// one Update cycle after this decision can find m.actionStatus replaced
+		// by an unrelated action started in the meantime.
+		if msg.err != nil && len(msg.partial) > 0 {
+			for _, n := range msg.partial {
 				delete(m.fresh, n) // force the detail/summary to revalidate
 			}
 			cmds = append(cmds, m.backgroundRefresh())
 		}
-		if msg.err != nil && len(m.actionStatus.partial) > 0 {
+		if msg.err != nil && len(msg.partial) > 0 {
 			stamp := time.Now()
-			for _, n := range m.actionStatus.partial {
+			for _, n := range msg.partial {
 				m.ciRerun[n] = stamp
 			}
 			cmds = append(cmds, delayedRefreshCmd())
