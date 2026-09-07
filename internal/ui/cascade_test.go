@@ -42,18 +42,6 @@ func chainNumbers(c cascadeChain) []int {
 	return nums
 }
 
-func intsEqual(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestBuildCascadePlanSingleStackFromBottomSeed(t *testing.T) {
 	shown := []gh.PR{stackedPR(1, 1, 4), stackedPR(1, 2, 4), stackedPR(1, 3, 4), stackedPR(1, 4, 4)}
 	plan := buildCascadePlan(shown, []gh.PR{shown[0]}, noState)
@@ -61,7 +49,7 @@ func TestBuildCascadePlanSingleStackFromBottomSeed(t *testing.T) {
 	if len(plan.chains) != 1 {
 		t.Fatalf("chains = %d, want 1", len(plan.chains))
 	}
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2, 3, 4}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2, 3, 4}) {
 		t.Errorf("chain = %v, want [1 2 3 4]", got)
 	}
 	if len(plan.dropped) != 0 {
@@ -76,7 +64,7 @@ func TestBuildCascadePlanMidStackSeedOnlyLinksAbove(t *testing.T) {
 	if len(plan.chains) != 1 {
 		t.Fatalf("chains = %d, want 1", len(plan.chains))
 	}
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{2, 3, 4}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{2, 3, 4}) {
 		t.Errorf("chain = %v, want [2 3 4], seed's walk must not reach below its own position", got)
 	}
 }
@@ -100,10 +88,10 @@ func TestBuildCascadePlanGapDropsUnreachableTail(t *testing.T) {
 	if len(plan.chains) != 1 {
 		t.Fatalf("chains = %d, want 1", len(plan.chains))
 	}
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2}) {
 		t.Errorf("chain = %v, want [1 2]", got)
 	}
-	if !intsEqual(plan.dropped, []int{4, 5}) {
+	if !slices.Equal(plan.dropped, []int{4, 5}) {
 		t.Errorf("dropped = %v, want [4 5]", plan.dropped)
 	}
 }
@@ -115,10 +103,10 @@ func TestBuildCascadePlanMergedLinkAboveGapIsNotDropped(t *testing.T) {
 	}
 	plan := buildCascadePlan(shown, []gh.PR{shown[0]}, noState)
 
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2}) {
 		t.Errorf("chain = %v, want [1 2]", got)
 	}
-	if !intsEqual(plan.dropped, []int{4, 5}) {
+	if !slices.Equal(plan.dropped, []int{4, 5}) {
 		t.Errorf("dropped = %v, want [4 5]: the MERGED link at 3 is terminal, not skipped", plan.dropped)
 	}
 }
@@ -131,10 +119,10 @@ func TestBuildCascadePlanClosedLinkAboveGapIsNotDropped(t *testing.T) {
 
 	plan := buildCascadePlan(shown, []gh.PR{shown[0]}, noState)
 
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2}) {
 		t.Errorf("chain = %v, want [1 2]", got)
 	}
-	if !intsEqual(plan.dropped, []int{5}) {
+	if !slices.Equal(plan.dropped, []int{5}) {
 		t.Errorf("dropped = %v, want [5]: the CLOSED link at 4 is terminal, not skipped", plan.dropped)
 	}
 }
@@ -143,7 +131,7 @@ func TestBuildCascadePlanMidStackSeedDoesNotDropLinksBelowIt(t *testing.T) {
 	shown := []gh.PR{stackedPR(1, 1, 4), stackedPR(1, 2, 4), stackedPR(1, 3, 4), stackedPR(1, 4, 4)}
 	plan := buildCascadePlan(shown, []gh.PR{shown[2]}, noState)
 
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{3, 4}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{3, 4}) {
 		t.Errorf("chain = %v, want [3 4]", got)
 	}
 	if len(plan.dropped) != 0 {
@@ -159,10 +147,10 @@ func TestBuildCascadePlanGapWithTwoSeedsMakesTwoChainsNoneDropped(t *testing.T) 
 	if len(plan.chains) != 2 {
 		t.Fatalf("chains = %d, want 2", len(plan.chains))
 	}
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2}) {
 		t.Errorf("first chain = %v, want [1 2]", got)
 	}
-	if got := chainNumbers(plan.chains[1]); !intsEqual(got, []int{4, 5}) {
+	if got := chainNumbers(plan.chains[1]); !slices.Equal(got, []int{4, 5}) {
 		t.Errorf("second chain = %v, want [4 5]", got)
 	}
 	if len(plan.dropped) != 0 {
@@ -170,12 +158,11 @@ func TestBuildCascadePlanGapWithTwoSeedsMakesTwoChainsNoneDropped(t *testing.T) 
 	}
 }
 
-// TestBuildCascadePlanTwoDisjointChainsDropHeldGapBetweenThem is the fix for a
-// silent partial cascade: keying "dropped" on the highest position any chain
-// reached let a gap sitting ABOVE a second, higher seed's own chain escape
-// unreported. Held {1,2,4,5,6} with seeds at 1 and 6 makes two disjoint chains
-// ([1,2] and [6]); #4 and #5 sit between them, held, OPEN and unabsorbed by
-// either walk, and must be reported "not attempted".
+// Held {1,2,4,5,6} with seeds at 1 and 6 makes two disjoint chains ([1,2] and
+// [6]). #4 and #5 sit between them — held, OPEN and unabsorbed by either walk
+// — so they must be reported "not attempted" rather than silently skipped.
+// Keying the mark on the highest position any chain reached puts it at 6 and
+// loses them.
 func TestBuildCascadePlanTwoDisjointChainsDropHeldGapBetweenThem(t *testing.T) {
 	shown := []gh.PR{
 		stackedPR(1, 1, 6), stackedPR(1, 2, 6),
@@ -187,13 +174,13 @@ func TestBuildCascadePlanTwoDisjointChainsDropHeldGapBetweenThem(t *testing.T) {
 	if len(plan.chains) != 2 {
 		t.Fatalf("chains = %d, want 2", len(plan.chains))
 	}
-	if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2}) {
+	if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2}) {
 		t.Errorf("first chain = %v, want [1 2]", got)
 	}
-	if got := chainNumbers(plan.chains[1]); !intsEqual(got, []int{6}) {
+	if got := chainNumbers(plan.chains[1]); !slices.Equal(got, []int{6}) {
 		t.Errorf("second chain = %v, want [6]", got)
 	}
-	if !intsEqual(plan.dropped, []int{4, 5}) {
+	if !slices.Equal(plan.dropped, []int{4, 5}) {
 		t.Errorf("dropped = %v, want [4 5]: held OPEN links between two disjoint chains must not be silently skipped", plan.dropped)
 	}
 }
@@ -208,7 +195,7 @@ func TestBuildCascadePlanDedupesRegardlessOfSeedOrder(t *testing.T) {
 		if len(plan.chains) != 1 {
 			t.Fatalf("chains = %d, want 1: a higher seed must land in the lower seed's chain, not start its own", len(plan.chains))
 		}
-		if got := chainNumbers(plan.chains[0]); !intsEqual(got, []int{1, 2, 3, 4}) {
+		if got := chainNumbers(plan.chains[0]); !slices.Equal(got, []int{1, 2, 3, 4}) {
 			t.Errorf("chain = %v, want [1 2 3 4]", got)
 		}
 		if len(plan.dropped) != 0 {
@@ -270,7 +257,7 @@ func TestBuildCascadePlanOrdersStacksByNumberNonStackedFirst(t *testing.T) {
 		firstNums = append(firstNums, c[0].pr.Number)
 	}
 	want := []int{nonStackedA.Number, nonStackedB.Number, stackTwo.Number, stackFive.Number}
-	if !intsEqual(firstNums, want) {
+	if !slices.Equal(firstNums, want) {
 		t.Errorf("chain order = %v, want %v (non-stacked in seed order, then ascending Stack.Number)", firstNums, want)
 	}
 }
@@ -428,10 +415,10 @@ func TestCascadeWaitProceedsOnlyAfterTheResolvedProbe(t *testing.T) {
 			t.Fatalf("steps = %v, want %v: #2 must mutate only after the third probe", p.steps, want)
 		}
 	}
-	if !intsEqual(p.mutated, []int{1, 2}) {
+	if !slices.Equal(p.mutated, []int{1, 2}) {
 		t.Errorf("mutated = %v, want [1 2]", p.mutated)
 	}
-	if !intsEqual(p.probed, []int{2, 2, 2}) {
+	if !slices.Equal(p.probed, []int{2, 2, 2}) {
 		t.Errorf("probed = %v, want three probes of #2", p.probed)
 	}
 }
@@ -451,10 +438,10 @@ func TestCascadeCarriesObservedStateForwardAcrossLinks(t *testing.T) {
 
 	p.drive(t)
 
-	if !intsEqual(p.mutated, []int{1, 2, 3}) {
+	if !slices.Equal(p.mutated, []int{1, 2, 3}) {
 		t.Fatalf("mutated = %v, want [1 2 3]", p.mutated)
 	}
-	if !intsEqual(p.probed, []int{2, 3}) {
+	if !slices.Equal(p.probed, []int{2, 3}) {
 		t.Errorf("probed = %v, want [2 3]: #3's wait must be decided from what #2's own wait observed, not #2's CLEAN snapshot", p.probed)
 	}
 }
@@ -469,10 +456,10 @@ func TestCascadeAlreadyBehindNextLinkStillProbesOnce(t *testing.T) {
 
 	p.drive(t)
 
-	if !intsEqual(p.mutated, []int{1, 2}) {
+	if !slices.Equal(p.mutated, []int{1, 2}) {
 		t.Fatalf("mutated = %v, want [1 2]", p.mutated)
 	}
-	if !intsEqual(p.probed, []int{2}) {
+	if !slices.Equal(p.probed, []int{2}) {
 		t.Errorf("probed = %v, want exactly one probe of #2, never zero", p.probed)
 	}
 }
@@ -488,7 +475,7 @@ func TestCascadeSkipsWaitWhenLinkIsResolvedAndNotBehind(t *testing.T) {
 
 			p.drive(t)
 
-			if !intsEqual(p.mutated, []int{1, 2}) {
+			if !slices.Equal(p.mutated, []int{1, 2}) {
 				t.Fatalf("mutated = %v, want [1 2]", p.mutated)
 			}
 			if len(p.probed) != 0 {
@@ -510,10 +497,10 @@ func TestCascadeWaitsWhenLinkStateIsUnresolved(t *testing.T) {
 
 			p.drive(t)
 
-			if !intsEqual(p.probed, []int{2}) {
+			if !slices.Equal(p.probed, []int{2}) {
 				t.Errorf("probed = %v, want one probe: an unresolved link may still move its head", p.probed)
 			}
-			if !intsEqual(p.mutated, []int{1, 2}) {
+			if !slices.Equal(p.mutated, []int{1, 2}) {
 				t.Errorf("mutated = %v, want [1 2]", p.mutated)
 			}
 		})
@@ -528,7 +515,7 @@ func TestCascadeTimesOutOnANeverResolvingSource(t *testing.T) {
 
 	p.drive(t)
 
-	if !intsEqual(p.mutated, []int{1}) {
+	if !slices.Equal(p.mutated, []int{1}) {
 		t.Fatalf("mutated = %v, want [1]: #2 must never mutate after a timeout", p.mutated)
 	}
 	if len(p.probed) != cascadeWaitProbes {
@@ -541,10 +528,9 @@ func TestCascadeTimesOutOnANeverResolvingSource(t *testing.T) {
 	}
 }
 
-// TestCascadeErroredProbesConsumeBudgetAndFailWithTheUnderlyingError covers
-// Fix 2: a persistent probe error (GitHub down, an auth failure, a rate
-// limit) must not be discarded and reported as a bare "timed out" — that
-// reads as a benign polling timeout and throws away the real cause.
+// A persistent probe error (GitHub down, an auth failure, a rate limit) must
+// not be reported as a bare "timed out": that reads as a benign polling
+// timeout and throws the real cause away.
 func TestCascadeErroredProbesConsumeBudgetAndFailWithTheUnderlyingError(t *testing.T) {
 	plan := stackPlan(t, []int{1, 2}, 1, map[int]mergeReading{
 		1: {mergeable: "MERGEABLE", mss: "BEHIND"},
@@ -566,7 +552,7 @@ func TestCascadeErroredProbesConsumeBudgetAndFailWithTheUnderlyingError(t *testi
 	if strings.Contains(err.Error(), "timed out") {
 		t.Errorf("#2 failed with %v, want a distinct message from a benign timeout", err)
 	}
-	if !intsEqual(p.mutated, []int{1}) {
+	if !slices.Equal(p.mutated, []int{1}) {
 		t.Errorf("mutated = %v, want [1]", p.mutated)
 	}
 }
@@ -589,7 +575,7 @@ func TestCascadeConflictFailsTheLinkWithoutMutating(t *testing.T) {
 
 			p.drive(t)
 
-			if !intsEqual(p.mutated, []int{1}) {
+			if !slices.Equal(p.mutated, []int{1}) {
 				t.Fatalf("mutated = %v, want [1]: a conflict is terminal, so no mutation is sent", p.mutated)
 			}
 			if len(p.probed) != 1 {
@@ -622,10 +608,10 @@ func TestCascadeFailureStopsOnlyItsOwnChain(t *testing.T) {
 
 	p.drive(t)
 
-	if !intsEqual(p.mutated, []int{1, 20, 21}) {
+	if !slices.Equal(p.mutated, []int{1, 20, 21}) {
 		t.Fatalf("mutated = %v, want [1 20 21]: chain 1's failure must not stop chain 2", p.mutated)
 	}
-	if !intsEqual(p.run.skipped, []int{2, 3}) {
+	if !slices.Equal(p.run.skipped, []int{2, 3}) {
 		t.Errorf("skipped = %v, want [2 3]: only the failed chain's tail", p.run.skipped)
 	}
 	if p.failures()[1] == nil {
@@ -657,10 +643,10 @@ func TestCascadeObservedStateDoesNotLeakAcrossChains(t *testing.T) {
 
 	p.drive(t)
 
-	if !intsEqual(p.mutated, []int{1, 2, 20, 21}) {
+	if !slices.Equal(p.mutated, []int{1, 2, 20, 21}) {
 		t.Fatalf("mutated = %v, want [1 2 20 21]", p.mutated)
 	}
-	if !intsEqual(p.probed, []int{2}) {
+	if !slices.Equal(p.probed, []int{2}) {
 		t.Errorf("probed = %v, want only [2]: chain 2 must issue zero probes", p.probed)
 	}
 	if len(p.failures()) != 0 {
@@ -688,7 +674,7 @@ func TestCascadeProbeBudgetResetsForTheNextChain(t *testing.T) {
 
 	p.drive(t)
 
-	if !intsEqual(p.mutated, []int{1, 20, 21}) {
+	if !slices.Equal(p.mutated, []int{1, 20, 21}) {
 		t.Fatalf("mutated = %v, want [1 20 21]", p.mutated)
 	}
 	if got := len(p.probed); got != cascadeWaitProbes+1 {
@@ -728,7 +714,7 @@ func TestCascadeReportGroupsUpdatedFailedAndNotAttempted(t *testing.T) {
 	if !p.run.failed() {
 		t.Error("failed() = false, want true")
 	}
-	if !intsEqual(p.run.updated(), []int{20, 21}) {
+	if !slices.Equal(p.run.updated(), []int{20, 21}) {
 		t.Errorf("updated() = %v, want [20 21]", p.run.updated())
 	}
 	want := []string{
@@ -766,7 +752,7 @@ func TestCascadeReportFullSuccessHasNoLines(t *testing.T) {
 	}
 }
 
-// A gapped stack (C2) that updates every link it reaches fails at nothing —
+// A gapped stack that updates every link it reaches fails at nothing —
 // errored() is false — but its dropped tail still must not go unreported.
 func TestCascadeReportNotAttemptedOnlyForGappedStack(t *testing.T) {
 	shown := []gh.PR{stackedPR(1, 1, 5), stackedPR(1, 2, 5), stackedPR(1, 4, 5), stackedPR(1, 5, 5)}
@@ -943,7 +929,7 @@ func TestCascadePanelHiddenWhenReportEmpty(t *testing.T) {
 }
 
 // A pending confirm is a surface the user opened; it must win over a report
-// that hasn't been dismissed yet (C8's precedence).
+// that hasn't been dismissed yet.
 func TestCascadePanelPendingLosesToConfirm(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 100, 30
@@ -992,23 +978,14 @@ func TestCascadePanelOverflowGuard(t *testing.T) {
 	}
 }
 
-// TestCascadePanelClosingBorderSurvivesAShortTerminal covers Fix 5: the old
-// h = len(lines)+4 was never clamped to the terminal, so overlayTop's
-// terminal-sized canvas cropped a too-tall panel from the bottom — taking the
-// closing border with it, leaving a box that looks truncated and
-// undismissable, exactly the "one surface whose entire purpose is not to be
-// silent" the fix targets. TestRenderNeverExceedsHeight would not catch this:
-// the canvas always normalizes to exactly h rows regardless of content, so
-// the assertion has to be that a specific piece of the panel's content — its
-// own closing border — is still present at a small m.height, not merely that
-// the frame height is in bounds.
-//
-// One row short of what this report needs in full is the discriminating
-// height: titledBox always reserves its own trailing row for the closing
-// border, so the clamp trades the dismiss-hint line for it at that exact
-// margin (old code, cropped by the canvas instead, keeps the hint but loses
-// the border there) — the border is the one piece of content genuinely fixed
-// by the clamp, so that is what this test pins.
+// A frame-height assertion cannot catch an unclamped panel: overlayTop's
+// canvas always normalizes to exactly m.height rows whatever the panel does,
+// so this has to assert that a specific piece of the panel's own content
+// survives. The closing border is that piece. One row short of the report's
+// full height is the discriminating margin — titledBox always reserves its
+// trailing border row, so at that exact height the panel keeps the border and
+// drops the dismiss hint, while an unclamped one keeps the hint and loses the
+// border to the canvas crop.
 func TestCascadePanelClosingBorderSurvivesAShortTerminal(t *testing.T) {
 	report := []string{
 		"updated #1 #2",
@@ -1162,7 +1139,7 @@ func TestCascadeMidChainFailureSettlesPartialWithRefreshAndCIRerun(t *testing.T)
 	if !slices.Equal(mut.updateBranchCalls, []string{"n1"}) {
 		t.Fatalf("updateBranchCalls = %v, want [n1] only: #2's empty id must short-circuit, #3 must never fire", mut.updateBranchCalls)
 	}
-	if !intsEqual(m.actionStatus.partial, []int{1}) {
+	if !slices.Equal(m.actionStatus.partial, []int{1}) {
 		t.Fatalf("actionStatus.partial = %v, want [1]", m.actionStatus.partial)
 	}
 	if _, ok := m.ciRerun[1]; !ok {
@@ -1445,7 +1422,7 @@ func TestCascadeUOnMergedBoardNonStackedContinuesPastFailure(t *testing.T) {
 }
 
 // TestPerSelectedKeysOnStackedPRDoNotCascade covers AC 6: only update-branch
-// builds a cascade plan (C1). A stacked PR pressed with any other
+// builds a cascade plan . A stacked PR pressed with any other
 // per-selected key must behave exactly as it does on a non-stacked one — no
 // update-branch prompt, no live run.
 func TestPerSelectedKeysOnStackedPRDoNotCascade(t *testing.T) {

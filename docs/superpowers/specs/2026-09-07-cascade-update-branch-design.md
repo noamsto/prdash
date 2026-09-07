@@ -1,10 +1,5 @@
 # Spec — cascade `update-branch` up a stacked PR (#118)
 
-Revision 3. Revision 1 drew ten blocking findings, revision 2 seven more; both
-rounds are folded in. Two of revision 2's findings collapsed design, rather than
-adding to it: the wait is now one condition instead of two phases, and the
-`prs`-vs-`shown` question turned out not to exist.
-
 ## Problem
 
 `u` (`action.DefaultPRActions()["u"]`, `Scope: "per-selected"`, `Confirm: false`
@@ -111,9 +106,9 @@ stack chains by ascending `Stack.Number` — and links within a chain by ascendi
 
 ### C3 — scope: the shown set
 
-Expansion reads the **shown** set, via `prAt`. Revision 2 argued for the full
-held set on the grounds that a filter could hide a link mid-chain; that case does
-not exist. `setShownOrdered` runs `expandStackMembers` on every shown-set
+Expansion reads the **shown** set, via `prAt`. Reading the full held set
+instead would only matter if a filter could hide a link mid-chain, and that case
+does not exist. `setShownOrdered` runs `expandStackMembers` on every shown-set
 computation — "a stack is a display unit, so matching any link shows every link
 the section holds" (`internal/ui/section.go:297`, `323`) — `applyFilter` is its
 only producer (`prlist.go:833`), and `hideDrafts` explicitly exempts stack
@@ -165,12 +160,13 @@ into four dispatch sites buys nothing for the packaged keymap.
 
 ### C5 — the between-link wait
 
-Revision 1 polled "until the next link's `Mergeable` resolves", which is a
+The obvious wait — poll "until the next link's `Mergeable` resolves" — is a
 no-op: a link's pre-update state is normally already resolved
 (`mergeStateResolved` is `v != "" && v != "UNKNOWN"`, `preview.go:550`), so the
-first probe returns "resolved" on stale data. Revision 2's two-phase version
-still could not tell "GitHub hasn't started recomputing" from "there is nothing
-to recompute", and resolved the ambiguity by proceeding — a swallowed timeout.
+first probe returns "resolved" on stale data. Watching instead for an
+invalidate-then-resolve cycle cannot tell "GitHub hasn't started recomputing"
+from "there is nothing to recompute", and resolving that ambiguity by proceeding
+is a swallowed timeout.
 
 The predicate that removes the ambiguity is **link *i*'s own pre-update
 `MergeStateStatus`**, which both `gh.PR` (`prs.go:91`) and `gh.PRDetail`
@@ -343,7 +339,7 @@ The settled badge cannot carry a per-PR report: `statusBadge` renders
 **head** (`section.go:1072`), so any tail — precisely the updated and
 not-attempted lists — is what gets cut, and `clearStatusCmd` wipes it after 3s.
 
-Revision 2 put the report in `statusBar()`. That surface does not exist in the
+`statusBar()` is not a usable surface for it, because it does not exist in the
 default layout: `board()` reaches `statusBar` in only two of its five paths, and
 the common wide+tall geometry (`ShowSide && ShowPanel`) returns `renderDocked`
 (`prlist.go:2566`), which stacks bar/list/panel and never calls it
@@ -440,10 +436,10 @@ verbatim-error badge, no overlay.
 8. `go build ./...`, `go vet ./...`, `go test ./...`, `golangci-lint run`,
    `treefmt` all pass; their real output goes in the PR body.
 
-## Escalated
+## Deliberate deviations
 
-Two deliberate deviations from the task doc, surfaced rather than left for
-review to discover. Both are the requester's call to accept or reverse.
+Two departures from the issue's wording, recorded here rather than left for a
+reader to discover. Both are the maintainer's call to accept or reverse.
 
 1. **The checks-poll half of the reuse constraint is declined.** The task asks
    to "reuse the existing `mergeUnresolved` / checks-polling machinery rather

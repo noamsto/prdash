@@ -31,7 +31,7 @@ type cascadePlan struct {
 }
 
 // cascades reports whether any chain has more than one link — the trigger for
-// the confirm prompt (C4). nil-safe so a *cascadePlan can be carried through
+// the confirm prompt. nil-safe so a *cascadePlan can be carried through
 // the no-cascade path with no separate guard.
 func (p *cascadePlan) cascades() bool {
 	if p == nil {
@@ -59,7 +59,7 @@ func (p *cascadePlan) count() int {
 }
 
 // buildCascadePlan walks each seed's stack upward from its own position,
-// stopping at the first position absent from shown or not OPEN (C2). A walk
+// stopping at the first position absent from shown or not OPEN. A walk
 // that reaches another seed absorbs it into the same chain rather than
 // starting a second one — dedupe by PR.Number across the whole plan.
 func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss string)) *cascadePlan {
@@ -418,7 +418,7 @@ func (r *cascadeRun) updated() []int {
 // updated / failed / not-attempted order. A failed link's own error text is
 // folded into the failed line so a distinct conflict or timeout on each
 // chain stays visible even though the group is a single line. A run that
-// didn't fail has nothing to report — the overlay never opens for it (C8),
+// didn't fail has nothing to report — the overlay never opens for it,
 // so a fully-successful run's "updated" numbers stay on the badge alone.
 func (r *cascadeRun) report() []string {
 	if !r.failed() {
@@ -457,7 +457,7 @@ func numList(nums []int) string {
 	return strings.Join(parts, " ")
 }
 
-// cascadePanel is the dismissible report overlay for a settled cascade (C8).
+// cascadePanel is the dismissible report overlay for a settled cascade.
 // It is only ever built while m.cascadeReport is non-empty, which run.report()
 // only sets for a run that failed or left links unattempted — a clean run
 // never reaches this.

@@ -1,7 +1,5 @@
 # Plan — cascade `update-branch` up a stacked PR (#118)
 
-Revision 2 — folds in the plan-critic's seven blocking findings.
-
 Spec: `docs/superpowers/specs/2026-09-07-cascade-update-branch-design.md`
 (sections C1–C8). Issue: #118.
 
@@ -240,8 +238,7 @@ outcomes, with no clock and no sleeping.
 - [ ] **Step 4: model state and settle integration**
 
   `internal/ui/prlist.go` — `Model` gains both fields **here**, before anything
-  references them (they were declared a step too late in revision 1, which left
-  Step 4 unbuildable):
+  references them — declaring them any later leaves this step unbuildable:
 
   ```go
   cascade        *cascadeRun   // live cascade run; nil when none
@@ -497,22 +494,3 @@ No `MutationSource`/`DetailSource` change; no cascading downward; no bridging a
 gap in held positions; no change to `merge`/`approve`/`auto-merge`; no new
 keybinding; no cascade from a user-reconfigured `Scope: "single"` `u`.
 
-## Revision-cap note
-
-The plan reached the 2-revision cap on a `revise` verdict, not an `accept`. The
-critic's own assessment was that both remaining findings were mechanical and
-that the plan's structure, decomposition and AC coverage were sound — not
-grounds for rejection. Both were applied in place rather than carried into
-execution:
-
-1. **Step 5 consumed message types Step 6 declared** — the three `cascade*Msg`
-   declarations moved into Step 4 (which already edits `messages.go`), and the
-   previously-unbound `mutateCmd` is now a named `cascadeMutateCmd` that Step 5
-   defines.
-2. **The re-entrancy guard missed seven `m.actionStatus` setters** in
-   `expanded.go`/`logview.go`, giving a reachable nil deref, a permanent
-   native-mutation brick, and a refresh over the wrong `nums` — fixed by giving
-   `cascadeRun` ownership of its own `*actionStat`.
-
-Both are recorded in the PR body under `## Escalated` so review sees that this
-plan was executed off a `revise`, with the fixes disclosed.

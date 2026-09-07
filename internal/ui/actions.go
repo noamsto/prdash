@@ -481,7 +481,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 
 	// A cascade plan is built only for update-branch on the PR board with a wait
 	// mechanism available; otherwise it is nil'd so an earlier press's plan can
-	// never be read by an unrelated later prompt (C1/C4).
+	// never be read by an unrelated later prompt.
 	ps, isPR := m.section.(*PRSection)
 	if a.Command.Native == "update-branch" && isPR && m.detailSource != nil {
 		m.pendingCascade = m.buildCascadePlan(ps)

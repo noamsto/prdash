@@ -1408,7 +1408,7 @@ func (m *Model) cascadeDispatch(step cascadeStep) tea.Cmd {
 }
 
 // cascadeProbeFetchCmd fires the beat's single FetchDetails call. It never
-// returns fetchFailedMsg (C5): that path blanks the board when the list is
+// returns fetchFailedMsg : that path blanks the board when the list is
 // empty, which would be wrong mid-run — a probe error is budget spent, not a
 // fatal fetch.
 func (m *Model) cascadeProbeFetchCmd() tea.Cmd {
@@ -2138,7 +2138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case cascadeUpdatedMsg:
 		if m.cascade == nil {
-			return m, nil // a beat already in flight when the settle cleared the run (C6)
+			return m, nil // a beat already in flight when the settle cleared the run
 		}
 		return m, m.cascadeDispatch(m.cascade.onUpdated(msg.err))
 	case cascadeProbeMsg:
@@ -2159,7 +2159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the plan-time snapshot's (commonly already-resolved) Mergeable and
 			// only take MergeStateStatus from the fresh read, so a snapshot of
 			// (MERGEABLE, BEHIND) reads as "settled" on the very first beat and
-			// the wait this whole mechanism exists for never happens (C5).
+			// the wait this whole mechanism exists for never happens.
 			mergeable, mss = msg.detail.Mergeable, msg.detail.MergeStateStatus
 			m.detail[msg.number] = msg.detail
 			m.fresh[msg.number] = true
