@@ -2602,6 +2602,19 @@ func (m Model) renderInner() string {
 		block := lipgloss.JoinVertical(lipgloss.Left,
 			headerStyle.Render("Cannot switch worktree"), "",
 			failStyle.Render(body), "", dimStyle.Render("press any key to return"))
+		if m.width > 0 && m.height > 0 {
+			// The chrome around body (header/spacers/footer) is fixed-size and
+			// was never clipped, so at m.height<=4 the block still overflows
+			// even with body capped above. lipgloss.Place is a no-op past its
+			// bounds, so clip the whole block here: ansi.Truncate per line (the
+			// chrome is already styled; plain truncate would slice an escape
+			// code), then clipLines for height.
+			blockLines := strings.Split(block, "\n")
+			for i, l := range blockLines {
+				blockLines[i] = ansi.Truncate(l, m.width, "")
+			}
+			block = clipLines(strings.Join(blockLines, "\n"), m.height)
+		}
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, block)
 	}
 	if m.logView {

@@ -391,6 +391,64 @@ func TestSwitchNoticeClipsToScreen(t *testing.T) {
 	}
 }
 
+// TestSwitchNoticeClipsChromeAtSmallSizes guards the fixed chrome around the
+// notice — the "Cannot switch worktree" header (22 cells) and the spacers and
+// footer lipgloss.JoinVertical always adds — not just the body: below a
+// 23-cell width or 5-row height the complete block, chrome included, must
+// still fit m.width x m.height. Before this fix only the body was clipped, so
+// lipgloss.Place (a no-op once its content already exceeds the requested
+// bounds) let the oversized block shear the screen at exactly these sizes.
+func TestSwitchNoticeClipsChromeAtSmallSizes(t *testing.T) {
+	notice := "path: /home/user/.worktrees/owner/some-very-long-repo-name/feat-123-a-much-longer-branch-name-than-fits\n" +
+		"occupied by branch: eng-8237-4-table-and-multi-property-name\n\n" +
+		"worktrunk remedy: git -C '/home/user/.worktrees/owner/some-very-long-repo-name/feat-123-a-much-longer-branch-name-than-fits' switch -- 'feature'\n\n" +
+		"Safety warnings:\n• rebase-merge in progress\n• unresolved conflicts\n• detached HEAD"
+
+	for _, size := range []struct{ w, h int }{
+		{22, 10}, // width == len("Cannot switch worktree"), the boundary the finding names
+		{10, 4},  // height at the boundary the finding names
+		{5, 4},
+		{1, 1}, // degenerate but still positive in both dimensions
+	} {
+		m := NewModel("/repo", "", nil)
+		m.SetRepo("r")
+		m.width, m.height = size.w, size.h
+		m.switchNotice = notice
+
+		out := m.renderInner()
+		for _, line := range strings.Split(out, "\n") {
+			if w := lipgloss.Width(line); w > m.width {
+				t.Fatalf("size %dx%d: rendered line width = %d, want <= %d: %q", size.w, size.h, w, m.width, line)
+			}
+		}
+		if h := lipgloss.Height(out); h > m.height {
+			t.Fatalf("size %dx%d: rendered height = %d, want <= %d:\n%s", size.w, size.h, h, m.height, out)
+		}
+	}
+}
+
+// TestSwitchNoticeZeroDimensionDoesNotPanic guards the degenerate case a real
+// zero-width or zero-height WindowSizeMsg would produce: rendering must not
+// index out of range, even though the m.width>0 && m.height>0 clipping guard
+// means the block itself stays unclipped (same as an unsized model).
+func TestSwitchNoticeZeroDimensionDoesNotPanic(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{0, 10}, {10, 0}, {0, 0}} {
+		m := NewModel("/repo", "", nil)
+		m.SetRepo("r")
+		m.width, m.height = size.w, size.h
+		m.switchNotice = "path: /occupied\noccupied by branch: tmp4"
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("size %dx%d: renderInner panicked: %v", size.w, size.h, r)
+				}
+			}()
+			m.renderInner()
+		}()
+	}
+}
+
 // TestSwitchNoticeUnsizedModelStillRenders guards the m.width>0/m.height>0
 // clipping guard: an unsized model must not make the notice vanish entirely.
 func TestSwitchNoticeUnsizedModelStillRenders(t *testing.T) {
