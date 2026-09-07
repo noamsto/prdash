@@ -8,9 +8,29 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 )
+
+// firstBatchMsg runs cmd and, when it's a tea.Batch of multiple commands,
+// returns just the first sub-cmd's message — this package's convention for
+// tea.Batch(work, startSpinner()) always puts the async work first.
+func firstBatchMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("firstBatchMsg: cmd is nil")
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		if len(batch) == 0 {
+			t.Fatal("firstBatchMsg: empty batch")
+		}
+		return batch[0]()
+	}
+	return msg
+}
 
 func TestRunActionExitsTUIWritesHandoff(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "actions")
@@ -37,8 +57,20 @@ func TestRunActionSwitchCollisionHoldsScreenAndDoesNotQueue(t *testing.T) {
 	m := NewModel(t.TempDir(), "is:open", nil)
 	m.setPRs([]gh.PR{{Number: 7, HeadRefName: "feature"}})
 	a := action.Action{Key: "enter", Command: action.Command{Argv: []string{"wt", "switch", "feature"}}, ExitsTUI: true}
-	if cmd := m.runAction(a); cmd != nil || len(m.PendingExec()) != 0 || !strings.Contains(m.switchNotice, "/occupied") {
-		t.Fatalf("collision action: cmd=%v pending=%v notice=%q", cmd, m.PendingExec(), m.switchNotice)
+	cmd := m.runAction(a)
+	if cmd == nil {
+		t.Fatal("worktree switch must dispatch async, not nil")
+	}
+	// The check must have actually left the Update goroutine: nothing is
+	// decided synchronously yet.
+	if len(m.PendingExec()) != 0 || m.switchNotice != "" {
+		t.Fatalf("preflight ran synchronously: pending=%v notice=%q", m.PendingExec(), m.switchNotice)
+	}
+	msg := firstBatchMsg(t, cmd)
+	u, _ := m.Update(msg)
+	m = u.(Model)
+	if len(m.PendingExec()) != 0 || !strings.Contains(m.switchNotice, "/occupied") {
+		t.Fatalf("collision action: pending=%v notice=%q", m.PendingExec(), m.switchNotice)
 	}
 }
 
@@ -57,11 +89,18 @@ func TestRunBulkSwitchCollisionDoesNotWriteHandoff(t *testing.T) {
 	sec.SetPRs([]gh.PR{{Number: 7, HeadRefName: "feature"}, {Number: 9, HeadRefName: "other"}})
 	m.section = sec
 	m.sel.toggle(0)
-	if cmd := m.runBulk(action.Action{Key: "W", Command: action.Command{Argv: []string{"wt", "switch", "{{.HeadRefName}}"}}, ExitsTUI: true, Scope: "per-selected"}); cmd != nil {
-		t.Fatal("collision bulk must stay in TUI")
+	cmd := m.runBulk(action.Action{Key: "W", Command: action.Command{Argv: []string{"wt", "switch", "{{.HeadRefName}}"}}, ExitsTUI: true, Scope: "per-selected"})
+	if cmd == nil {
+		t.Fatal("worktree switch must dispatch async, not nil")
 	}
+	msg := firstBatchMsg(t, cmd)
+	u, _ := m.Update(msg)
+	m = u.(Model)
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatalf("handoff written on collision: %v", err)
+	}
+	if !strings.Contains(m.switchNotice, "/occupied") {
+		t.Fatalf("collision bulk must stay in TUI: notice=%q", m.switchNotice)
 	}
 	if gotBranch == "" {
 		t.Fatal("preflight branch was empty")
@@ -81,8 +120,72 @@ func TestRunActionIssueSwitchPreflightUsesBranch(t *testing.T) {
 	sec.SetIssues([]gh.Issue{{Number: 7, Title: "Feature"}})
 	m.section = sec
 	a := action.Action{Key: "W", Command: action.Command{Argv: []string{"wt", "switch", "{{.Branch}}"}}, ExitsTUI: true}
-	if cmd := m.runAction(a); cmd != nil || got == "" {
-		t.Fatalf("issue collision: cmd=%v branch=%q", cmd, got)
+	cmd := m.runAction(a)
+	if cmd == nil {
+		t.Fatal("worktree switch must dispatch async, not nil")
+	}
+	firstBatchMsg(t, cmd) // drives preflightSwitchFn so `got` is populated
+	if got == "" {
+		t.Fatalf("issue collision: branch=%q", got)
+	}
+}
+
+func TestRunBulkCollisionNoticeSaysNoSwitchesQueued(t *testing.T) {
+	old := preflightSwitchFn
+	t.Cleanup(func() { preflightSwitchFn = old })
+	calls := 0
+	preflightSwitchFn = func(string, string) (gh.SwitchPreflight, error) {
+		calls++
+		// Every row collides, regardless of which section row the fan-out
+		// visits first — the point of this test is the wording, not ordering.
+		return gh.SwitchPreflight{Path: "/occupied", Occupant: "tmp4", Remedy: "git -C '/occupied' switch -- 'blocked'"}, nil
+	}
+	m := NewModel(t.TempDir(), "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{{Number: 7, HeadRefName: "clean"}, {Number: 9, HeadRefName: "blocked"}})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+	cmd := m.runBulk(action.Action{Key: "W", Command: action.Command{Argv: []string{"wt", "switch", "{{.HeadRefName}}"}}, ExitsTUI: true, Scope: "per-selected"})
+	if cmd == nil {
+		t.Fatal("worktree switch must dispatch async, not nil")
+	}
+	msg := firstBatchMsg(t, cmd)
+	u, _ := m.Update(msg)
+	m = u.(Model)
+	if !strings.Contains(m.switchNotice, "No switches were queued") {
+		t.Fatalf("bulk collision notice missing fail-closed wording: %q", m.switchNotice)
+	}
+	if !strings.Contains(m.switchNotice, "Row 1 of 2 blocked") {
+		t.Fatalf("bulk collision notice missing which row blocked: %q", m.switchNotice)
+	}
+	if len(m.PendingExec()) != 0 {
+		t.Fatalf("no switches should be queued on a bulk collision, got %v", m.PendingExec())
+	}
+}
+
+func TestRunActionSwitchCheckingGuardsAgainstDoubleDispatch(t *testing.T) {
+	old := preflightSwitchFn
+	t.Cleanup(func() { preflightSwitchFn = old })
+	calls := 0
+	preflightSwitchFn = func(string, string) (gh.SwitchPreflight, error) {
+		calls++
+		return gh.SwitchPreflight{}, nil
+	}
+	m := NewModel(t.TempDir(), "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 7, HeadRefName: "feature"}})
+	a := action.Action{Key: "enter", Command: action.Command{Argv: []string{"wt", "switch", "feature"}}, ExitsTUI: true}
+
+	first := m.runAction(a)
+	if first == nil {
+		t.Fatal("first dispatch must return a cmd")
+	}
+	if second := m.runAction(a); second != nil {
+		t.Fatal("a second dispatch while one is in flight must be a no-op")
+	}
+	firstBatchMsg(t, first)
+	if calls != 1 {
+		t.Fatalf("preflightSwitchFn called %d times, want exactly 1", calls)
 	}
 }
 

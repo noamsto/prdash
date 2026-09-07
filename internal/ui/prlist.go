@@ -123,6 +123,7 @@ type Model struct {
 	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
 	switchNotice      string     // read-only wt preflight failure; held until a keypress
+	switchChecking    bool       // a switchPreflightCmd is in flight; blocks a second dispatch
 	themeMode         string     // "light"|"dark"; active palette mode
 	themeModTime      time.Time  // last-seen mtime of the theme-state file
 }
@@ -1943,7 +1944,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		return m, tea.Batch(m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
-		if !m.refreshing && !m.actionRunning() && !m.logLoading {
+		if !m.refreshing && !m.actionRunning() && !m.logLoading && !m.switchChecking {
 			m.spinning = false // fetch/action settled; let the loop die
 			return m, nil
 		}
@@ -2006,6 +2007,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, themeWatchTick(mod)
+	case switchPreflightMsg:
+		m.switchChecking = false
+		if msg.notice != "" {
+			m.switchNotice = msg.notice
+			return m, nil
+		}
+		for _, argv := range msg.queue {
+			m.queueExit(msg.key, argv)
+		}
+		if msg.exitsTUI {
+			return m, tea.Quit
+		}
+		return m, nil
 	case actionDoneMsg:
 		// Scope the error to the status line rather than m.err, which blanks the board.
 		if m.actionStatus == nil {
@@ -2444,9 +2458,22 @@ func (m Model) render() string {
 
 func (m Model) renderInner() string {
 	if m.switchNotice != "" {
+		body := m.switchNotice
+		if m.width > 0 && m.height > 0 {
+			lines := strings.Split(body, "\n")
+			for i, l := range lines {
+				if strings.HasPrefix(l, "path: ") || strings.HasPrefix(l, "worktrunk remedy: ") {
+					prefix, rest, _ := strings.Cut(l, ": ")
+					lines[i] = prefix + ": " + truncateLeft(rest, max(1, m.width-len(prefix)-2))
+				} else {
+					lines[i] = truncate(l, m.width)
+				}
+			}
+			body = clipLines(strings.Join(lines, "\n"), max(1, m.height-4))
+		}
 		block := lipgloss.JoinVertical(lipgloss.Left,
 			headerStyle.Render("Cannot switch worktree"), "",
-			failStyle.Render(m.switchNotice), "", dimStyle.Render("press any key to return"))
+			failStyle.Render(body), "", dimStyle.Render("press any key to return"))
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, block)
 	}
 	if m.logView {

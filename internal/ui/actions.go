@@ -117,29 +117,53 @@ func isWorktreeSwitch(argv []string) bool {
 
 var preflightSwitchFn = gh.PreflightSwitch
 
-func (m *Model) preflightSwitch(argv []string, branch string) bool {
-	if !isWorktreeSwitch(argv) {
-		return true
+// switchItem is one exits-TUI worktree switch pending pre-flight inspection.
+type switchItem struct {
+	argv   []string
+	branch string
+}
+
+// switchPreflightCmd runs the (potentially slow) wt-list + git inspection for
+// each item in order off the Update goroutine, stopping at the first
+// collision. This is what keeps `enter`/`W` from freezing the TUI.
+func switchPreflightCmd(dir, key string, items []switchItem, exitsTUI bool) tea.Cmd {
+	return func() tea.Msg {
+		for i, it := range items {
+			r, err := preflightSwitchFn(dir, it.branch)
+			if err != nil {
+				return switchPreflightMsg{notice: "Pre-flight could not inspect worktrunk or Git state:\n" + err.Error()}
+			}
+			if r.Path == "" {
+				continue
+			}
+			notice := switchNoticeBody(r, it.branch)
+			if len(items) > 1 {
+				notice = fmt.Sprintf("No switches were queued.\nRow %d of %d blocked:\n\n%s", i+1, len(items), notice)
+			}
+			return switchPreflightMsg{notice: notice}
+		}
+		queue := make([][]string, len(items))
+		for i, it := range items {
+			queue[i] = it.argv
+		}
+		return switchPreflightMsg{key: key, queue: queue, exitsTUI: exitsTUI}
 	}
-	// Test doubles and callers constructing a model before selecting a repo do
-	// not have a working directory yet; preserve the existing handoff behavior.
-	if _, err := os.Stat(m.dir); err != nil {
-		return true
+}
+
+// switchNoticeBody renders one collision as the screen-holding notice body.
+// When the real occupant IS the branch being switched to, the collision is a
+// stuck merge (MERGE_HEAD doesn't detach HEAD) rather than another branch —
+// word it that way instead of "occupied by branch: <the same branch>".
+func switchNoticeBody(r gh.SwitchPreflight, branch string) string {
+	lead := fmt.Sprintf("occupied by branch: %s", r.Occupant)
+	if r.Occupant == branch {
+		lead = fmt.Sprintf("already on %s, but it has unresolved work", branch)
 	}
-	r, err := preflightSwitchFn(m.dir, branch)
-	if err != nil {
-		m.switchNotice = "Pre-flight could not inspect worktrunk or Git state:\n" + err.Error()
-		return false
-	}
-	if r.Path == "" {
-		return true
-	}
-	body := fmt.Sprintf("path: %s\noccupied by branch: %s\n\nworktrunk remedy: %s", r.Path, r.Occupant, r.Remedy)
+	body := fmt.Sprintf("path: %s\n%s\n\nworktrunk remedy: %s", r.Path, lead, r.Remedy)
 	if len(r.Warnings) > 0 {
 		body += "\n\nSafety warnings:\n• " + strings.Join(r.Warnings, "\n• ")
 	}
-	m.switchNotice = body
-	return false
+	return body
 }
 
 // runAction executes a single-scope action against the cursor row. exits-tui
@@ -157,11 +181,21 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			m.err = err
 			return nil
 		}
-		if !m.preflightSwitch(argv, v.Branch) {
-			return nil
+		if !isWorktreeSwitch(argv) {
+			m.queueExit(a.Key, argv)
+			return tea.Quit
 		}
-		m.queueExit(a.Key, argv)
-		return tea.Quit
+		// Test doubles and callers constructing a model before selecting a repo do
+		// not have a working directory yet; preserve the existing handoff behavior.
+		if _, err := os.Stat(m.dir); err != nil {
+			m.queueExit(a.Key, argv)
+			return tea.Quit
+		}
+		if m.switchChecking {
+			return nil // a preflight is already in flight; ignore the repeat keypress
+		}
+		m.switchChecking = true
+		return tea.Batch(switchPreflightCmd(m.dir, a.Key, []switchItem{{argv: argv, branch: v.Branch}}, true), m.startSpinner())
 	}
 
 	switch a.Command.Builtin {
@@ -539,8 +573,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return m.runBulkNative(a)
 	}
 	// The only non-native bulk actions are exits-TUI worktree fan-outs.
-	type queuedAction struct{ argv []string }
-	var queued []queuedAction
+	var items []switchItem
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -552,18 +585,29 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 			m.err = err
 			continue
 		}
-		if !m.preflightSwitch(argv, v.Branch) {
-			return nil
+		items = append(items, switchItem{argv: argv, branch: v.Branch})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	// Fast, synchronous path: not a worktree switch, or no working directory yet
+	// (test doubles and callers constructing a model before selecting a repo) —
+	// preserve the existing handoff behavior without the async round-trip.
+	_, statErr := os.Stat(m.dir)
+	if !isWorktreeSwitch(items[0].argv) || statErr != nil {
+		for _, it := range items {
+			m.queueExit(a.Key, it.argv)
 		}
-		queued = append(queued, queuedAction{argv: argv})
+		if a.ExitsTUI {
+			return tea.Quit
+		}
+		return nil
 	}
-	for _, item := range queued {
-		m.queueExit(a.Key, item.argv)
+	if m.switchChecking {
+		return nil
 	}
-	if a.ExitsTUI {
-		return tea.Quit
-	}
-	return nil
+	m.switchChecking = true
+	return tea.Batch(switchPreflightCmd(m.dir, a.Key, items, a.ExitsTUI), m.startSpinner())
 }
 
 func (m Model) resolvePRAction(a action.Action) action.Action {
