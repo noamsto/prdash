@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -114,6 +115,9 @@ type Model struct {
 	polling           bool                 // the live-checks poll tick loop is running
 	pollQuietBeats    int                  // poll beats since a key was handled; pauses the fetch at pollIdleBeats
 	actionStatus      *actionStat          // transient inline-action progress shown by the header
+	cascade           *cascadeRun          // live cascade run; nil when none
+	pendingCascade    *cascadePlan         // plan awaiting the y/n prompt
+	cascadeReport     []string             // settled cascade's per-PR report; nil when none
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
 	showPicker        bool
@@ -1387,6 +1391,59 @@ func (m Model) checksPollDelay() time.Duration {
 	return pollIntervalCold
 }
 
+// cascadeDispatch turns a cascadeRun decision into the command that carries the
+// run forward: the next mutation, the next probe beat, or the settle.
+func (m *Model) cascadeDispatch(step cascadeStep) tea.Cmd {
+	switch step {
+	case cascadeMutate:
+		return m.cascadeMutateCmd()
+	case cascadeProbe:
+		r := m.cascade
+		link := r.plan.chains[r.chain][r.link]
+		r.stat.run = fmt.Sprintf("Waiting on #%d · %d/%d", link.pr.Number, r.probes+1, cascadeWaitProbes)
+		return tea.Tick(cascadeProbeEvery, func(time.Time) tea.Msg { return cascadeProbeMsg{} })
+	default: // cascadeSettle
+		return m.cascadeSettleCmd()
+	}
+}
+
+// cascadeProbeFetchCmd fires the beat's single FetchDetails call. It never
+// returns fetchFailedMsg (C5): that path blanks the board when the list is
+// empty, which would be wrong mid-run — a probe error is budget spent, not a
+// fatal fetch.
+func (m *Model) cascadeProbeFetchCmd() tea.Cmd {
+	r := m.cascade
+	number := r.plan.chains[r.chain][r.link].pr.Number
+	src := m.detailSource
+	return func() tea.Msg {
+		details, raws, err := src.FetchDetails([]int{number})
+		if err != nil {
+			return cascadeProbedMsg{number: number, err: err}
+		}
+		d, ok := details[number]
+		return cascadeProbedMsg{number: number, detail: d, raw: raws[number], ok: ok}
+	}
+}
+
+// cascadeSettleCmd finalizes a finished run. The stat is re-asserted onto
+// m.actionStatus in case a foreign action reachable mid-run (expanded/log view
+// — see cascadeRun.stat's doc comment) replaced or nilled it; without that this
+// settle's own actionDoneMsg could land on a nil or unrelated status.
+func (m *Model) cascadeSettleCmd() tea.Cmd {
+	r := m.cascade
+	r.stat.partial = r.updated()
+	m.actionStatus = r.stat
+	if r.failed() {
+		m.cascadeReport = r.report()
+	}
+	fail := r.badge()
+	var err error
+	if r.errored() {
+		err = errors.New(fail)
+	}
+	return func() tea.Msg { return actionDoneMsg{cascade: true, err: err, fail: fail} }
+}
+
 // InitTheme reads the system theme mode, applies the matching palette, and seeds
 // the watch mtime. Called from main before the program starts, so the first frame
 // paints in the right palette. NOT called from NewModel, so tests keep the default
@@ -2018,6 +2075,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.fail != "" {
 			m.actionStatus.fail = msg.fail
 		}
+		if msg.cascade {
+			// Other actions (rerun-failed, cleanup-branch, native clipboard copy)
+			// stay reachable mid-cascade and emit this same message; clearing
+			// m.cascade on their settle would strand the run with every later
+			// beat hitting the nil-guard.
+			m.cascade = nil
+		}
 		cmds := []tea.Cmd{clearStatusCmd()}
 		if msg.err == nil {
 			landed := time.Now()
@@ -2047,7 +2111,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, delayedRefreshCmd())
 		}
+		// A partial cascade still landed merge commits and re-triggered CI on the
+		// links that succeeded, even though the run as a whole failed — those
+		// rows need the same invalidation an all-success settle would give them.
+		if msg.err != nil && len(m.actionStatus.partial) > 0 {
+			for _, n := range m.actionStatus.partial {
+				delete(m.fresh, n) // force the detail/summary to revalidate
+			}
+			cmds = append(cmds, m.backgroundRefresh())
+		}
+		if msg.err != nil && len(m.actionStatus.partial) > 0 {
+			stamp := time.Now()
+			for _, n := range m.actionStatus.partial {
+				m.ciRerun[n] = stamp
+			}
+			cmds = append(cmds, delayedRefreshCmd())
+		}
 		return m, tea.Batch(cmds...)
+	case cascadeUpdatedMsg:
+		if m.cascade == nil {
+			return m, nil // a beat already in flight when the settle cleared the run (C6)
+		}
+		return m, m.cascadeDispatch(m.cascade.onUpdated(msg.err))
+	case cascadeProbeMsg:
+		if m.cascade == nil {
+			return m, nil
+		}
+		return m, m.cascadeProbeFetchCmd()
+	case cascadeProbedMsg:
+		if m.cascade == nil {
+			return m, nil
+		}
+		r := m.cascade
+		var mergeable, mss string
+		if msg.err == nil && msg.ok {
+			// Take the probe verbatim, UNKNOWN included — do NOT run this through
+			// mergeState. mergeState prefers a resolved cached value over an
+			// unresolved one, which is backwards for a live probe: it would keep
+			// the plan-time snapshot's (commonly already-resolved) Mergeable and
+			// only take MergeStateStatus from the fresh read, so a snapshot of
+			// (MERGEABLE, BEHIND) reads as "settled" on the very first beat and
+			// the wait this whole mechanism exists for never happens (C5).
+			mergeable, mss = msg.detail.Mergeable, msg.detail.MergeStateStatus
+			m.detail[msg.number] = msg.detail
+			m.fresh[msg.number] = true
+			if m.cache != nil && msg.raw != nil {
+				m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+			}
+		}
+		return m, m.cascadeDispatch(r.onProbed(mergeable, mss, msg.err))
 	case actionClearMsg:
 		if m.actionStatus != nil && m.actionStatus.settled {
 			m.actionStatus = nil
@@ -2192,6 +2304,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if a.Confirm {
 						m.pending = &a
+						m.pendingCascade = nil // this path never builds a cascade plan
 						return m, nil
 					}
 					return m, m.runAction(a)
@@ -2227,6 +2340,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.legendQuery += s
 				}
 			}
+			return m, nil
+		}
+		// After every other surface's own key handling: a report waiting behind an
+		// opened prompt/picker/menu must not steal the key that surface expects.
+		if len(m.cascadeReport) > 0 {
+			m.cascadeReport = nil
 			return m, nil
 		}
 		switch msg.String() {
@@ -2355,6 +2474,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if a.Confirm {
 					m.pending = &a
+					m.pendingCascade = nil // this path never builds a cascade plan
 					return m, nil
 				}
 				return m, m.runAction(a)
@@ -2404,7 +2524,7 @@ func (m Model) previewMouseHandler() func(tea.MouseMsg) tea.Cmd {
 // previewMouseBounds reports the preview box's terminal-cell bounds when it is
 // visible and unobscured. The outer frame shifts the inner board by one cell.
 func (m Model) previewMouseBounds() (x, y, w, h int, ok bool) {
-	if m.logView || m.expanded || m.pending != nil || m.showPicker || m.showLegend || m.showActions || m.omniSuggestDropdown() != "" || (m.err != nil && m.section.Len() == 0) {
+	if m.logView || m.expanded || m.pending != nil || m.showPicker || m.showLegend || m.showActions || len(m.cascadeReport) > 0 || m.omniSuggestDropdown() != "" || (m.err != nil && m.section.Len() == 0) {
 		return 0, 0, 0, 0, false
 	}
 	l := computeLayout(m.width, m.height)
@@ -2466,6 +2586,10 @@ func (m Model) renderInner() string {
 		return overlayTop(board, m.legendView(), m.width, m.height)
 	case m.showActions:
 		return overlayTop(board, m.actionsPanel(), m.width, m.height)
+	// Last: a report the user hasn't dismissed yet must never cover a surface
+	// they deliberately opened.
+	case len(m.cascadeReport) > 0:
+		return overlayTop(board, m.cascadePanel(), m.width, m.height)
 	}
 	return board
 }
@@ -2581,6 +2705,9 @@ func (m Model) board() string {
 // the viewer didn't author names its author (so an accidental keystroke on
 // someone else's PR is obvious); a bulk fan-out shows the count.
 func (m Model) confirmQuestion() string {
+	if m.pendingCascade.cascades() {
+		return fmt.Sprintf("Update branch for %d PRs in stack?", m.pendingCascade.count())
+	}
 	a := m.pending
 	if a.Scope != "per-selected" {
 		n, branch := 0, ""

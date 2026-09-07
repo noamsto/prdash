@@ -95,6 +95,25 @@ type fetchSkippedMsg struct{}
 type actionDoneMsg struct {
 	err      error
 	ok, fail string
+	cascade  bool // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+}
+
+// cascadeUpdatedMsg carries one link's UpdateBranch result back to the run.
+type cascadeUpdatedMsg struct{ err error }
+
+// cascadeProbeMsg fires one cascade wait-probe beat.
+type cascadeProbeMsg struct{}
+
+// cascadeProbedMsg carries one probe's mergeable/mss read for the link the run
+// is waiting on. ok reports whether number was present in the returned map, so
+// a probe that came back without an answer for it can be told apart from one
+// that came back with a real, if unresolved, state.
+type cascadeProbedMsg struct {
+	number int
+	detail gh.PRDetail
+	raw    []byte
+	err    error
+	ok     bool
 }
 
 // actionClearMsg wipes a settled action status after its dwell time.
