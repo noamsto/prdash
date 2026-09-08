@@ -2878,18 +2878,37 @@ func modeSegments(active string) string {
 	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
 }
 
+// minRepoCells is the least repo name worth showing — roughly "…/short-name".
+// Below it the header sheds the spinner instead of shaving the name further.
+const minRepoCells = 12
+
 // header is the global top line: repo · board segments · (spinner) · (badge) ·
 // (selection). The current view (preset/state/count) lives on the list title.
 func (m Model) header() string {
-	h := headerStyle.Render("  "+m.repo) + "  " + modeSegments(m.mode)
-	if m.refreshing {
-		spin := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-		h += dimStyle.Render(" · ") + refreshStyle.Render(spin+" refreshing")
-	}
-	h += m.statusBadge(m.width - lipgloss.Width(h))
+	boards := "  " + modeSegments(m.mode)
+	sel := ""
 	if n := m.sel.count(); n > 0 {
-		h += "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
+		sel = "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
 	}
+	spin := ""
+	if m.refreshing {
+		frame := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		spin = dimStyle.Render(" · ") + refreshStyle.Render(frame+" refreshing")
+	}
+	// org/repo is unbounded and can run past 50 cells, so it takes what the
+	// fixed segments leave, keeping its tail — the half that identifies it.
+	// Under minRepoCells the spinner yields instead: transient chrome, where
+	// the repo is identity.
+	budget := func(spin string) int {
+		return m.width - lipgloss.Width(boards) - lipgloss.Width(sel) - lipgloss.Width(spin) - 2
+	}
+	if budget(spin) < minRepoCells {
+		spin = ""
+	}
+	repo := truncateLeft(m.repo, budget(spin))
+	h := headerStyle.Render("  "+repo) + boards + spin
+	h += m.statusBadge(m.width - lipgloss.Width(h))
+	h += sel
 	// Last, right-aligned, and out of whatever the badge and selection count left
 	// over: the API budget is the header's lowest-priority element and the first
 	// to go when the terminal narrows.
@@ -3197,12 +3216,20 @@ func legendExampleRow(w int, mode string) string {
 		diffstat(120, 8), ciGlyph("fail"), reviewDot("REVIEW_REQUIRED"), autoMergeGlyph(true))
 }
 
+// legendPaneSplit divides an interior into two panes and the 3-wide separator
+// between them (space · rule · space).
+func legendPaneSplit(innerW int) (leftW, rightW int) {
+	const sepW = 3
+	leftW = (innerW - sepW) / 2
+	return leftW, innerW - sepW - leftW
+}
+
 // legendSplits reports whether the two-pane form fits: every group must pack
-// without panelColumn's Width().Render soft-wrapping its widest cell. Derived
-// from the content rather than pinned to a width constant, so adding a longer
-// hint moves the threshold instead of silently producing a wrapped cell.
+// without renderLegendPanes' Width().Render soft-wrapping its widest cell.
+// Derived from the content rather than pinned to a width constant, so adding a
+// longer hint moves the threshold instead of silently producing a wrapped cell.
 func legendSplits(left, right []legendGroup, innerW int) bool {
-	lw, rw := panelSplit(innerW)
+	lw, rw := legendPaneSplit(innerW)
 	fits := func(groups []legendGroup, w int) bool {
 		if w < 1 {
 			return false
@@ -3220,7 +3247,7 @@ func legendSplits(left, right []legendGroup, innerW int) bool {
 // renderLegendPanes is the board legend's two-pane form: the example row across
 // the top, then "what the row is telling you" beside "what you can press".
 func renderLegendPanes(title string, left, right []legendGroup, example string, innerW, termH int) string {
-	lw, rw := panelSplit(innerW)
+	lw, rw := legendPaneSplit(innerW)
 	col := func(groups []legendGroup, w int) string {
 		return lipgloss.NewStyle().Width(w).Render(strings.Join(legendBlock(groups, w), "\n"))
 	}
@@ -3412,6 +3439,61 @@ func (m Model) keysActionsPanel(w int) string {
 	return titledBox(panelBody(w-2, acts), w, panelRowsFor(w-2), label)
 }
 
+// statusCell is one hint in the status bar, paired with the order it sheds in
+// when the bar is wider than the terminal.
+type statusCell struct {
+	text string
+	shed int
+}
+
+// Shed order for the status bar's optional hints, least load-bearing first —
+// the bar's counterpart to the row's columnLadder. Every escape hatch stays at
+// shedNever.
+const (
+	shedNever    = 0
+	shedComments = 5 // a preview toggle, and only offered when the preview shows
+	shedDrafts   = 4
+	shedSelect   = 3 // batch work needs room to see the rows anyway
+	shedExpand   = 2 // the arrow keys are guessable
+	shedBoard    = 1
+)
+
+// shedToFit drops the least load-bearing cells until the bar fits width. The
+// bar's own hints run to ~95 cells while footerMinWidth is 70, so without this
+// the line wraps and pushes the frame's last row off-screen.
+func shedToFit(cells []statusCell, width int) []string {
+	for barCellsWidth(cells) > width {
+		worst := -1
+		for i, c := range cells {
+			if c.shed > shedNever && (worst < 0 || c.shed > cells[worst].shed) {
+				worst = i
+			}
+		}
+		if worst < 0 {
+			break // only escape hatches left; a terminal this narrow gets the overrun
+		}
+		cells = append(cells[:worst], cells[worst+1:]...)
+	}
+	parts := make([]string, len(cells))
+	for i, c := range cells {
+		parts[i] = c.text
+	}
+	return parts
+}
+
+// barCellsWidth is the rendered width of the bar's hint row: the line's 2-cell
+// indent plus every cell and the 2-cell gaps between them.
+func barCellsWidth(cells []statusCell) int {
+	w := 2
+	for i, c := range cells {
+		if i > 0 {
+			w += 2
+		}
+		w += lipgloss.Width(c.text)
+	}
+	return w
+}
+
 // statusBar is the bottom keybinding line, in the lazytmux picker style:
 // accent key + dim ":label", space-separated. It leads with the focused PR's
 // recommended action, and a live toggle (drafts) highlights its label when
@@ -3420,36 +3502,33 @@ func (m Model) statusBar() string {
 	hint := func(k, desc string) string {
 		return accentStyle.Render(k) + statusBarStyle.Render(":"+desc)
 	}
-	parts := []string{}
+	keep := func(k, desc string) statusCell { return statusCell{hint(k, desc), shedNever} }
+
+	cells := []statusCell{}
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
-		parts = append(parts, hint(card.ActionKey, card.ActionLabel))
+		cells = append(cells, keep(card.ActionKey, card.ActionLabel))
 	}
-	parts = append(parts,
-		hint("↵", "worktree"), hint("a", "actions"), hint("⇥", "PRs/Issues"),
-	)
+	cells = append(cells, keep("↵", "worktree"), keep("a", "actions"),
+		statusCell{hint("⇥", "PRs/Issues"), shedBoard})
 	if m.mode == "pr" {
-		parts = append(parts, hint("→", "expand"))
+		cells = append(cells, statusCell{hint("→", "expand"), shedExpand})
 		if m.layout().ShowSide {
-			parts = append(parts, hint("p", "all comments")) // only unfolds the side preview's timeline
+			// only unfolds the side preview's timeline
+			cells = append(cells, statusCell{hint("p", "all comments"), shedComments})
 		}
 	}
-	parts = append(parts, hint("/", "find"), hint("space", "select"))
+	cells = append(cells, keep("/", "find"), statusCell{hint("space", "select"), shedSelect})
 	if m.mode == "pr" {
 		drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
 		if m.hideDrafts {
 			drafts = statusBarStyle.Render("drafts") // dimmed once they're hidden
 		}
-		parts = append(parts, accentStyle.Render("D")+statusBarStyle.Render(":")+drafts)
+		cells = append(cells, statusCell{accentStyle.Render("D") + statusBarStyle.Render(":") + drafts, shedDrafts})
 	}
-	quit := hint("q", "quit")
-	// ? reaches everything this bar doesn't list, and is the one cell it sheds:
-	// these hints alone overrun a terminal under ~95 cells, and the bar has no
-	// shedding ladder to absorb one more.
-	help := hint("?", "keys")
-	if used := 2 + lipgloss.Width(strings.Join(parts, "  ")) + 2 + lipgloss.Width(quit); used+2+lipgloss.Width(help) <= m.width {
-		parts = append(parts, help)
-	}
-	parts = append(parts, quit)
+	// ? never sheds: it is how you find whatever the bar just shed.
+	cells = append(cells, keep("?", "keys"), keep("q", "quit"))
+
+	parts := shedToFit(cells, m.width)
 	// Below the preview threshold the branch has nowhere else to live, and it is
 	// what the copy and worktree actions operate on.
 	if !m.layout().ShowSide {
