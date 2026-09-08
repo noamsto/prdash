@@ -54,12 +54,10 @@ func gridHintsRef(hints []keyHint, width int, alignKeys bool) []string {
 	return lines
 }
 
-// panelContentRowsRef is the pre-refactor panelContentRows: it builds both grids
-// only to count their lines.
+// panelContentRowsRef is panelContentRows the slow way: it builds the grid only
+// to count its lines, so the arithmetic version can be checked against it.
 func panelContentRowsRef(innerW int) int {
-	lw, rw := panelSplit(innerW)
-	return max(1+len(gridHintsRef(navHintsFor("pr"), lw, false)),
-		1+len(gridHintsRef(defaultActionHints(), rw, true)))
+	return len(gridHintsRef(panelHints(defaultActionHints()), innerW, true))
 }
 
 // hintSets covers the real hint lists plus the width edge cases the arithmetic
@@ -67,8 +65,7 @@ func panelContentRowsRef(innerW int) int {
 // emoji whose display width exceeds its rune count.
 func hintSets() map[string][]keyHint {
 	return map[string][]keyHint{
-		"nav-pr":    navHintsFor("pr"),
-		"nav-issue": navHintsFor("issue"),
+		"panel":     panelHints(defaultActionHints()),
 		"actions":   defaultActionHints(),
 		"single":    {{"x", "one", nil}},
 		"empty-key": {{"", "no key", nil}, {"a", "has key", nil}},
@@ -134,11 +131,12 @@ type gridCase struct {
 // benchGridCases sweeps width because the column count, and so how much padding
 // each row does, varies with it — a single width could flatter either side.
 func benchGridCases() []gridCase {
-	nav, acts := navHintsFor("pr"), defaultActionHints()
+	acts := defaultActionHints()
+	panel := panelHints(acts)
 	var cases []gridCase
 	for _, w := range []int{40, 88, 160} {
 		cases = append(cases,
-			gridCase{fmt.Sprintf("nav/w%d", w), nav, w, false},
+			gridCase{fmt.Sprintf("panel/w%d", w), panel, w, false},
 			gridCase{fmt.Sprintf("actions/w%d", w), acts, w, true},
 		)
 	}

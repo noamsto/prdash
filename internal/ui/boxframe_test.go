@@ -197,7 +197,9 @@ func findStatusBarOverflowGeometry(t *testing.T) (w, h int) {
 	t.Helper()
 	for w := footerMinWidth; w < footerMinWidth+60; w++ {
 		for h := footerMinHeight; h < footerMinHeight+20; h++ {
-			if l := computeLayout(w-2, h-2); !l.ShowFooter || l.ShowPanel {
+			// Folded, matching the model built below: a slim panel now fits
+			// wherever a footer does, so nothing else yields the status bar.
+			if l := computeLayoutWith(w-2, h-2, false); !l.ShowFooter || l.ShowPanel {
 				continue
 			}
 			m := withOuterFrame(t, matrixModel(t, w, h, matrixOpts{mode: "pr"}), w, h)

@@ -402,7 +402,7 @@ func TestListViewportSizedForBorder(t *testing.T) {
 	m.width, m.height = 100, 30 // narrow (<120): single list pane, width 100
 	m.setPRs([]gh.PR{{Number: 1, Title: "x"}})
 	m.renderList()
-	l := computeLayout(100, 30)
+	l := m.layout() // the model's own geometry: the footer starts folded
 	if got := m.vp.Width(); got != l.ListWidth-2 {
 		t.Fatalf("viewport width = %d, want ListWidth-2 = %d", got, l.ListWidth-2)
 	}
@@ -522,8 +522,8 @@ func TestStatusBarShowsFocusedBranchWhenPreviewIsHidden(t *testing.T) {
 	m.viewerLogin = "me"
 	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "feature-branch"}})
 	// Below sideThreshold (120) so there's no preview pane, but wide enough that
-	// the base hint bar (~85 cells) still leaves the >8-cell room the segment requires.
-	m.width, m.height = 110, 30
+	// the base hint bar still leaves room for the whole branch name untruncated.
+	m.width, m.height = 119, 30
 	if computeLayout(m.width, m.height).ShowSide {
 		t.Fatal("fixture width still shows the side pane")
 	}
@@ -1226,6 +1226,8 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl}
 	case "ctrl+k":
 		return tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl}
+	case "ctrl+e":
+		return tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl}
 	case "alt+j":
 		return tea.KeyPressMsg{Code: 'j', Mod: tea.ModAlt}
 	case "alt+k":
@@ -2362,5 +2364,62 @@ func TestFlagGlyphPaintsFromListOnFirstRender(t *testing.T) {
 	m.renderList()
 	if !strings.Contains(m.rowText[0], warnGlyph) {
 		t.Fatalf("row should show the conflict flag from the list value alone, before any detail fetch:\n%s", m.rowText[0])
+	}
+}
+
+// TestFooterFoldTogglesPanel: the actions panel starts folded, so the board's
+// footer is the one-line status bar until ctrl+e docks it.
+func TestFooterFoldTogglesPanel(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width, m.height = 160, 40
+	if m.layout().ShowPanel {
+		t.Fatal("the footer should start folded")
+	}
+	if strings.Contains(m.board(), "Open worktree") {
+		t.Fatalf("a folded footer should not dock the actions panel:\n%s", m.board())
+	}
+	u, _ := m.Update(keyMsg("ctrl+e"))
+	m = u.(Model)
+	if !m.layout().ShowPanel {
+		t.Fatal("ctrl+e should unfold the actions panel")
+	}
+	if !strings.Contains(m.board(), "Open worktree") {
+		t.Fatalf("an unfolded footer should dock the actions panel:\n%s", m.board())
+	}
+	if u, _ = m.Update(keyMsg("ctrl+e")); u.(Model).layout().ShowPanel {
+		t.Fatal("ctrl+e should fold the panel back")
+	}
+}
+
+// TestStatusBarBranchTailFitsTerminal guards the branch tail's truncate budget:
+// the glyph and its space render outside it, so a cell left out of the budget
+// wraps the bar onto a second line and breaks the frame below it. Swept from
+// 100: the tail only appears with no preview pane, and under ~95 cells the
+// hint cells alone overrun the terminal — a separate, older gap.
+func TestStatusBarBranchTailFitsTerminal(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "a-long-feature-branch-name"}})
+	for w := 100; w < sideThreshold; w++ {
+		m.width, m.height = w, 30
+		for i, line := range strings.Split(stripANSIForTest(m.statusBar()), "\n") {
+			if got := lipgloss.Width(line); got > w {
+				t.Fatalf("w=%d line %d is %d cells wide: %q", w, i, got, line)
+			}
+		}
+	}
+}
+
+// TestStatusBarShedsHelpCellWhenNarrow: ?:keys is the bar's one optional cell,
+// so a terminal with no room for it keeps the bar it already had.
+func TestStatusBarShedsHelpCellWhenNarrow(t *testing.T) {
+	m := newTestModelWithRows(t)
+	m.width, m.height = 119, 30
+	if !strings.Contains(stripANSIForTest(m.statusBar()), "?:keys") {
+		t.Fatalf("a wide-enough bar should advertise the legend:\n%s", stripANSIForTest(m.statusBar()))
+	}
+	m.width = footerMinWidth
+	if strings.Contains(stripANSIForTest(m.statusBar()), "?:keys") {
+		t.Fatalf("a bar with no room should shed the legend cell:\n%s", stripANSIForTest(m.statusBar()))
 	}
 }

@@ -76,8 +76,10 @@ Actions on the focused PR (or the whole selection):
 The copy actions (`y` `Y` `b`) grab the whole selection at once when multiple
 items are selected with `space`.
 
-On a wide terminal the preview shows beside the list and a keys/actions panel
-docks under it; narrow terminals drop the preview and show a compact status bar.
+The footer is a compact one-line status bar. `ctrl+e` unfolds it into a docked
+panel listing every action available for the focused row (or, with a selection,
+the batch-capable ones); `?` shows the full keymap. On a wide terminal the
+preview shows beside the list, with the footer under it.
 Scroll the preview with `alt+j` / `alt+k`, or with the mouse wheel while the
 pointer is over the visible preview pane.
 

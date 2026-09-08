@@ -140,8 +140,8 @@ func matrixBoxCases(m Model) []boxCase {
 		cases = append(cases, boxCase{"side", m.previewScrolled(), w, h})
 	}
 	if l.ShowPanel && !m.previewMax {
-		label, acts := m.actionHints()
-		content := panelBody(l.ListWidth-2, navHintsFor(m.mode), label, acts)
+		_, acts := m.actionHints()
+		content := panelBody(l.ListWidth-2, acts)
 		w, h := clampBoxDims(l.ListWidth, l.PanelRows)
 		cases = append(cases, boxCase{"panel", content, w, h})
 	}

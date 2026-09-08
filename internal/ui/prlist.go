@@ -79,6 +79,7 @@ type Model struct {
 	showActions       bool
 	showLegend        bool
 	legendQuery       string // live substring filter typed while the legend overlay is open
+	panelUnfolded     bool   // ctrl+e docks the actions panel in place of the status bar
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
@@ -650,7 +651,7 @@ type rowKey struct {
 
 // renderList rebuilds the viewport content from the shown rows and scrolls so the cursor row is visible.
 func (m *Model) renderList() {
-	l := computeLayout(m.width, m.height)
+	l := m.layout()
 	innerW := l.ListInner
 	innerH := m.contentHeight(l) - 2
 	if innerW < 1 {
@@ -798,7 +799,7 @@ func (m *Model) repaintActive() {
 // line can't scroll above the top of the pane. Only the body scrolls — the
 // pinned head keeps its rows, so they come off the visible budget.
 func (m *Model) previewScrollBy(delta int) {
-	l := computeLayout(m.width, m.height)
+	l := m.layout()
 	head, body := m.previewParts()
 	visible := m.previewHeight(l) - 2 // inside the pane border
 	if head != "" {
@@ -2248,6 +2249,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// caller of backgroundRefresh (post-action, CI poll) keeps them.
 			clear(m.mergedSticky)
 			return m, m.backgroundRefresh()
+		case "ctrl+e":
+			m.panelUnfolded = !m.panelUnfolded
+			m.repaintActive() // the list's height moves with the panel's rows
+			return m, nil
 		case "z":
 			m.previewMax = !m.previewMax
 			return m, nil
@@ -2326,7 +2331,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode != "pr" {
 				return m, nil // tabs/expanded view are PR-only in v1
 			}
-			if computeLayout(m.width, m.height).ShowSide {
+			if m.layout().ShowSide {
 				m.expandedTab = (m.expandedTab + 1) % len(expandedTabs)
 				m.checkCursor = 0
 				return m, nil
@@ -2335,14 +2340,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
 		case "left", "h":
-			if m.mode != "pr" || !computeLayout(m.width, m.height).ShowSide {
+			if m.mode != "pr" || !m.layout().ShowSide {
 				return m, nil
 			}
 			m.expandedTab = (m.expandedTab + len(expandedTabs) - 1) % len(expandedTabs)
 			m.checkCursor = 0
 			return m, nil
 		case "1", "2", "3", "4", "5", "6":
-			if m.mode != "pr" || !computeLayout(m.width, m.height).ShowSide {
+			if m.mode != "pr" || !m.layout().ShowSide {
 				return m, nil
 			}
 			m.expandedTab = int(msg.String()[0] - '1')
@@ -2407,7 +2412,7 @@ func (m Model) previewMouseBounds() (x, y, w, h int, ok bool) {
 	if m.logView || m.expanded || m.pending != nil || m.showPicker || m.showLegend || m.showActions || m.omniSuggestDropdown() != "" || (m.err != nil && m.section.Len() == 0) {
 		return 0, 0, 0, 0, false
 	}
-	l := computeLayout(m.width, m.height)
+	l := m.layout()
 	y = lipgloss.Height(m.header()) + 1
 	switch {
 	case m.previewMax:
@@ -2478,7 +2483,7 @@ func (m Model) contentWidth() int {
 	if m.previewMax {
 		return m.width
 	}
-	return computeLayout(m.width, m.height).ListWidth
+	return m.layout().ListWidth
 }
 
 // filterInputWidth is the textinput's own width budget: the box interior
@@ -2556,7 +2561,7 @@ func (m Model) board() string {
 	if m.err != nil && m.section.Len() == 0 {
 		return m.header() + "\n\n" + failStyle.Render("  Error: "+m.err.Error()) + "\n" + m.statusBar()
 	}
-	l := computeLayout(m.width, m.height)
+	l := m.layout()
 	// The filter bar is stacked by renderMain/renderDocked — it lives in the
 	// list column, not across the frame.
 	if m.previewMax {
@@ -2572,7 +2577,9 @@ func (m Model) board() string {
 	}
 	foot := m.statusBar()
 	if l.ShowPanel {
-		foot = m.keysActionsPanel(m.width)
+		// Past listInnerMax the list column is capped and the surplus is right
+		// margin, so a full-width panel would overhang it.
+		foot = m.keysActionsPanel(l.ListWidth)
 	}
 	return m.header() + "\n" + m.renderMain() + "\n" + foot
 }
@@ -2832,7 +2839,7 @@ func (m Model) legendGroups() []legendGroup {
 	view := []keyHint{}
 	if m.mode == "pr" {
 		view = append(view, keyHint{"p", "all comments", nil}) // only the PR preview renders the timeline p unfolds
-		if computeLayout(m.width, m.height).ShowSide {
+		if m.layout().ShowSide {
 			view = append(view, keyHint{"h/l", "switch tab", nil}, keyHint{"1-6", "jump tab", nil})
 		}
 	}
@@ -2849,7 +2856,8 @@ func (m Model) legendGroups() []legendGroup {
 	groups = append(groups, legendGroup{"actions", actions})
 
 	groups = append(groups, legendGroup{"", []keyHint{
-		{"a", "actions", nil}, {"ctrl+r", "refresh", nil}, {"? / F1", "legend", nil}, {"q", "quit", nil},
+		{"a", "actions", nil}, {"ctrl+e", "actions panel", nil}, {"ctrl+r", "refresh", nil},
+		{"? / F1", "legend", nil}, {"q", "quit", nil},
 	}})
 	return groups
 }
@@ -2918,23 +2926,6 @@ func (h keyHint) renderKey() string {
 		return h.style.Render(h.key)
 	}
 	return accentStyle.Render(h.key)
-}
-
-// navHintsFor is the docked-panel cheatsheet for the active board. Issue mode
-// drops the PR-only author/reviewer/drafts hints; both modes show the tab-toggle.
-func navHintsFor(mode string) []keyHint {
-	base := []keyHint{
-		{"↑↓", "move", nil}, {"⇥", "PRs/Issues", nil}, {"s", "state", nil},
-		{"/", "find", nil}, {"space", "select", nil}, {"V", "cluster", nil}, {"q", "quit", nil},
-	}
-	if mode == "pr" {
-		pr := []keyHint{
-			{"→", "tabs", nil}, {"z", "max", nil}, {"alt+j/k", "scroll", nil},
-			{"R", "reviewers", nil}, {"D", "drafts", nil},
-		}
-		return append(base, pr...)
-	}
-	return base
 }
 
 const hintGutter = 3
@@ -3020,48 +3011,32 @@ func panelHeader(label string) string {
 	return sectionLabelStyle.Render(strings.ToUpper(label))
 }
 
-// panelSplit divides the panel interior into a keys column, a 3-wide separator
-// (space · rule · space), and an actions column.
-func panelSplit(innerW int) (leftW, rightW int) {
-	const sepW = 3
-	leftW = (innerW - sepW) / 2
-	return leftW, innerW - sepW - leftW
+// panelMetaHints close the panel's grid. They are the only static keys that
+// belong in it; the rest of the keymap is the legend's.
+var panelMetaHints = []keyHint{{"?", "all keys", nil}, {"ctrl+e", "fold", nil}}
+
+// panelHints is the panel's full grid: what the focused row can do, then the
+// meta keys. One builder so the rendered grid and the reserved height are
+// measured against the same cells.
+func panelHints(acts []keyHint) []keyHint {
+	hints := make([]keyHint, 0, len(acts)+len(panelMetaHints))
+	hints = append(hints, acts...)
+	return append(hints, panelMetaHints...)
 }
 
-// panelColumn is a headed, grid-packed block padded to exactly w wide so the
-// column to its right lines up. alignKeys column-aligns the labels.
-func panelColumn(label string, hints []keyHint, w int, alignKeys bool) string {
-	lines := append([]string{panelHeader(label)}, gridHints(hints, w, alignKeys)...)
-	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
+// panelBody is the panel interior: one full-width, column-aligned grid of the
+// available actions.
+func panelBody(innerW int, acts []keyHint) string {
+	return strings.Join(gridHints(panelHints(acts), innerW, true), "\n")
 }
 
-// panelBody lays keys on the left and actions on the right, split by a vertical
-// rule. Narrow columns collapse each side to a single vertical stack. Action
-// labels are column-aligned; keys aren't (their widths vary too much).
-func panelBody(innerW int, keyHints []keyHint, actionsLabel string, acts []keyHint) string {
-	lw, rw := panelSplit(innerW)
-	left := panelColumn("keys", keyHints, lw, false)
-	right := panelColumn(actionsLabel, acts, rw, true)
-	h := max(lipgloss.Height(left), lipgloss.Height(right))
-	// Each separator line must carry its own padding — wrapping the whole
-	// multi-line rule in " "+…+" " only pads the first and last rows, jagging
-	// the divider and the right border.
-	sepLine := " " + sepStyle.Render("│") + " "
-	sep := strings.TrimSuffix(strings.Repeat(sepLine+"\n", h), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
-}
-
-// panelContentRows is the tallest of the two columns (each = header + grid).
-// Reserved against the full action set (PR mode, the superset of nav hints) so
-// the height is stable when batch mode hides the single-only actions, and
-// doesn't jump when switching to issue mode's shorter hint list.
+// panelContentRows is the actions grid's height at a given interior width.
+// Reserved against the full PR action set — the widest labels and the most
+// cells either board can show — so the panel keeps its height when batch mode
+// hides the single-only actions or the shorter issue board takes over.
 func panelContentRows(innerW int) int {
-	lw, rw := panelSplit(innerW)
-	nav, acts := navHintsFor("pr"), defaultActionHints()
-	return max(
-		1+gridRows(len(nav), gridLayout(nav, lw, false).cols),
-		1+gridRows(len(acts), gridLayout(acts, rw, true).cols),
-	)
+	hints := panelHints(defaultActionHints())
+	return gridRows(len(hints), gridLayout(hints, innerW, true).cols)
 }
 
 // defaultActionHints is the action list computeLayout reserves space for,
@@ -3107,11 +3082,12 @@ func (m Model) actionHints() (label string, hints []keyHint) {
 	return "actions", hints
 }
 
-// keysActionsPanel is the docked footer: a bordered box with the keybinding
-// cheatsheet and the focused view's actions, sized to the given outer width.
+// keysActionsPanel is the unfolded footer: a bordered box of what the focused
+// row can do right now, sized to the given outer width. Its title is the
+// actions label, so batch mode announces itself on the border.
 func (m Model) keysActionsPanel(w int) string {
 	label, acts := m.actionHints()
-	return titledBox(panelBody(w-2, navHintsFor(m.mode), label, acts), w, panelRowsFor(w-2), "help")
+	return titledBox(panelBody(w-2, acts), w, panelRowsFor(w-2), label)
 }
 
 // statusBar is the bottom keybinding line, in the lazytmux picker style:
@@ -3131,7 +3107,7 @@ func (m Model) statusBar() string {
 	)
 	if m.mode == "pr" {
 		parts = append(parts, hint("→", "expand"))
-		if computeLayout(m.width, m.height).ShowSide {
+		if m.layout().ShowSide {
 			parts = append(parts, hint("p", "all comments")) // only unfolds the side preview's timeline
 		}
 	}
@@ -3143,13 +3119,23 @@ func (m Model) statusBar() string {
 		}
 		parts = append(parts, accentStyle.Render("D")+statusBarStyle.Render(":")+drafts)
 	}
-	parts = append(parts, hint("q", "quit"))
+	quit := hint("q", "quit")
+	// ? reaches everything this bar doesn't list, and is the one cell it sheds:
+	// these hints alone overrun a terminal under ~95 cells, and the bar has no
+	// shedding ladder to absorb one more.
+	help := hint("?", "keys")
+	if used := 2 + lipgloss.Width(strings.Join(parts, "  ")) + 2 + lipgloss.Width(quit); used+2+lipgloss.Width(help) <= m.width {
+		parts = append(parts, help)
+	}
+	parts = append(parts, quit)
 	// Below the preview threshold the branch has nowhere else to live, and it is
 	// what the copy and worktree actions operate on.
-	if !computeLayout(m.width, m.height).ShowSide {
+	if !m.layout().ShowSide {
 		if v, ok := m.cursorVars(); ok && v.HeadRefName != "" {
 			bar := strings.Join(parts, "  ")
-			if room := m.width - lipgloss.Width(bar) - 4; room > 8 {
+			// 6 = the line's 2-cell indent, the 2-cell gap before this segment,
+			// and the glyph plus its space, which render outside the budget.
+			if room := m.width - lipgloss.Width(bar) - 6; room > 8 {
 				parts = append(parts, dimStyle.Render(headBranchGlyph+" "+truncateLeft(v.HeadRefName, room)))
 			}
 		}

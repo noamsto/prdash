@@ -149,12 +149,11 @@ func BenchmarkKeysActionsPanel(b *testing.B) {
 func BenchmarkPanelBodyOnly(b *testing.B) {
 	m := richBoard(b)
 	l := computeLayout(m.width, m.height)
-	label, acts := m.actionHints()
-	hints := navHintsFor(m.mode)
+	_, acts := m.actionHints()
 	innerW := l.ListWidth - 2
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_ = panelBody(innerW, hints, label, acts)
+		_ = panelBody(innerW, acts)
 	}
 }

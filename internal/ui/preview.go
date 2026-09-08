@@ -228,7 +228,7 @@ func renderTimeline(items []preview.Item, n, width int, expanded bool) string {
 }
 
 func (m Model) previewWidth() int {
-	l := computeLayout(m.width, m.height)
+	l := m.layout()
 	if !l.ShowSide {
 		return 40
 	}
@@ -624,7 +624,7 @@ func (m Model) listBody() string {
 }
 
 func (m Model) renderMain() string {
-	l := computeLayout(m.width, m.height)
+	l := m.layout()
 	ch := m.contentHeight(l)
 	tint := accentFor(m.mode)
 	bar := m.filterBar()
