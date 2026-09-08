@@ -79,10 +79,11 @@ func TestLayoutContentHeight(t *testing.T) {
 	if want := 40 - 2 - l.PanelRows; l.ContentHeight != want {
 		t.Fatalf("tall ContentHeight = %d, want %d", l.ContentHeight, want)
 	}
-	// Short terminal (footer shown, panel not reserved): main area is
-	// h - chromeRows(4) = 18.
-	if l := computeLayout(160, 22); l.ShowPanel || !l.ShowFooter || l.ContentHeight != 18 {
-		t.Fatalf("short: ShowFooter=%v ShowPanel=%v ContentHeight=%d, want true/false/18", l.ShowFooter, l.ShowPanel, l.ContentHeight)
+	// Folded (footer shown, panel not reserved): main area is
+	// h - chromeRows(4) = 18. A slim panel fits every terminal tall enough for
+	// a footer at all, so the fold — not the height — yields the status bar.
+	if l := computeLayoutWith(160, 22, false); l.ShowPanel || !l.ShowFooter || l.ContentHeight != 18 {
+		t.Fatalf("folded: ShowFooter=%v ShowPanel=%v ContentHeight=%d, want true/false/18", l.ShowFooter, l.ShowPanel, l.ContentHeight)
 	}
 }
 

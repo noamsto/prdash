@@ -334,7 +334,7 @@ func TestPanelBatchModeShowsOnlyBatchActions(t *testing.T) {
 	m.sel.toggle(1)
 
 	panel := m.keysActionsPanel(m.width)
-	if !strings.Contains(panel, "BATCH") {
+	if !strings.Contains(panel, "batch · 2") { // the box title, not a column header
 		t.Fatalf("selection should flip the panel to batch mode:\n%s", panel)
 	}
 	if !strings.Contains(panel, "Copy URL") {
@@ -360,7 +360,7 @@ func TestLayoutReservesPanelByHeight(t *testing.T) {
 	}
 }
 
-func TestKeysActionsPanelListsKeysAndActions(t *testing.T) {
+func TestKeysActionsPanelListsContextualActionsOnly(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("x")
 	m.width, m.height = 120, 50
@@ -368,11 +368,16 @@ func TestKeysActionsPanelListsKeysAndActions(t *testing.T) {
 	m.renderList()
 
 	panel := m.keysActionsPanel(m.width)
-	if !strings.Contains(panel, "move") {
-		t.Fatalf("panel missing navigation keys:\n%s", panel)
-	}
 	if !strings.Contains(panel, "worktree") { // the enter action's label
 		t.Fatalf("panel missing focused-PR actions:\n%s", panel)
+	}
+	// The static keymap is the legend's job: the panel carries only what the
+	// focused row can do, plus the two meta keys that get you out of it.
+	if strings.Contains(panel, "move") || strings.Contains(panel, "PRs/Issues") {
+		t.Fatalf("panel should not repeat the static navigation keys:\n%s", panel)
+	}
+	if !strings.Contains(panel, "all keys") || !strings.Contains(panel, "fold") {
+		t.Fatalf("panel missing the ? / ctrl+e meta keys:\n%s", panel)
 	}
 }
 

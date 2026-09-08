@@ -55,6 +55,9 @@ Apps: prdash, wtc.
   force-delete / `space` multi-select / `a` select-stale / `e` expand /
   `enter` switch).
 - `tab` — switch board (e.g. prdash's PR ↔ issue).
+- The footer is one compact line of hints. `ctrl+e` unfolds it into a panel of
+  the actions available for the focused row — context, not the static keymap,
+  which is `?`'s job.
 - Plain `j`/`k` + arrows move selection (free to use since the filter is
   gated behind `/`).
 - `?` — keymap overlay.

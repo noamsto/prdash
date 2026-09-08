@@ -40,7 +40,7 @@ type Layout struct {
 	rowColumns
 	ShowSide      bool
 	ShowFooter    bool // false hides the footer entirely, reclaiming its row(s) for content
-	ShowPanel     bool // dock the keys/actions panel instead of the status bar (only when ShowFooter)
+	ShowPanel     bool // dock the actions panel instead of the status bar (needs ShowFooter + unfolded)
 	ListWidth     int
 	ListInner     int // ListWidth minus the pane border: the width a row actually gets
 	SideWidth     int
@@ -49,11 +49,24 @@ type Layout struct {
 	ContentHeight int // rows available for the list/side bodies
 }
 
-// computeLayout derives pane geometry from the terminal size. The panel is
+// layout is the frame geometry for this model. Anything holding a Model asks
+// this, never computeLayout: a fold changes ContentHeight, so a size-only
+// answer sizes the list for a panel that isn't there.
+func (m Model) layout() Layout {
+	return computeLayoutWith(m.width, m.height, m.panelUnfolded)
+}
+
+// computeLayout is the geometry a terminal size alone implies, panel allowed:
+// the reservation authority, and the entry point for callers with no Model.
+func computeLayout(w, h int) Layout { return computeLayoutWith(w, h, true) }
+
+// computeLayoutWith derives pane geometry from the terminal size. The panel is
 // reserved purely on height (never list length, which would flicker as you
 // filter or scroll), and its height is taken from the width of the column it
 // docks under — the list column when the preview is showing, else full width.
-func computeLayout(w, h int) Layout {
+// A folded panel (panel=false) yields its rows to the one-line status bar,
+// which is the same geometry a terminal too short for the panel already gets.
+func computeLayoutWith(w, h int, panel bool) Layout {
 	const gap = 2
 	side := w * 55 / 100
 	list := w - side - gap
@@ -78,7 +91,7 @@ func computeLayout(w, h int) Layout {
 	listInner := listCol - 2
 	pr := panelRowsFor(listInner)
 	cols := columnLadder(listInner)
-	showPanel := footer && h-2-pr >= minMainRows
+	showPanel := panel && footer && h-2-pr >= minMainRows
 
 	var ch int
 	switch {
