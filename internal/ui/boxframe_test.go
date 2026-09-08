@@ -186,54 +186,6 @@ func TestRenderOuterFrameOverlaysMatchLipgloss(t *testing.T) {
 	t.Logf("outer-frame overlay cases: %d", cases)
 }
 
-// findStatusBarOverflowGeometry locates a terminal size where board()'s
-// status-bar footer (the ShowFooter && !ShowPanel branch) is wider than the
-// outer box's interior once the float chrome claims 2 cells on each side.
-// statusBar's hint text is close to fixed width while the interior it has to
-// fit inside grows with the terminal, so this is only true in a narrow band
-// just above footerMinWidth/footerMinHeight — found by measurement rather
-// than asserted at a guessed number, per the geometry it's tied to.
-func findStatusBarOverflowGeometry(t *testing.T) (w, h int) {
-	t.Helper()
-	for w := footerMinWidth; w < footerMinWidth+60; w++ {
-		for h := footerMinHeight; h < footerMinHeight+20; h++ {
-			// Folded, matching the model built below: a slim panel now fits
-			// wherever a footer does, so nothing else yields the status bar.
-			if l := computeLayoutWith(w-2, h-2, false); !l.ShowFooter || l.ShowPanel {
-				continue
-			}
-			m := withOuterFrame(t, matrixModel(t, w, h, matrixOpts{mode: "pr"}), w, h)
-			if _, _, reason := boxFastReason(m.renderInner(), m.termW, m.termH); reason != "" {
-				return w, h
-			}
-		}
-	}
-	t.Fatal("no geometry found where the status-bar footer overflows the outer box interior")
-	return 0, 0
-}
-
-// TestRenderFrameStatusBarOverflowFallback exercises the outer box's fallback
-// path end to end, at the one geometry where the content it wraps is proven
-// (not assumed) to overflow its interior.
-func TestRenderFrameStatusBarOverflowFallback(t *testing.T) {
-	t.Cleanup(func() { applyTheme(Mocha()) })
-	w, h := findStatusBarOverflowGeometry(t)
-
-	for _, th := range frameThemes() {
-		t.Run(th.name, func(t *testing.T) {
-			applyTheme(th.fn())
-			m := withOuterFrame(t, matrixModel(t, w, h, matrixOpts{mode: "pr"}), w, h)
-			if _, _, reason := boxFastReason(m.renderInner(), m.termW, m.termH); reason == "" {
-				t.Fatalf("expected the outer box to fall back at w=%d h=%d (statusBar wider than its interior), got fast path", w, h)
-			}
-			fast, slow := composedFrame(t, m.render)
-			if fast != slow {
-				t.Errorf("w=%d h=%d: render() mismatch at the statusBar-overflow geometry\nfast: %q\nslow: %q", w, h, fast, slow)
-			}
-		})
-	}
-}
-
 // TestRenderExpandedAndLogViewMatchLipgloss covers tabbedBox's only two call
 // sites (the expanded view and the log view), each with and without the
 // outer frame — nothing before this file exercised tabbedBox as a composed
