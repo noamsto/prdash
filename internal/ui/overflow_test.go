@@ -60,3 +60,46 @@ func TestExpandedViewNeverExceedsHeight(t *testing.T) {
 		}
 	}
 }
+
+// The rendered frame must never exceed the terminal width either — a wrapped
+// line pushes everything below it down and off-screen. Stressed with the
+// strings nothing bounds: repo name, title, body.
+func TestRenderNeverExceedsWidth(t *testing.T) {
+	longBody := strings.Repeat("long body line describing the bug in detail. ", 80)
+	for _, mode := range []string{"pr", "issue"} {
+		for _, unfolded := range []bool{false, true} {
+			for _, withSel := range []bool{false, true} {
+				for _, sz := range [][2]int{{40, 24}, {60, 25}, {70, 20}, {70, 40}, {80, 30}, {100, 35}, {119, 24}, {120, 30}, {160, 40}} {
+					w, h := sz[0], sz[1]
+					m := NewModel(".", "is:open", nil)
+					m.SetRepo("some-long-org-name/a-rather-long-repository-name-here")
+					m.viewerLogin = "me"
+					m.refreshing = true
+					if mode == "issue" {
+						m.mode = "issue"
+						m.section = NewIssueSection("is:open")
+						m.actions = action.DefaultIssueActions()
+						m.section.(*IssueSection).SetIssues([]gh.Issue{{Number: 20, Title: "a long issue title that keeps going for a while yet"}})
+						m.issueDetail[20] = gh.IssueDetail{Body: longBody}
+					} else {
+						m.setPRs([]gh.PR{{Number: 1, Title: "a long PR title that keeps going for a while yet", Author: author("me"), HeadRefName: "a-long-feature-branch-name"}})
+						m.detail[1] = gh.PRDetail{Comments: []gh.Comment{{Body: longBody}}}
+					}
+					m.loaded = true
+					m.width, m.height = w, h
+					m.panelUnfolded = unfolded
+					if withSel {
+						m.sel.toggle(0)
+					}
+					m.renderList()
+					for i, line := range strings.Split(stripANSIForTest(m.render()), "\n") {
+						if got := lipgloss.Width(line); got > w {
+							t.Fatalf("mode=%s unfolded=%v sel=%v %dx%d: line %d is %d cells wide: %q",
+								mode, unfolded, withSel, w, h, i, got, line)
+						}
+					}
+				}
+			}
+		}
+	}
+}

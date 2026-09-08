@@ -2391,35 +2391,72 @@ func TestFooterFoldTogglesPanel(t *testing.T) {
 	}
 }
 
-// TestStatusBarBranchTailFitsTerminal guards the branch tail's truncate budget:
-// the glyph and its space render outside it, so a cell left out of the budget
-// wraps the bar onto a second line and breaks the frame below it. Swept from
-// 100: the tail only appears with no preview pane, and under ~95 cells the
-// hint cells alone overrun the terminal — a separate, older gap.
-func TestStatusBarBranchTailFitsTerminal(t *testing.T) {
+// TestStatusBarFitsEveryWidth sweeps the whole supported range: the bar wraps
+// if any of its rows overruns the terminal, and a wrapped bar pushes the
+// frame's last row off-screen. Both boards, and both drafts states, since each
+// changes which cells the ladder has to fit.
+func TestStatusBarFitsEveryWidth(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.viewerLogin = "me"
 	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me"), HeadRefName: "a-long-feature-branch-name"}})
-	for w := 100; w < sideThreshold; w++ {
-		m.width, m.height = w, 30
-		for i, line := range strings.Split(stripANSIForTest(m.statusBar()), "\n") {
-			if got := lipgloss.Width(line); got > w {
-				t.Fatalf("w=%d line %d is %d cells wide: %q", w, i, got, line)
+	for _, hideDrafts := range []bool{false, true} {
+		m.hideDrafts = hideDrafts
+		for w := footerMinWidth; w <= 200; w++ {
+			m.width, m.height = w, 30
+			for i, line := range strings.Split(stripANSIForTest(m.statusBar()), "\n") {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("hideDrafts=%v w=%d line %d is %d cells wide: %q", hideDrafts, w, i, got, line)
+				}
 			}
 		}
 	}
 }
 
-// TestStatusBarShedsHelpCellWhenNarrow: ?:keys is the bar's one optional cell,
-// so a terminal with no room for it keeps the bar it already had.
-func TestStatusBarShedsHelpCellWhenNarrow(t *testing.T) {
+// TestStatusBarShedsOptionalHintsFirst: at the narrowest supported terminal the
+// bar drops its optional cells and keeps every escape hatch — including ?, the
+// way to find whatever was just shed.
+func TestStatusBarShedsOptionalHintsFirst(t *testing.T) {
 	m := newTestModelWithRows(t)
-	m.width, m.height = 119, 30
-	if !strings.Contains(stripANSIForTest(m.statusBar()), "?:keys") {
-		t.Fatalf("a wide-enough bar should advertise the legend:\n%s", stripANSIForTest(m.statusBar()))
+	m.width, m.height = footerMinWidth, 30
+	bar := stripANSIForTest(m.statusBar())
+	for _, want := range []string{"↵:worktree", "a:actions", "/:find", "?:keys", "q:quit"} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("a cramped bar should keep the escape hatch %q:\n%s", want, bar)
+		}
 	}
-	m.width = footerMinWidth
-	if strings.Contains(stripANSIForTest(m.statusBar()), "?:keys") {
-		t.Fatalf("a bar with no room should shed the legend cell:\n%s", stripANSIForTest(m.statusBar()))
+	if strings.Contains(bar, "D:drafts") {
+		t.Errorf("a cramped bar should shed the drafts toggle first:\n%s", bar)
+	}
+	m.width = 160
+	if wide := stripANSIForTest(m.statusBar()); !strings.Contains(wide, "D:drafts") {
+		t.Errorf("a wide bar should carry the optional hints:\n%s", wide)
+	}
+}
+
+// TestHeaderClampsLongRepoName: org/repo is unbounded — a 46-cell name like
+// kubernetes-sigs/cluster-api-provider-openstack is ordinary — and an
+// overflowing header wraps, pushing every row below it down and silently
+// costing the rate segment its slot.
+func TestHeaderClampsLongRepoName(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.viewerLogin = "me"
+	m.SetRepo("some-long-org-name/a-rather-long-repository-name-here")
+	m.setPRs([]gh.PR{{Number: 1, Title: "one", Author: author("me")}})
+	m.refreshing = true // the spinner segment shares the repo's budget
+	for _, withSel := range []bool{false, true} {
+		if withSel {
+			m.sel.toggle(0)
+		}
+		for w := 40; w <= 200; w++ {
+			m.width, m.height = w, 30
+			head := stripANSIForTest(m.header())
+			if got := lipgloss.Width(head); got > w {
+				t.Fatalf("sel=%v w=%d: header is %d cells wide: %q", withSel, w, got, head)
+			}
+		}
+	}
+	m.width = 70
+	if head := stripANSIForTest(m.header()); !strings.Contains(head, "name-here") {
+		t.Errorf("the clamp should keep the repo's tail, which identifies it: %q", head)
 	}
 }
