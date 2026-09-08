@@ -3197,12 +3197,20 @@ func legendExampleRow(w int, mode string) string {
 		diffstat(120, 8), ciGlyph("fail"), reviewDot("REVIEW_REQUIRED"), autoMergeGlyph(true))
 }
 
+// legendPaneSplit divides an interior into two panes and the 3-wide separator
+// between them (space · rule · space).
+func legendPaneSplit(innerW int) (leftW, rightW int) {
+	const sepW = 3
+	leftW = (innerW - sepW) / 2
+	return leftW, innerW - sepW - leftW
+}
+
 // legendSplits reports whether the two-pane form fits: every group must pack
-// without panelColumn's Width().Render soft-wrapping its widest cell. Derived
-// from the content rather than pinned to a width constant, so adding a longer
-// hint moves the threshold instead of silently producing a wrapped cell.
+// without renderLegendPanes' Width().Render soft-wrapping its widest cell.
+// Derived from the content rather than pinned to a width constant, so adding a
+// longer hint moves the threshold instead of silently producing a wrapped cell.
 func legendSplits(left, right []legendGroup, innerW int) bool {
-	lw, rw := panelSplit(innerW)
+	lw, rw := legendPaneSplit(innerW)
 	fits := func(groups []legendGroup, w int) bool {
 		if w < 1 {
 			return false
@@ -3220,7 +3228,7 @@ func legendSplits(left, right []legendGroup, innerW int) bool {
 // renderLegendPanes is the board legend's two-pane form: the example row across
 // the top, then "what the row is telling you" beside "what you can press".
 func renderLegendPanes(title string, left, right []legendGroup, example string, innerW, termH int) string {
-	lw, rw := panelSplit(innerW)
+	lw, rw := legendPaneSplit(innerW)
 	col := func(groups []legendGroup, w int) string {
 		return lipgloss.NewStyle().Width(w).Render(strings.Join(legendBlock(groups, w), "\n"))
 	}
