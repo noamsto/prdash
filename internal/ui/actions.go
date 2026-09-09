@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -660,6 +662,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
 	var nums []int
 	var merging []gh.PR
+	var hint string
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -667,6 +670,23 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		if a.Command.Native == "open-web" {
 			url := m.section.VarsAt(i).URL
 			calls = append(calls, func() error { return openURL(url) })
+			continue
+		}
+		if a.Command.Native == "open-issue" {
+			v := m.section.VarsAt(i)
+			argv := linkedIssueArgv(runtime.GOOS, v.Ticket, v.URL)
+			if argv == nil {
+				hint = "no linked issue"
+				continue
+			}
+			// Check the opener exists before claiming we opened anything: a
+			// detached spawn reports nothing, so an absent binary would
+			// otherwise fail invisibly in the background.
+			if _, err := exec.LookPath(argv[0]); err != nil {
+				hint = fmt.Sprintf("install the %s CLI to open %s", argv[0], v.Ticket)
+				continue
+			}
+			calls = append(calls, func() error { return spawnDetached(argv) })
 			continue
 		}
 		ps, ok := m.section.(*PRSection)
@@ -687,6 +707,10 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		}
 	}
 	if len(calls) == 0 {
+		if hint != "" {
+			m.actionStatus = &actionStat{ok: hint, settled: true}
+			return clearStatusCmd()
+		}
 		return nil
 	}
 	n := len(calls)

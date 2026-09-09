@@ -771,3 +771,64 @@ func TestApproveActionContract(t *testing.T) {
 		t.Error("approve (L) must refresh on success")
 	}
 }
+
+// A branch that names no ticket must settle to a hint, not silently no-op.
+func TestOpenIssueNoTicketHints(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 7, HeadRefName: "agents/no-id-here",
+		URL: "https://github.com/noamsto/prdash/pull/7"}})
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+
+	cmd := m.runBulk(a)
+	if m.actionStatus == nil {
+		t.Fatal("no ticket must set a status, not leave it nil")
+	}
+	if !m.actionStatus.settled {
+		t.Error("hint status should be settled — nothing is in flight")
+	}
+	if !strings.Contains(m.actionStatus.ok, "no linked issue") {
+		t.Errorf("status = %q, want it to mention \"no linked issue\"", m.actionStatus.ok)
+	}
+	if cmd == nil {
+		t.Error("hint must return a clear-status cmd so it doesn't stick")
+	}
+}
+
+// A Linear ticket with no linear CLI on PATH must name the missing binary
+// rather than opening a URL we never confirmed.
+func TestOpenIssueMissingCLIHints(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no linear, no xdg-open
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 8, HeadRefName: "eng-7659-must-differ-guard",
+		URL: "https://github.com/noamsto/prdash/pull/8"}})
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+
+	m.runBulk(a)
+	if m.actionStatus == nil {
+		t.Fatal("missing CLI must set a status")
+	}
+	if !strings.Contains(m.actionStatus.ok, "linear") {
+		t.Errorf("status = %q, want it to name the linear CLI", m.actionStatus.ok)
+	}
+	if !strings.Contains(m.actionStatus.ok, "ENG-7659") {
+		t.Errorf("status = %q, want it to name the ticket", m.actionStatus.ok)
+	}
+}
+
+func TestDefaultPRActionsHasOpenIssue(t *testing.T) {
+	a, ok := action.DefaultPRActions()["O"]
+	if !ok {
+		t.Fatal("O missing from DefaultPRActions")
+	}
+	if a.Command.Native != "open-issue" {
+		t.Errorf("Native = %q, want open-issue", a.Command.Native)
+	}
+	if a.Scope != "per-selected" {
+		t.Errorf("Scope = %q, want per-selected (matching o)", a.Scope)
+	}
+	if _, ok := action.DefaultIssueActions()["O"]; ok {
+		t.Error("O must not be bound on the issue board — a row there IS the issue")
+	}
+}

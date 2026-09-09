@@ -25,6 +25,11 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Builtin: "copy-branch"}, Scope: "single"},
 		"o": {Key: "o", Label: "Open in browser",
 			Command: Command{Native: "open-web"}, Scope: "per-selected"},
+		// O, not a chord: vim already reads o/O as a paired "open, other
+		// target". The Linear arm delegates to the linear CLI, which knows the
+		// workspace urlKey — a branch name yields only the team key.
+		"O": {Key: "O", Label: "Open linked issue",
+			Command: Command{Native: "open-issue"}, Scope: "per-selected"},
 		"W": {Key: "W", Label: "Bulk worktrees",
 			Command:  Command{Argv: []string{"wt", "switch", "{{.SwitchRef}}"}},
 			ExitsTUI: true, Scope: "per-selected"},
