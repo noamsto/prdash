@@ -3110,8 +3110,9 @@ func (m Model) keyPanes() []legendGroup {
 		{"↵", "worktree", nil}, {"W", "bulk", nil}, {"y", "#", nil}, {"Y", "url", nil}, {"b", "branch", nil}, {"o", "open", nil},
 	}
 	if m.mode == "pr" {
-		actions = append(actions, keyHint{"m", "merge", nil}, keyHint{"r", "rerun", nil}, keyHint{"u", "update", nil},
-			keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil}, keyHint{"X", "cleanup branch", nil})
+		actions = append(actions, keyHint{"O", "issue", nil}, keyHint{"m", "merge", nil}, keyHint{"r", "rerun", nil},
+			keyHint{"u", "update", nil}, keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil},
+			keyHint{"X", "cleanup branch", nil})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
 
@@ -3263,7 +3264,7 @@ func renderLegendPanes(title string, left, right []legendGroup, example string, 
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o"}
+var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o", "O", "X"}
 
 type keyHint struct {
 	key, label string

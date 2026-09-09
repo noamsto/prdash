@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -653,13 +656,16 @@ func (m Model) resolvePRAction(a action.Action) action.Action {
 // runBulkNative is runBulk's native-mutation counterpart, firing
 // a.Command.Native against mutationSource for each selected row instead of
 // building/running gh CLI argv, with the same aggregate success/fail counting.
-// open-web only needs the row's URL (works on either board); the PR mutations
-// need the full gh.PR (ID/State/IsDraft/mergeable) and so are skipped when the
-// active board isn't the PR section.
+// open-web only needs the row's URL (works on either board); open-issue can
+// settle a status without dispatching anything, when no selected row resolves;
+// the PR mutations need the full gh.PR (ID/State/IsDraft/mergeable) and so are
+// skipped when the active board isn't the PR section.
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
 	var nums []int
 	var merging []gh.PR
+	var noTicket int
+	var openerErr string
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -667,6 +673,24 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		if a.Command.Native == "open-web" {
 			url := m.section.VarsAt(i).URL
 			calls = append(calls, func() error { return openURL(url) })
+			continue
+		}
+		if a.Command.Native == "open-issue" {
+			v := m.section.VarsAt(i)
+			argv := linkedIssueArgv(runtime.GOOS, v.Ticket, v.URL)
+			if argv == nil {
+				noTicket++
+				continue
+			}
+			// Start surfaces an absent binary too, but only as "N of M failed".
+			// Pre-flighting names it, and keeps the row out of n.
+			if _, err := exec.LookPath(argv[0]); err != nil {
+				if openerErr == "" { // first failing row wins, so order can't change the message
+					openerErr = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
+				}
+				continue
+			}
+			calls = append(calls, func() error { return openLinkedIssue(argv) })
 			continue
 		}
 		ps, ok := m.section.(*PRSection)
@@ -687,10 +711,18 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		}
 	}
 	if len(calls) == 0 {
+		if noTicket > 0 || openerErr != "" {
+			m.actionStatus = openIssueStat(a, 0, noTicket, openerErr)
+			return clearStatusCmd()
+		}
 		return nil
 	}
 	n := len(calls)
-	m.actionStatus = statForBulk(a, n)
+	if a.Command.Native == "open-issue" {
+		m.actionStatus = openIssueStat(a, n, noTicket, openerErr)
+	} else {
+		m.actionStatus = statForBulk(a, n)
+	}
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
 	m.actionStatus.merged = merging
@@ -698,6 +730,12 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		m.invalidateLaunchCache(nums...)
 	}
 	m.sel.clear() // the batch op consumes the selection
+	// The actionDoneMsg arm assigns err unconditionally, so a spawn that works
+	// would nil this error out and settle to an empty ✓.
+	openerFail := ""
+	if openerErr != "" {
+		openerFail = m.actionStatus.fail
+	}
 	return tea.Batch(func() tea.Msg {
 		var failed int
 		var lastErr error
@@ -708,6 +746,9 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			}
 		}
 		if failed == 0 {
+			if openerFail != "" {
+				return actionDoneMsg{err: errors.New(openerFail), fail: openerFail}
+			}
 			return actionDoneMsg{}
 		}
 		if n == 1 {
@@ -786,4 +827,34 @@ func (m *Model) cascadeMutateCmd() tea.Cmd {
 	r.stat.run = fmt.Sprintf("Updating stack %d/%d · #%d", len(r.done)+1, r.plan.count(), link.pr.Number)
 	fn, _ := m.nativeMutationFn("update-branch", link.pr)
 	return func() tea.Msg { return cascadeUpdatedMsg{err: fn()} }
+}
+
+// openIssueStat is the settled badge for an O press. A missing opener is a
+// configuration error the user must act on, so it takes the fail arm even when
+// other rows opened — otherwise the one reason worth reading is the one that
+// gets dropped. A branch naming no ticket is benign and only demotes the
+// wording to a count. Callers must not pass all zeros; it has no such state.
+func openIssueStat(a action.Action, opened, noTicket int, openerErr string) *actionStat {
+	if openerErr != "" {
+		msg := openerErr
+		if opened > 0 {
+			msg = fmt.Sprintf("%s · %d opened", msg, opened)
+		}
+		if noTicket > 0 {
+			msg = fmt.Sprintf("%s · %d without a ticket", msg, noTicket)
+		}
+		return &actionStat{err: errors.New(msg), fail: msg, settled: true}
+	}
+	if opened == 0 {
+		msg := "no linked issue"
+		if noTicket > 1 {
+			msg = fmt.Sprintf("no linked issue on %d rows", noTicket)
+		}
+		return &actionStat{err: errors.New(msg), fail: msg, settled: true}
+	}
+	s := statForBulk(a, opened)
+	if noTicket > 0 {
+		s.ok = fmt.Sprintf("%s · %d skipped", s.ok, noTicket)
+	}
+	return s
 }

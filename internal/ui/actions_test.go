@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -769,5 +771,236 @@ func TestApproveActionContract(t *testing.T) {
 	}
 	if !a.Refresh {
 		t.Error("approve (L) must refresh on success")
+	}
+}
+
+// A branch that names no ticket must settle to a hint, not silently no-op.
+func TestOpenIssueNoTicketHints(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 7, HeadRefName: "agents/no-id-here",
+		URL: "https://github.com/noamsto/prdash/pull/7"}})
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+
+	cmd := m.runBulk(a)
+	if m.actionStatus == nil {
+		t.Fatal("no ticket must set a status, not leave it nil")
+	}
+	if !m.actionStatus.settled {
+		t.Error("hint status should be settled — nothing is in flight")
+	}
+	if m.actionStatus.err == nil {
+		t.Error("hint status must carry an error so it paints ✗, not ✓")
+	}
+	if !strings.Contains(m.actionStatus.fail, "no linked issue") {
+		t.Errorf("status = %q, want it to mention \"no linked issue\"", m.actionStatus.fail)
+	}
+	if cmd == nil {
+		t.Error("hint must return a clear-status cmd so it doesn't stick")
+	}
+}
+
+// A Linear ticket with no linear CLI on PATH must name the missing binary
+// rather than opening a URL we never confirmed.
+func TestOpenIssueMissingCLIHints(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no linear, no xdg-open
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{{Number: 8, HeadRefName: "eng-7659-must-differ-guard",
+		URL: "https://github.com/noamsto/prdash/pull/8"}})
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+
+	cmd := m.runBulk(a)
+	if m.actionStatus == nil {
+		t.Fatal("missing CLI must set a status")
+	}
+	if !m.actionStatus.settled {
+		t.Error("hint status should be settled — nothing is in flight")
+	}
+	if m.actionStatus.err == nil {
+		t.Error("hint status must carry an error so it paints ✗, not ✓")
+	}
+	if !strings.Contains(m.actionStatus.fail, "linear") {
+		t.Errorf("status = %q, want it to name the linear CLI", m.actionStatus.fail)
+	}
+	if !strings.Contains(m.actionStatus.fail, "ENG-7659") {
+		t.Errorf("status = %q, want it to name the ticket", m.actionStatus.fail)
+	}
+	if cmd == nil {
+		t.Error("hint must return a clear-status cmd so it doesn't stick")
+	}
+}
+
+// A mixed selection where some rows resolve and others don't must still open
+// the resolvable ones, and must name the ones it skipped rather than letting
+// them vanish with the selection that gets cleared.
+func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
+	// Empty is enough only because this test discards the cmd, so the stub
+	// never execs. Drive the cmd and it needs a real body, or Start fails
+	// ENOEXEC and the failure path passes for the wrong reason.
+	dir := t.TempDir()
+	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
+	if err := os.WriteFile(stub, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	m := NewModel("/repo", "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{
+		{Number: 1, HeadRefName: "feat/213-a", URL: "https://github.com/o/r/pull/1"},
+		{Number: 2, HeadRefName: "feat/214-b", URL: "https://github.com/o/r/pull/2"},
+		{Number: 3, HeadRefName: "agents/no-id", URL: "https://github.com/o/r/pull/3"},
+	})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+	m.sel.toggle(2)
+
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+	m.runBulk(a)
+
+	if m.actionStatus == nil {
+		t.Fatal("mixed selection must set a status")
+	}
+	if !strings.Contains(m.actionStatus.ok, "1 skipped") {
+		t.Errorf("status = %q, want it to report 1 skipped row", m.actionStatus.ok)
+	}
+	if !strings.Contains(m.actionStatus.ok, "×2") {
+		t.Errorf("status = %q, want it to report the 2 rows that opened", m.actionStatus.ok)
+	}
+}
+
+// A resolvable GitHub row alongside a row whose opener is missing must not let
+// the missing-opener reason get dropped by the row that succeeded — the exact
+// gap the final review flagged as Important #1.
+func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
+	// This stub must really run: the branch under test is the one where every
+	// spawn succeeded, and an empty file execs ENOEXEC into the failure path.
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir) // stub opener present, no linear
+
+	m := NewModel("/repo", "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{
+		{Number: 1, HeadRefName: "feat/213-a", URL: "https://github.com/o/r/pull/1"},
+		{Number: 2, HeadRefName: "eng-7659-must-differ-guard", URL: "https://github.com/o/r/pull/2"},
+	})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+	cmd := m.runBulk(a)
+
+	if m.actionStatus == nil {
+		t.Fatal("mixed success/missing-opener must set a status")
+	}
+	if m.actionStatus.err == nil {
+		t.Error("a missing opener must paint ✗ even though another row opened")
+	}
+	if !strings.Contains(m.actionStatus.fail, "linear") {
+		t.Errorf("status = %q, want it to name the missing linear CLI", m.actionStatus.fail)
+	}
+	if !strings.Contains(m.actionStatus.fail, "1 opened") {
+		t.Errorf("status = %q, want it to still report the row that opened", m.actionStatus.fail)
+	}
+
+	// Asserting on actionStatus alone pins a state the runtime then discards:
+	// the spawn succeeds, and the actionDoneMsg arm assigns err unconditionally.
+	// Drive the message through to prove the reason actually survives on screen.
+	msg := firstBatchMsg(t, cmd)
+	done, ok := msg.(actionDoneMsg)
+	if !ok {
+		t.Fatalf("want an actionDoneMsg from the spawn closure, got %T", msg)
+	}
+	u, _ := m.Update(done)
+	m = u.(Model)
+	if m.actionStatus.err == nil {
+		t.Error("the missing-opener error must survive its own successful sibling spawn")
+	}
+	if !strings.Contains(m.actionStatus.fail, "linear") {
+		t.Errorf("settled status = %q, want it to still name the missing linear CLI", m.actionStatus.fail)
+	}
+}
+
+// openIssueStat is pure, so its whole decision table is covered directly
+// rather than through runBulk plumbing.
+func TestOpenIssueStat(t *testing.T) {
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}}
+	const openerErr = "linear not found — can't open ENG-1"
+
+	tests := []struct {
+		name             string
+		opened, noTicket int
+		openerErr        string
+		wantErr          bool
+		wantMsg          string
+	}{
+		{name: "opener error alone", opened: 0, noTicket: 0, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr},
+		{name: "opener error with opens", opened: 2, noTicket: 0, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr + " · 2 opened"},
+		{name: "opener error with opens and no-ticket rows", opened: 2, noTicket: 1, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr + " · 2 opened · 1 without a ticket"},
+		{name: "opener error with no-ticket rows and no opens", opened: 0, noTicket: 1, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr + " · 1 without a ticket"},
+		{name: "all-skipped single", opened: 0, noTicket: 1, openerErr: "",
+			wantErr: true, wantMsg: "no linked issue"},
+		{name: "all-skipped plural", opened: 0, noTicket: 3, openerErr: "",
+			wantErr: true, wantMsg: "no linked issue on 3 rows"},
+		{name: "opens plus no-ticket", opened: 2, noTicket: 1, openerErr: "",
+			wantErr: false, wantMsg: "Open linked issue ×2 · 1 skipped"},
+		{name: "opens only", opened: 1, noTicket: 0, openerErr: "",
+			wantErr: false, wantMsg: "Open linked issue"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := openIssueStat(a, tt.opened, tt.noTicket, tt.openerErr)
+			if (s.err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want non-nil: %v", s.err, tt.wantErr)
+			}
+			got := s.ok
+			if tt.wantErr {
+				got = s.fail
+			}
+			if got != tt.wantMsg {
+				t.Errorf("message = %q, want %q", got, tt.wantMsg)
+			}
+		})
+	}
+}
+
+// actionOrder drives the docked footer panel independently of DefaultPRActions,
+// so an action added to one and not the other silently vanishes from the
+// panel. Pin the two in sync here.
+func TestActionOrderCoversDefaultPRActions(t *testing.T) {
+	for key := range action.DefaultPRActions() {
+		if !slices.Contains(actionOrder, key) {
+			t.Errorf("action %q missing from actionOrder — it won't show in the footer panel", key)
+		}
+	}
+}
+
+func TestDefaultPRActionsHasOpenIssue(t *testing.T) {
+	a, ok := action.DefaultPRActions()["O"]
+	if !ok {
+		t.Fatal("O missing from DefaultPRActions")
+	}
+	if a.Command.Native != "open-issue" {
+		t.Errorf("Native = %q, want open-issue", a.Command.Native)
+	}
+	if a.Scope != "per-selected" {
+		t.Errorf("Scope = %q, want per-selected (matching o)", a.Scope)
+	}
+	if _, ok := action.DefaultIssueActions()["O"]; ok {
+		t.Error("O must not be bound on the issue board — a row there IS the issue")
 	}
 }
