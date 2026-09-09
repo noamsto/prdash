@@ -690,7 +690,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				}
 				continue
 			}
-			calls = append(calls, func() error { return spawnDetached(argv) })
+			calls = append(calls, func() error { return openLinkedIssue(argv) })
 			continue
 		}
 		ps, ok := m.section.(*PRSection)
