@@ -51,7 +51,8 @@ Apps: prdash, wtc.
 - The filter box is **always visible** but starts **blurred**. `/` focuses it
   for a live incremental fuzzy filter; `esc` blurs it back.
 - Bare letter keys are actions while the box is blurred (e.g. prdash's `m`
-  merge / `r` rerun / `o` open / `a` actions palette; wtc's `d` delete / `D`
+  merge / `r` rerun / `o` open PR / `O` open linked issue / `a` actions
+  palette; wtc's `d` delete / `D`
   force-delete / `space` multi-select / `a` select-stale / `e` expand /
   `enter` switch).
 - `tab` — switch board (e.g. prdash's PR ↔ issue).
