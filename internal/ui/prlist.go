@@ -59,11 +59,12 @@ type Model struct {
 	rowGen            int                  // bumped whenever the shown set/content changes (applyFilter), invalidating rowText
 	listColHeader     string               // sticky column-label row above the board; "" hides it (empty/non-PR views)
 	vp                viewport.Model
-	cursor            int // indexes the section's shown set
-	cursorLine        int // display-line offset of the cursor row (headers shift it)
-	cursorRows        int // display height of the cursor row
-	cursorTop         int // topmost line to keep visible for the cursor (its group header, if any)
-	previewOffset     int // alt+j/k scroll position within the side preview
+	cursor            int  // indexes the section's shown set
+	cursorLine        int  // display-line offset of the cursor row (headers shift it)
+	cursorRows        int  // display height of the cursor row
+	cursorTop         int  // topmost line to keep visible for the cursor (its group header, if any)
+	cursorHomed       bool // the opening jump to Mine has been spent
+	previewOffset     int  // alt+j/k scroll position within the side preview
 	width             int
 	height            int
 	termW             int // full terminal size; width/height are the inner content box when outerFrame
@@ -458,6 +459,7 @@ func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
 	if n := m.section.Len(); m.cursor >= n {
 		m.cursor = max(0, n-1)
 	}
+	m.homeCursorOnMine()
 }
 
 // setIssueSections paints the open issue board's Mine → Others split, with
@@ -505,6 +507,7 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 	if n := m.section.Len(); m.cursor >= n {
 		m.cursor = max(0, n-1)
 	}
+	m.homeCursorOnMine()
 }
 
 // commentedByMe reports whether the viewer's latest review on number is a
@@ -561,6 +564,30 @@ func spanOf(n, cur int, label func(int) string) (lo, hi int) {
 		hi++
 	}
 	return lo, hi
+}
+
+// homeCursorOnMine parks the cursor on the first Mine row, once. It stays
+// pending until the viewer login resolves, because the sections fetch can land
+// first and Mine collapses into Others until it does; it is spent on the first
+// grouped paint after that, so a later poll never yanks the cursor.
+func (m *Model) homeCursorOnMine() {
+	if m.cursorHomed || m.viewerLogin == "" || m.section.Len() == 0 {
+		return
+	}
+	g, ok := m.section.(grouper)
+	if !ok || !g.isGrouped() {
+		return
+	}
+	m.cursorHomed = true
+	if m.cursor != 0 {
+		return // the cursor is already somewhere the user put it
+	}
+	for i := range m.section.Len() {
+		if g.groupLabelAt(i) == "Mine" {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 // groupRange returns the inclusive [lo, hi] shown-index span of the cursor's

@@ -2685,3 +2685,59 @@ func TestHeaderClampsLongRepoName(t *testing.T) {
 		t.Errorf("the clamp should keep the repo's tail, which identifies it: %q", head)
 	}
 }
+
+// mineSections paints a board whose first row is Review requested, so a cursor
+// on Mine is distinguishable from a cursor left at 0.
+func mineSections(m *Model, viewer string) {
+	m.setSections(
+		[]gh.PR{{Number: 9, Title: "please review", Author: author("someone")}},
+		nil,
+		[]gh.PR{{Number: 1, Title: "my pr", Author: author("me")}, {Number: 2, Title: "theirs", Author: author("other")}},
+		viewer,
+	)
+}
+
+func TestBoardOpensOnMine(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 130, 40
+	m.viewerLogin = "me"
+	mineSections(&m, "me")
+
+	ps := m.section.(*PRSection)
+	if got := ps.prAt(m.cursor).Number; got != 1 {
+		t.Fatalf("board should open on the Mine row #1, got #%d", got)
+	}
+}
+
+func TestBoardOpensOnMineWaitsForViewer(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 130, 40
+
+	mineSections(&m, "") // sections landed before the viewer login resolved
+	if m.cursor != 0 {
+		t.Fatalf("with no viewer there is no Mine to home onto, cursor = %d", m.cursor)
+	}
+
+	m.viewerLogin = "me"
+	mineSections(&m, "me") // viewerFetchedMsg re-runs the split
+	ps := m.section.(*PRSection)
+	if got := ps.prAt(m.cursor).Number; got != 1 {
+		t.Fatalf("once the viewer resolves the cursor should home to #1, got #%d", got)
+	}
+}
+
+func TestBoardHomesOnMineOnlyOnce(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("x")
+	m.width, m.height = 130, 40
+	m.viewerLogin = "me"
+	mineSections(&m, "me")
+
+	m.cursor = 0 // the user walked back up to the Review requested row
+	mineSections(&m, "me")
+	if m.cursor != 0 {
+		t.Fatalf("a later refetch must not yank the cursor back to Mine, cursor = %d", m.cursor)
+	}
+}
