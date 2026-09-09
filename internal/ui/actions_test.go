@@ -787,8 +787,11 @@ func TestOpenIssueNoTicketHints(t *testing.T) {
 	if !m.actionStatus.settled {
 		t.Error("hint status should be settled — nothing is in flight")
 	}
-	if !strings.Contains(m.actionStatus.ok, "no linked issue") {
-		t.Errorf("status = %q, want it to mention \"no linked issue\"", m.actionStatus.ok)
+	if m.actionStatus.err == nil {
+		t.Error("hint status must carry an error so it paints ✗, not ✓")
+	}
+	if !strings.Contains(m.actionStatus.fail, "no linked issue") {
+		t.Errorf("status = %q, want it to mention \"no linked issue\"", m.actionStatus.fail)
 	}
 	if cmd == nil {
 		t.Error("hint must return a clear-status cmd so it doesn't stick")
@@ -805,15 +808,64 @@ func TestOpenIssueMissingCLIHints(t *testing.T) {
 	a := action.Action{Key: "O", Label: "Open linked issue",
 		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
 
-	m.runBulk(a)
+	cmd := m.runBulk(a)
 	if m.actionStatus == nil {
 		t.Fatal("missing CLI must set a status")
 	}
-	if !strings.Contains(m.actionStatus.ok, "linear") {
-		t.Errorf("status = %q, want it to name the linear CLI", m.actionStatus.ok)
+	if !m.actionStatus.settled {
+		t.Error("hint status should be settled — nothing is in flight")
 	}
-	if !strings.Contains(m.actionStatus.ok, "ENG-7659") {
-		t.Errorf("status = %q, want it to name the ticket", m.actionStatus.ok)
+	if m.actionStatus.err == nil {
+		t.Error("hint status must carry an error so it paints ✗, not ✓")
+	}
+	if !strings.Contains(m.actionStatus.fail, "linear") {
+		t.Errorf("status = %q, want it to name the linear CLI", m.actionStatus.fail)
+	}
+	if !strings.Contains(m.actionStatus.fail, "ENG-7659") {
+		t.Errorf("status = %q, want it to name the ticket", m.actionStatus.fail)
+	}
+	if cmd == nil {
+		t.Error("hint must return a clear-status cmd so it doesn't stick")
+	}
+}
+
+// A mixed selection where some rows resolve and others don't must still open
+// the resolvable ones, and must name the ones it skipped rather than letting
+// them vanish with the selection that gets cleared.
+func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
+	// A stub opener keeps this hermetic: the two resolvable rows really do
+	// spawn, so the ×2-plus-skipped wording is exercised end to end.
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "xdg-open")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	m := NewModel("/repo", "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{
+		{Number: 1, HeadRefName: "feat/213-a", URL: "https://github.com/o/r/pull/1"},
+		{Number: 2, HeadRefName: "feat/214-b", URL: "https://github.com/o/r/pull/2"},
+		{Number: 3, HeadRefName: "agents/no-id", URL: "https://github.com/o/r/pull/3"},
+	})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+	m.sel.toggle(2)
+
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+	m.runBulk(a)
+
+	if m.actionStatus == nil {
+		t.Fatal("mixed selection must set a status")
+	}
+	if !strings.Contains(m.actionStatus.ok, "1 skipped") {
+		t.Errorf("status = %q, want it to report 1 skipped row", m.actionStatus.ok)
+	}
+	if !strings.Contains(m.actionStatus.ok, "×2") {
+		t.Errorf("status = %q, want it to report the 2 rows that opened", m.actionStatus.ok)
 	}
 }
 

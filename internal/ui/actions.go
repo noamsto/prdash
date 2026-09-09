@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -655,14 +656,17 @@ func (m Model) resolvePRAction(a action.Action) action.Action {
 // runBulkNative is runBulk's native-mutation counterpart, firing
 // a.Command.Native against mutationSource for each selected row instead of
 // building/running gh CLI argv, with the same aggregate success/fail counting.
-// open-web only needs the row's URL (works on either board); the PR mutations
-// need the full gh.PR (ID/State/IsDraft/mergeable) and so are skipped when the
-// active board isn't the PR section.
+// open-web only needs the row's URL (works on either board); open-issue can
+// settle a status without dispatching anything, when every selected row lacks
+// a resolvable ticket/opener; the PR mutations need the full gh.PR
+// (ID/State/IsDraft/mergeable) and so are skipped when the active board isn't
+// the PR section.
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
 	var nums []int
 	var merging []gh.PR
 	var hint string
+	var skipped int
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -677,13 +681,15 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			argv := linkedIssueArgv(runtime.GOOS, v.Ticket, v.URL)
 			if argv == nil {
 				hint = "no linked issue"
+				skipped++
 				continue
 			}
 			// Check the opener exists before claiming we opened anything: a
 			// detached spawn reports nothing, so an absent binary would
 			// otherwise fail invisibly in the background.
 			if _, err := exec.LookPath(argv[0]); err != nil {
-				hint = fmt.Sprintf("install the %s CLI to open %s", argv[0], v.Ticket)
+				hint = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
+				skipped++
 				continue
 			}
 			calls = append(calls, func() error { return spawnDetached(argv) })
@@ -708,7 +714,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	}
 	if len(calls) == 0 {
 		if hint != "" {
-			m.actionStatus = &actionStat{ok: hint, settled: true}
+			m.actionStatus = &actionStat{err: errors.New(hint), fail: hint, settled: true}
 			return clearStatusCmd()
 		}
 		return nil
@@ -718,6 +724,11 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
 	m.actionStatus.merged = merging
+	// A mixed selection partly succeeded: name the remainder, or the skipped
+	// rows vanish with the selection that m.sel.clear() is about to consume.
+	if skipped > 0 {
+		m.actionStatus.ok = fmt.Sprintf("%s · %d skipped", m.actionStatus.ok, skipped)
+	}
 	if a.Refresh {
 		m.invalidateLaunchCache(nums...)
 	}
