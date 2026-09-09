@@ -76,5 +76,5 @@ and the Board archetype line in `KEYMAP.md`.
 
 - `ticketID` → URL/argv mapping, table-driven: GitHub id, Linear id, no id.
 - The two status-hint paths: no ticket parsed; Linear id with no `linear` on PATH.
-- `openIssueArgv` split out like `browserArgv`/`clipboardArgv`, so the command
+- `linkedIssueArgv` split out like `browserArgv`/`clipboardArgv`, so the command
   choice is asserted without spawning anything.
