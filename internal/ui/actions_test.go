@@ -878,7 +878,11 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
-	if err := os.WriteFile(stub, nil, 0o755); err != nil {
+	// This stub must really run: the test drives the spawn closure below, and
+	// the branch under test is the one where every spawn succeeded. An empty
+	// file execs with "exec format error" and would exercise the failure path
+	// instead, passing for the wrong reason.
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir) // stub opener present, no linear
@@ -895,7 +899,7 @@ func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 
 	a := action.Action{Key: "O", Label: "Open linked issue",
 		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
-	m.runBulk(a)
+	cmd := m.runBulk(a)
 
 	if m.actionStatus == nil {
 		t.Fatal("mixed success/missing-opener must set a status")
@@ -908,6 +912,29 @@ func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 	}
 	if !strings.Contains(m.actionStatus.fail, "1 opened") {
 		t.Errorf("status = %q, want it to still report the row that opened", m.actionStatus.fail)
+	}
+
+	// Asserting on actionStatus alone pins a state the runtime then discards:
+	// the spawn succeeds, and the actionDoneMsg arm assigns err unconditionally.
+	// Drive the message through to prove the reason actually survives on screen.
+	if cmd == nil {
+		t.Fatal("a batch with queued spawns must return a command")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("want a spawn+spinner batch, got %T", cmd())
+	}
+	done, ok := batch[0]().(actionDoneMsg) // the spawn closure, per the tea.Batch call order
+	if !ok {
+		t.Fatalf("want an actionDoneMsg from the spawn closure, got %T", batch[0]())
+	}
+	u, _ := m.Update(done)
+	m = u.(Model)
+	if m.actionStatus.err == nil {
+		t.Error("the missing-opener error must survive its own successful sibling spawn")
+	}
+	if !strings.Contains(m.actionStatus.fail, "linear") {
+		t.Errorf("settled status = %q, want it to still name the missing linear CLI", m.actionStatus.fail)
 	}
 }
 
@@ -931,6 +958,8 @@ func TestOpenIssueStat(t *testing.T) {
 			wantErr: true, wantMsg: openerErr + " · 2 opened"},
 		{name: "opener error with opens and no-ticket rows", opened: 2, noTicket: 1, openerErr: openerErr,
 			wantErr: true, wantMsg: openerErr + " · 2 opened · 1 without a ticket"},
+		{name: "opener error with no-ticket rows and no opens", opened: 0, noTicket: 1, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr + " · 1 without a ticket"},
 		{name: "all-skipped single", opened: 0, noTicket: 1, openerErr: "",
 			wantErr: true, wantMsg: "no linked issue"},
 		{name: "all-skipped plural", opened: 0, noTicket: 3, openerErr: "",

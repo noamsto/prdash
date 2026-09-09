@@ -736,6 +736,14 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		m.invalidateLaunchCache(nums...)
 	}
 	m.sel.clear() // the batch op consumes the selection
+	// A missing opener has to survive its own successful siblings: the
+	// actionDoneMsg arm assigns err unconditionally, so a spawn that works
+	// would nil this error out and settle to an empty ✓. Reuse the wording
+	// openIssueStat already built rather than rebuilding it.
+	openerFail := ""
+	if openerErr != "" {
+		openerFail = m.actionStatus.fail
+	}
 	return tea.Batch(func() tea.Msg {
 		var failed int
 		var lastErr error
@@ -746,6 +754,9 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			}
 		}
 		if failed == 0 {
+			if openerFail != "" {
+				return actionDoneMsg{err: errors.New(openerFail), fail: openerFail}
+			}
 			return actionDoneMsg{}
 		}
 		if n == 1 {
@@ -830,7 +841,9 @@ func (m *Model) cascadeMutateCmd() tea.Cmd {
 // configuration error the user must act on, so it takes the fail arm even when
 // other rows opened successfully — otherwise the one reason worth reading is
 // the one that gets dropped. A branch that simply names no ticket is benign and
-// only ever demotes the wording to a count.
+// only ever demotes the wording to a count. An all-zero call would report "no
+// linked issue" wrongly; both call sites guard it, so there is nothing to check
+// here.
 func openIssueStat(a action.Action, opened, noTicket int, openerErr string) *actionStat {
 	if openerErr != "" {
 		msg := openerErr
