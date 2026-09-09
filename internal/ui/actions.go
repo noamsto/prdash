@@ -665,8 +665,8 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
 	var nums []int
 	var merging []gh.PR
-	var hint string
-	var skipped int
+	var noTicket int
+	var openerErr string
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -680,16 +680,20 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			v := m.section.VarsAt(i)
 			argv := linkedIssueArgv(runtime.GOOS, v.Ticket, v.URL)
 			if argv == nil {
-				hint = "no linked issue"
-				skipped++
+				noTicket++
 				continue
 			}
-			// Check the opener exists before claiming we opened anything: a
-			// detached spawn reports nothing, so an absent binary would
-			// otherwise fail invisibly in the background.
+			// LookPath before spawning: Start (inside spawnDetached) would
+			// surface an absent binary too, but only through the aggregate
+			// "N of M failed" wording. This pre-flight buys a message that
+			// names the binary and the ticket, and keeps the row out of the
+			// success count instead of counting as an opened-then-failed one.
 			if _, err := exec.LookPath(argv[0]); err != nil {
-				hint = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
-				skipped++
+				if openerErr == "" {
+					// First failing row wins, so the message is deterministic
+					// regardless of selection order.
+					openerErr = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
+				}
 				continue
 			}
 			calls = append(calls, func() error { return spawnDetached(argv) })
@@ -713,22 +717,21 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		}
 	}
 	if len(calls) == 0 {
-		if hint != "" {
-			m.actionStatus = &actionStat{err: errors.New(hint), fail: hint, settled: true}
+		if noTicket > 0 || openerErr != "" {
+			m.actionStatus = openIssueStat(a, 0, noTicket, openerErr)
 			return clearStatusCmd()
 		}
 		return nil
 	}
 	n := len(calls)
-	m.actionStatus = statForBulk(a, n)
+	if a.Command.Native == "open-issue" {
+		m.actionStatus = openIssueStat(a, n, noTicket, openerErr)
+	} else {
+		m.actionStatus = statForBulk(a, n)
+	}
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
 	m.actionStatus.merged = merging
-	// A mixed selection partly succeeded: name the remainder, or the skipped
-	// rows vanish with the selection that m.sel.clear() is about to consume.
-	if skipped > 0 {
-		m.actionStatus.ok = fmt.Sprintf("%s · %d skipped", m.actionStatus.ok, skipped)
-	}
 	if a.Refresh {
 		m.invalidateLaunchCache(nums...)
 	}
@@ -821,4 +824,34 @@ func (m *Model) cascadeMutateCmd() tea.Cmd {
 	r.stat.run = fmt.Sprintf("Updating stack %d/%d · #%d", len(r.done)+1, r.plan.count(), link.pr.Number)
 	fn, _ := m.nativeMutationFn("update-branch", link.pr)
 	return func() tea.Msg { return cascadeUpdatedMsg{err: fn()} }
+}
+
+// openIssueStat is the settled badge for an O press. A missing opener is a
+// configuration error the user must act on, so it takes the fail arm even when
+// other rows opened successfully — otherwise the one reason worth reading is
+// the one that gets dropped. A branch that simply names no ticket is benign and
+// only ever demotes the wording to a count.
+func openIssueStat(a action.Action, opened, noTicket int, openerErr string) *actionStat {
+	if openerErr != "" {
+		msg := openerErr
+		if opened > 0 {
+			msg = fmt.Sprintf("%s · %d opened", msg, opened)
+		}
+		if noTicket > 0 {
+			msg = fmt.Sprintf("%s · %d without a ticket", msg, noTicket)
+		}
+		return &actionStat{err: errors.New(msg), fail: msg, settled: true}
+	}
+	if opened == 0 {
+		msg := "no linked issue"
+		if noTicket > 1 {
+			msg = fmt.Sprintf("no linked issue on %d rows", noTicket)
+		}
+		return &actionStat{err: errors.New(msg), fail: msg, settled: true}
+	}
+	s := statForBulk(a, opened)
+	if noTicket > 0 {
+		s.ok = fmt.Sprintf("%s · %d skipped", s.ok, noTicket)
+	}
+	return s
 }

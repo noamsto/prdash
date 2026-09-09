@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -834,11 +835,12 @@ func TestOpenIssueMissingCLIHints(t *testing.T) {
 // the resolvable ones, and must name the ones it skipped rather than letting
 // them vanish with the selection that gets cleared.
 func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
-	// A stub opener keeps this hermetic: the two resolvable rows really do
-	// spawn, so the ×2-plus-skipped wording is exercised end to end.
+	// The stub only needs to satisfy the LookPath pre-flight — runBulk's
+	// returned tea.Cmd is discarded here, so the stub itself is never
+	// executed.
 	dir := t.TempDir()
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(stub, nil, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -867,6 +869,102 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 	}
 	if !strings.Contains(m.actionStatus.ok, "×2") {
 		t.Errorf("status = %q, want it to report the 2 rows that opened", m.actionStatus.ok)
+	}
+}
+
+// A resolvable GitHub row alongside a row whose opener is missing must not let
+// the missing-opener reason get dropped by the row that succeeded — the exact
+// gap the final review flagged as Important #1.
+func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
+	if err := os.WriteFile(stub, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir) // stub opener present, no linear
+
+	m := NewModel("/repo", "is:open", nil)
+	sec := NewPRSection("is:open")
+	sec.SetPRs([]gh.PR{
+		{Number: 1, HeadRefName: "feat/213-a", URL: "https://github.com/o/r/pull/1"},
+		{Number: 2, HeadRefName: "eng-7659-must-differ-guard", URL: "https://github.com/o/r/pull/2"},
+	})
+	m.section = sec
+	m.sel.toggle(0)
+	m.sel.toggle(1)
+
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}, Scope: "per-selected"}
+	m.runBulk(a)
+
+	if m.actionStatus == nil {
+		t.Fatal("mixed success/missing-opener must set a status")
+	}
+	if m.actionStatus.err == nil {
+		t.Error("a missing opener must paint ✗ even though another row opened")
+	}
+	if !strings.Contains(m.actionStatus.fail, "linear") {
+		t.Errorf("status = %q, want it to name the missing linear CLI", m.actionStatus.fail)
+	}
+	if !strings.Contains(m.actionStatus.fail, "1 opened") {
+		t.Errorf("status = %q, want it to still report the row that opened", m.actionStatus.fail)
+	}
+}
+
+// openIssueStat is pure, so its whole decision table is covered directly
+// rather than through runBulk plumbing.
+func TestOpenIssueStat(t *testing.T) {
+	a := action.Action{Key: "O", Label: "Open linked issue",
+		Command: action.Command{Native: "open-issue"}}
+	const openerErr = "linear not found — can't open ENG-1"
+
+	tests := []struct {
+		name             string
+		opened, noTicket int
+		openerErr        string
+		wantErr          bool
+		wantMsg          string
+	}{
+		{name: "opener error alone", opened: 0, noTicket: 0, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr},
+		{name: "opener error with opens", opened: 2, noTicket: 0, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr + " · 2 opened"},
+		{name: "opener error with opens and no-ticket rows", opened: 2, noTicket: 1, openerErr: openerErr,
+			wantErr: true, wantMsg: openerErr + " · 2 opened · 1 without a ticket"},
+		{name: "all-skipped single", opened: 0, noTicket: 1, openerErr: "",
+			wantErr: true, wantMsg: "no linked issue"},
+		{name: "all-skipped plural", opened: 0, noTicket: 3, openerErr: "",
+			wantErr: true, wantMsg: "no linked issue on 3 rows"},
+		{name: "opens plus no-ticket", opened: 2, noTicket: 1, openerErr: "",
+			wantErr: false, wantMsg: "Open linked issue ×2 · 1 skipped"},
+		{name: "opens only", opened: 1, noTicket: 0, openerErr: "",
+			wantErr: false, wantMsg: "Open linked issue"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := openIssueStat(a, tt.opened, tt.noTicket, tt.openerErr)
+			if (s.err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want non-nil: %v", s.err, tt.wantErr)
+			}
+			got := s.ok
+			if tt.wantErr {
+				got = s.fail
+			}
+			if got != tt.wantMsg {
+				t.Errorf("message = %q, want %q", got, tt.wantMsg)
+			}
+		})
+	}
+}
+
+// actionOrder drives the docked footer panel independently of DefaultPRActions,
+// so an action added to one and not the other silently vanishes from the
+// panel. Pin the two in sync here.
+func TestActionOrderCoversDefaultPRActions(t *testing.T) {
+	for key := range action.DefaultPRActions() {
+		if !slices.Contains(actionOrder, key) {
+			t.Errorf("action %q missing from actionOrder — it won't show in the footer panel", key)
+		}
 	}
 }
 

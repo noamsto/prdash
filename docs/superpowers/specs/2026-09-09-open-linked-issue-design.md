@@ -19,14 +19,24 @@ ticket, so reading it means copying the id and leaving the TUI.
 | `ENG-7659` | `linear issue view -w ENG-7659`, spawned detached |
 | none parsed | failure badge: `✗ no linked issue` |
 | Linear id, no `linear` on PATH | failure badge: `✗ linear not found — can't open ENG-7659` |
-| mixed selection, some rows skipped | `✓ Open linked issue ×2 · 1 skipped` |
+| mixed selection, rows without a ticket | `✓ Open linked issue ×2 · 1 skipped` |
+| mixed selection, opener missing on any row | `✗ linear not found — can't open ENG-7659 · 2 opened` |
 
 Binding: `O`, PR board only, `Scope: "per-selected"` (matching `o`), label
 `Open linked issue`, `Native: "open-issue"`.
 
 A hint reports through `actionStat.err`+`fail`, never `ok`: `ok` is the
 success wording and renders a green `✓`, so carrying a failure in it would
-paint an actionable error as success. Because `O` is per-selected, a partly
+paint an actionable error as success.
+
+The two failure modes are not equivalent. A branch that names no ticket is
+benign — nothing is wrong, there is simply nothing to open — so it only ever
+demotes the wording to a count. A missing opener is a configuration error the
+user has to act on, so it takes the fail arm *even when other rows opened
+successfully*; otherwise the one reason worth reading is the one that gets
+dropped. The rows that did resolve still open, and the badge discloses them.
+The message is taken from the first failing row in ascending order, so it does
+not depend on selection order. Because `O` is per-selected, a partly
 resolvable selection must also name the remainder — the bulk runner clears the
 selection on success, so an unreported skip is unrecoverable as well as
 invisible.

@@ -20,6 +20,7 @@ Branch: `feat/133-open-linked-issue` (worktree already created)
 - The ticket shown in a row's ticket column and the target `O` opens must come from the same `ticketID()` call — they can never diverge.
 - Both failure modes (no ticket parsed; opener binary absent) settle to a visible hint carried in `actionStat.err`+`fail`, never `ok` — `ok` renders a green `✓`, so a failure placed there paints as success. `O` must never silently do nothing, and never open a URL whose opener it hasn't confirmed.
 - A partly resolvable selection must name the rows it skipped. The bulk runner clears the selection on success, so an unreported skip is unrecoverable as well as invisible.
+- The two failure modes are not equivalent. No ticket is benign and only demotes the wording to a count; a missing opener is an actionable config error and takes the fail arm even when other rows opened. Successes still run either way.
 - Run `gofmt` on every file touched. The repo has a pre-commit hook chain (`typos`, `trim-trailing-whitespace`, `check-merge-conflicts`) that will reject a commit otherwise.
 
 ## File Structure
@@ -387,9 +388,9 @@ In `internal/ui/actions.go`, inside the `runBulkNative` loop, add this arm immed
 				hint = "no linked issue"
 				continue
 			}
-			// Check the opener exists before claiming we opened anything: a
-			// detached spawn reports nothing, so an absent binary would
-			// otherwise fail invisibly in the background.
+			// Pre-flight the opener not for visibility -- spawnDetached does
+			// return Start's ENOENT -- but for a message that names the binary,
+			// and to keep an unopenable row out of the success count.
 			if _, err := exec.LookPath(argv[0]); err != nil {
 				hint = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
 				continue

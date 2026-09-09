@@ -3264,7 +3264,7 @@ func renderLegendPanes(title string, left, right []legendGroup, example string, 
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o", "O"}
+var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o", "O", "X"}
 
 type keyHint struct {
 	key, label string
