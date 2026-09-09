@@ -837,7 +837,9 @@ func TestOpenIssueMissingCLIHints(t *testing.T) {
 func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 	// The stub only needs to satisfy the LookPath pre-flight — runBulk's
 	// returned tea.Cmd is discarded here, so the stub itself is never
-	// executed.
+	// executed. An empty file is therefore enough; if you ever drive the cmd
+	// from this test, give it a real script body or Start fails with ENOEXEC
+	// and the failure path passes for the wrong reason.
 	dir := t.TempDir()
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
 	if err := os.WriteFile(stub, nil, 0o755); err != nil {
