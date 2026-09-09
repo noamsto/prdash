@@ -17,11 +17,19 @@ ticket, so reading it means copying the id and leaving the TUI.
 |---|---|
 | `#213` | build `https://github.com/<owner>/<repo>/issues/213`, open via `openURL` |
 | `ENG-7659` | `linear issue view -w ENG-7659`, spawned detached |
-| none parsed | status: `no linked issue` |
-| Linear id, no `linear` on PATH | status: `install the linear CLI to open ENG-7659` |
+| none parsed | failure badge: `✗ no linked issue` |
+| Linear id, no `linear` on PATH | failure badge: `✗ linear not found — can't open ENG-7659` |
+| mixed selection, some rows skipped | `✓ Open linked issue ×2 · 1 skipped` |
 
 Binding: `O`, PR board only, `Scope: "per-selected"` (matching `o`), label
 `Open linked issue`, `Native: "open-issue"`.
+
+A hint reports through `actionStat.err`+`fail`, never `ok`: `ok` is the
+success wording and renders a green `✓`, so carrying a failure in it would
+paint an actionable error as success. Because `O` is per-selected, a partly
+resolvable selection must also name the remainder — the bulk runner clears the
+selection on success, so an unreported skip is unrecoverable as well as
+invisible.
 
 The issue board leaves `O` unbound: a row there *is* the issue, so `O` would
 duplicate `o`.

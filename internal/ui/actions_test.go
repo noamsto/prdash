@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -836,7 +837,7 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 	// A stub opener keeps this hermetic: the two resolvable rows really do
 	// spawn, so the ×2-plus-skipped wording is exercised end to end.
 	dir := t.TempDir()
-	stub := filepath.Join(dir, "xdg-open")
+	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,8 @@ Branch: `feat/133-open-linked-issue` (worktree already created)
 - Never block the TUI on a subprocess: spawn with `cmd.Start()` and reap in a goroutine, exactly as `openURL` does.
 - `O` is bound on the PR board only. `DefaultIssueActions()` must not gain an `O` entry.
 - The ticket shown in a row's ticket column and the target `O` opens must come from the same `ticketID()` call — they can never diverge.
-- Both failure modes (no ticket parsed; opener binary absent) settle to a status hint. `O` must never silently do nothing, and never open a URL whose opener it hasn't confirmed.
+- Both failure modes (no ticket parsed; opener binary absent) settle to a visible hint carried in `actionStat.err`+`fail`, never `ok` — `ok` renders a green `✓`, so a failure placed there paints as success. `O` must never silently do nothing, and never open a URL whose opener it hasn't confirmed.
+- A partly resolvable selection must name the rows it skipped. The bulk runner clears the selection on success, so an unreported skip is unrecoverable as well as invisible.
 - Run `gofmt` on every file touched. The repo has a pre-commit hook chain (`typos`, `trim-trailing-whitespace`, `check-merge-conflicts`) that will reject a commit otherwise.
 
 ## File Structure
@@ -390,7 +391,7 @@ In `internal/ui/actions.go`, inside the `runBulkNative` loop, add this arm immed
 			// detached spawn reports nothing, so an absent binary would
 			// otherwise fail invisibly in the background.
 			if _, err := exec.LookPath(argv[0]); err != nil {
-				hint = fmt.Sprintf("install the %s CLI to open %s", argv[0], v.Ticket)
+				hint = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
 				continue
 			}
 			calls = append(calls, func() error { return spawnDetached(argv) })
@@ -411,12 +412,31 @@ with:
 ```go
 	if len(calls) == 0 {
 		if hint != "" {
-			m.actionStatus = &actionStat{ok: hint, settled: true}
+			m.actionStatus = &actionStat{err: errors.New(hint), fail: hint, settled: true}
 			return clearStatusCmd()
 		}
 		return nil
 	}
 ```
+
+A hint goes in `err`+`fail`, never `ok`. `statusBadge` (`prlist.go:2730`)
+renders a settled stat with no error as `✓ <ok>` in pass styling, so putting a
+failure in `ok` paints an actionable error green.
+
+Count the skips too, and fold them into the success wording after the existing
+`m.actionStatus = statForBulk(a, n)`:
+
+```go
+	// A mixed selection partly succeeded: name the remainder, or the skipped
+	// rows vanish with the selection that m.sel.clear() is about to consume.
+	if skipped > 0 {
+		m.actionStatus.ok = fmt.Sprintf("%s · %d skipped", m.actionStatus.ok, skipped)
+	}
+```
+
+Declare `skipped int` beside `hint` and increment it in both `continue` paths
+of the arm. It stays zero for every other native action, so no guard is needed.
+Add `"errors"` to the file's imports.
 
 Add `"os/exec"` and `"runtime"` to the file's import block if absent (`fmt` is already imported — `statForBulk` uses it).
 
