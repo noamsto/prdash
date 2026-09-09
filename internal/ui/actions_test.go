@@ -915,16 +915,10 @@ func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 	// Asserting on actionStatus alone pins a state the runtime then discards:
 	// the spawn succeeds, and the actionDoneMsg arm assigns err unconditionally.
 	// Drive the message through to prove the reason actually survives on screen.
-	if cmd == nil {
-		t.Fatal("a batch with queued spawns must return a command")
-	}
-	batch, ok := cmd().(tea.BatchMsg)
+	msg := firstBatchMsg(t, cmd)
+	done, ok := msg.(actionDoneMsg)
 	if !ok {
-		t.Fatalf("want a spawn+spinner batch, got %T", cmd())
-	}
-	done, ok := batch[0]().(actionDoneMsg) // the spawn closure, per the tea.Batch call order
-	if !ok {
-		t.Fatalf("want an actionDoneMsg from the spawn closure, got %T", batch[0]())
+		t.Fatalf("want an actionDoneMsg from the spawn closure, got %T", msg)
 	}
 	u, _ := m.Update(done)
 	m = u.(Model)
