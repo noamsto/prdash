@@ -1382,3 +1382,17 @@ func TestCategoriesClusterByAuthorInside(t *testing.T) {
 		t.Fatalf("categorized order = %v, want %v — clusters must form inside a category", got, want)
 	}
 }
+
+func TestPRSectionVarsAtCarriesTicket(t *testing.T) {
+	for _, tc := range []struct{ branch, want string }{
+		{"feat/213-id-seed-avatars", "#213"},
+		{"eng-7659-must-differ-guard", "ENG-7659"},
+		{"agents/no-id-here", ""},
+	} {
+		s := NewPRSection("is:open")
+		s.SetPRs([]gh.PR{{Number: 1, HeadRefName: tc.branch}})
+		if got := s.VarsAt(0).Ticket; got != tc.want {
+			t.Errorf("branch %q: Ticket = %q, want %q", tc.branch, got, tc.want)
+		}
+	}
+}

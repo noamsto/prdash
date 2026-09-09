@@ -16,6 +16,11 @@ type Vars struct {
 	Author      string
 	Branch      string // derived branch (issue) or HeadRefName (PR)
 	ID          string // GraphQL node ID (PR only); "" on the issue board or the gh-CLI path
+	// Ticket is the issue this row's branch names — "#213" (a GitHub issue in
+	// the same repo) or "ENG-7659" (Linear) — and "" when the branch names
+	// none, which is common: agent branches carry no id by construction. Same
+	// derivation as the row's ticket column, so `O` and the column can't diverge.
+	Ticket string
 	// SwitchRef is what `wt switch` can actually resolve for a PR row: the head
 	// branch, or pr:{N} when this clone can't reach it. Filled on the action
 	// path only — it costs a git probe, and the render paths build Vars too.
