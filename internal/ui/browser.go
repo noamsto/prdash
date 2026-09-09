@@ -14,15 +14,19 @@ func browserArgv(goos string) []string {
 	return []string{"xdg-open"} // linux and the rest
 }
 
-// openURL opens url in the default browser. The opener detaches; we reap it in a
-// goroutine so the short-lived child doesn't linger as a zombie in this
-// long-running TUI.
-func openURL(url string) error {
-	argv := append(browserArgv(runtime.GOOS), url)
+// spawnDetached starts argv and returns without waiting. The child is reaped in
+// a goroutine so a short-lived opener doesn't linger as a zombie in this
+// long-running TUI, and so the UI never blocks on process startup.
+func spawnDetached(argv []string) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() { _ = cmd.Wait() }() // reap the child; its exit status is irrelevant
+	go func() { _ = cmd.Wait() }()
 	return nil
+}
+
+// openURL opens url in the default browser.
+func openURL(url string) error {
+	return spawnDetached(append(browserArgv(runtime.GOOS), url))
 }
