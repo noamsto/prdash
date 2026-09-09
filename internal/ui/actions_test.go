@@ -835,11 +835,9 @@ func TestOpenIssueMissingCLIHints(t *testing.T) {
 // the resolvable ones, and must name the ones it skipped rather than letting
 // them vanish with the selection that gets cleared.
 func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
-	// The stub only needs to satisfy the LookPath pre-flight — runBulk's
-	// returned tea.Cmd is discarded here, so the stub itself is never
-	// executed. An empty file is therefore enough; if you ever drive the cmd
-	// from this test, give it a real script body or Start fails with ENOEXEC
-	// and the failure path passes for the wrong reason.
+	// Empty is enough only because this test discards the cmd, so the stub
+	// never execs. Drive the cmd and it needs a real body, or Start fails
+	// ENOEXEC and the failure path passes for the wrong reason.
 	dir := t.TempDir()
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
 	if err := os.WriteFile(stub, nil, 0o755); err != nil {
@@ -880,10 +878,8 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
-	// This stub must really run: the test drives the spawn closure below, and
-	// the branch under test is the one where every spawn succeeded. An empty
-	// file execs with "exec format error" and would exercise the failure path
-	// instead, passing for the wrong reason.
+	// This stub must really run: the branch under test is the one where every
+	// spawn succeeded, and an empty file execs ENOEXEC into the failure path.
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

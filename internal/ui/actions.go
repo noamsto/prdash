@@ -657,10 +657,9 @@ func (m Model) resolvePRAction(a action.Action) action.Action {
 // a.Command.Native against mutationSource for each selected row instead of
 // building/running gh CLI argv, with the same aggregate success/fail counting.
 // open-web only needs the row's URL (works on either board); open-issue can
-// settle a status without dispatching anything, when every selected row lacks
-// a resolvable ticket/opener; the PR mutations need the full gh.PR
-// (ID/State/IsDraft/mergeable) and so are skipped when the active board isn't
-// the PR section.
+// settle a status without dispatching anything, when no selected row resolves;
+// the PR mutations need the full gh.PR (ID/State/IsDraft/mergeable) and so are
+// skipped when the active board isn't the PR section.
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
 	var nums []int
@@ -683,15 +682,10 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				noTicket++
 				continue
 			}
-			// LookPath before spawning: Start (inside spawnDetached) would
-			// surface an absent binary too, but only through the aggregate
-			// "N of M failed" wording. This pre-flight buys a message that
-			// names the binary and the ticket, and keeps the row out of the
-			// success count instead of counting as an opened-then-failed one.
+			// Start surfaces an absent binary too, but only as "N of M failed".
+			// Pre-flighting names it, and keeps the row out of n.
 			if _, err := exec.LookPath(argv[0]); err != nil {
-				if openerErr == "" {
-					// First failing row wins, so the message is deterministic
-					// regardless of selection order.
+				if openerErr == "" { // first failing row wins, so order can't change the message
 					openerErr = fmt.Sprintf("%s not found — can't open %s", argv[0], v.Ticket)
 				}
 				continue
@@ -736,10 +730,8 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		m.invalidateLaunchCache(nums...)
 	}
 	m.sel.clear() // the batch op consumes the selection
-	// A missing opener has to survive its own successful siblings: the
-	// actionDoneMsg arm assigns err unconditionally, so a spawn that works
-	// would nil this error out and settle to an empty ✓. Reuse the wording
-	// openIssueStat already built rather than rebuilding it.
+	// The actionDoneMsg arm assigns err unconditionally, so a spawn that works
+	// would nil this error out and settle to an empty ✓.
 	openerFail := ""
 	if openerErr != "" {
 		openerFail = m.actionStatus.fail
@@ -839,11 +831,9 @@ func (m *Model) cascadeMutateCmd() tea.Cmd {
 
 // openIssueStat is the settled badge for an O press. A missing opener is a
 // configuration error the user must act on, so it takes the fail arm even when
-// other rows opened successfully — otherwise the one reason worth reading is
-// the one that gets dropped. A branch that simply names no ticket is benign and
-// only ever demotes the wording to a count. An all-zero call would report "no
-// linked issue" wrongly; both call sites guard it, so there is nothing to check
-// here.
+// other rows opened — otherwise the one reason worth reading is the one that
+// gets dropped. A branch naming no ticket is benign and only demotes the
+// wording to a count. Callers must not pass all zeros; it has no such state.
 func openIssueStat(a action.Action, opened, noTicket int, openerErr string) *actionStat {
 	if openerErr != "" {
 		msg := openerErr
