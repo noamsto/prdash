@@ -6,10 +6,9 @@ import (
 	"runtime"
 )
 
-// browserArgv is the command that opens a URL. $BROWSER wins when set: in a
-// lazytmux mirror it names og-open, which hands the URL to the controlling
-// host instead of opening a browser on the remote. Split out (like
-// clipboardArgv) so the choice is unit-testable without spawning anything.
+// browserArgv is the command that opens a URL; $BROWSER wins when set (in a
+// lazytmux mirror it is og-open, which opens on the controlling host). Split out
+// (like clipboardArgv) so the choice is unit-testable without spawning anything.
 func browserArgv(goos, browser string) []string {
 	if browser != "" {
 		return []string{browser}
