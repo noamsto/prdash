@@ -94,3 +94,9 @@ the tmux window can switch. prdash supports two modes:
 - **Orchestrated** — when `PRDASH_ACTION_FILE` is set, prdash appends the chosen
   command to that file and quits; a wrapper (e.g. the lazytmux popup binding)
   reads and runs it. This is how the `prefix + p` popup integration works.
+
+## Opening URLs
+
+`o` opens the PR, issue, or check in your browser. When `$BROWSER` is set,
+prdash runs `$BROWSER <url>` instead of `open`/`xdg-open`. Inside a lazytmux
+mirrored session, `BROWSER=og-open` routes the open to the controlling host.
