@@ -11,7 +11,6 @@ import (
 
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
-	"github.com/noamsto/prdash/internal/triage"
 )
 
 func TestRenderDescriptionShowsBody(t *testing.T) {
@@ -29,32 +28,14 @@ func TestRenderDescriptionEmptyBody(t *testing.T) {
 	}
 }
 
-func TestDescriptionIsDefaultLandingTab(t *testing.T) {
+func TestDescriptionRendersBeforeDetailLoads(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi", Body: "hello world"}})
-	// No m.detail[7]: detail uncached, so no triage jump overrides the default.
+	m.expandedTab = tabDescription
 	m.enterExpanded()
-	if m.expandedTab != tabDescription {
-		t.Fatalf("focus should land on the Description tab, got %d", m.expandedTab)
-	}
 	if !strings.Contains(ansi.Strip(m.expandedView()), "hello world") {
 		t.Fatalf("Description tab should render the body from list data before detail loads")
-	}
-}
-
-func TestJumpTabIndex(t *testing.T) {
-	cases := map[string]int{
-		"conversation": tabConversation,
-		"reviews":      tabReviews,
-		"checks":       tabChecks,
-		"diff":         tabDiff,
-		"":             tabDescription,
-	}
-	for jump, want := range cases {
-		if got := jumpTabIndex(jump); got != want {
-			t.Errorf("jumpTabIndex(%q) = %d, want %d", jump, got, want)
-		}
 	}
 }
 
@@ -212,23 +193,20 @@ func TestTabSegmentMarksActive(t *testing.T) {
 	}
 }
 
-func TestEnterExpandedDeepLinks(t *testing.T) {
+// TestEnterExpandedKeepsTab guards that entering is a focus change only: even a
+// PR whose triage card points elsewhere (failing checks) opens on the current tab.
+func TestEnterExpandedKeepsTab(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}})
-	// detail with BLOCKED so the card is "checks failing" → JumpTab "checks" (index 2)
 	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 
 	m.enterExpanded()
 	if !m.expanded {
 		t.Fatal("enterExpanded should set expanded")
 	}
-	if m.expandedTab != tabChecks {
-		t.Fatalf("deep-link to Checks tab expected (%d), got %d", tabChecks, m.expandedTab)
-	}
-	// sanity: the triage card for this PR really is checks-failing
-	if triage.Compute(gh.PR{StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}, gh.PRDetail{MergeStateStatus: "BLOCKED"}, "", 0).JumpTab != "checks" {
-		t.Fatal("precondition: expected checks JumpTab")
+	if m.expandedTab != tabOverview {
+		t.Fatalf("enterExpanded must not move the tab: want Overview, got %d", m.expandedTab)
 	}
 }
 
@@ -239,10 +217,8 @@ func TestChecksTabCursorNavigates(t *testing.T) {
 		{State: "FAILURE", Name: "lint"}, {State: "SUCCESS", Name: "build"},
 	}}})
 	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
-	m.enterExpanded() // deep-links to the Checks tab
-	if m.expandedTab != tabChecks {
-		t.Fatalf("precondition: expected Checks tab, got %d", m.expandedTab)
-	}
+	m.expandedTab = tabChecks
+	m.enterExpanded()
 	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	m = updated.(Model)
 	if m.checkCursor != 1 {
@@ -258,6 +234,7 @@ func TestRerunExternalCheckReportsNoJob(t *testing.T) {
 		{State: "FAILURE", Context: "buildkite", DetailsUrl: "https://buildkite.com/x/42"},
 	}}})
 	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.expandedTab = tabChecks
 	m.enterExpanded()
 	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m = updated.(Model)
@@ -381,14 +358,10 @@ func TestConversationOpensAtMostRecent(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 12 // short enough that the timeline overflows
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	// MergeStateStatus BLOCKED (with no review required) is triage's fallback
-	// case that deep-links to Conversation.
-	m.detail[7] = gh.PRDetail{Comments: manyComments(40), MergeStateStatus: "BLOCKED"}
+	m.detail[7] = gh.PRDetail{Comments: manyComments(40)}
 
+	m.expandedTab = tabConversation
 	m.enterExpanded()
-	if m.expandedTab != tabConversation {
-		t.Fatalf("precondition: Conversation tab expected, got %d", m.expandedTab)
-	}
 	if m.vp.YOffset() == 0 {
 		t.Fatal("precondition: content should overflow so the offset can be non-zero")
 	}

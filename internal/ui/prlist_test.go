@@ -1974,9 +1974,10 @@ func TestMainViewJumpsTabWithDigit(t *testing.T) {
 	}
 }
 
-// TestMainViewNarrowKeysUnchanged pins the narrow-layout paths that must
-// keep their pre-existing behavior: l opens the full-screen expanded view,
-// and h/1-6 are no-ops (there is no pane to address).
+// TestMainViewNarrowKeysUnchanged pins the narrow-layout paths: l only focuses
+// the full-screen expanded view (the tab stays put), h on the first tab returns
+// to the list without moving the tab, and h/1-6 in the list are no-ops (there
+// is no pane to address).
 func TestMainViewNarrowKeysUnchanged(t *testing.T) {
 	m := newTestModelWideWithPR(t)
 	m.width, m.height = 80, 40 // narrow: computeLayout(...).ShowSide is false
@@ -1987,6 +1988,14 @@ func TestMainViewNarrowKeysUnchanged(t *testing.T) {
 	got := nm.(Model)
 	if !got.expanded {
 		t.Fatal("l in the narrow layout should still open the full-screen expanded view")
+	}
+	if got.expandedTab != tabOverview {
+		t.Fatalf("l must only focus the expanded view, not move the tab; got %d", got.expandedTab)
+	}
+	nm, _ = got.Update(keyMsg("h"))
+	got = nm.(Model)
+	if got.expanded || got.expandedTab != tabOverview {
+		t.Fatalf("h on the first tab should return to the list without moving the tab; expanded=%v tab=%d", got.expanded, got.expandedTab)
 	}
 
 	m2 := newTestModelWideWithPR(t)
