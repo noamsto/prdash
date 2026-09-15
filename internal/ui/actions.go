@@ -677,7 +677,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		}
 		if a.Command.Native == "open-issue" {
 			v := m.section.VarsAt(i)
-			argv := linkedIssueArgv(runtime.GOOS, v.Ticket, v.URL)
+			argv := linkedIssueArgv(runtime.GOOS, os.Getenv("BROWSER"), v.Ticket, v.URL)
 			if argv == nil {
 				noTicket++
 				continue

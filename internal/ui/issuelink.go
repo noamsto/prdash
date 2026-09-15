@@ -17,7 +17,7 @@ var linearCLI = []string{"linear", "issue", "url"}
 // nil when there is nothing openable. A GitHub id becomes a URL for the host
 // opener; a Linear id becomes the resolver above, because the workspace urlKey
 // the real URL needs is not derivable from a branch name.
-func linkedIssueArgv(goos, ticket, prURL string) []string {
+func linkedIssueArgv(goos, browser, ticket, prURL string) []string {
 	if ticket == "" {
 		return nil
 	}
@@ -26,7 +26,7 @@ func linkedIssueArgv(goos, ticket, prURL string) []string {
 		if !ok {
 			return nil
 		}
-		return append(browserArgv(goos), url)
+		return append(browserArgv(goos, browser), url)
 	}
 	return append(append([]string{}, linearCLI...), ticket)
 }
