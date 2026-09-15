@@ -10,7 +10,6 @@ import (
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/preview"
-	"github.com/noamsto/prdash/internal/triage"
 )
 
 const (
@@ -23,22 +22,6 @@ const (
 )
 
 var expandedTabs = []string{"Overview", "Description", "Conversation", "Reviews", "Checks", "Diff"}
-
-// jumpTabIndex maps a triage card's JumpTab to a tab index (default Description).
-func jumpTabIndex(jump string) int {
-	switch jump {
-	case "conversation":
-		return tabConversation
-	case "reviews":
-		return tabReviews
-	case "checks":
-		return tabChecks
-	case "diff":
-		return tabDiff
-	default:
-		return tabDescription
-	}
-}
 
 // renderDescription renders the PR body as the Description tab: the full markdown
 // in the reading column. Empty bodies get a dim placeholder.
@@ -140,22 +123,13 @@ func renderDiffstat(d gh.PRDetail, w int) string {
 	return b.String()
 }
 
-// enterExpanded opens the focused PR's detail, deep-linking to the tab the
-// triage card points at (when its detail is already cached).
+// enterExpanded opens the focused PR's detail on the current tab.
 func (m *Model) enterExpanded() {
 	if m.section.Len() == 0 {
 		return
 	}
 	m.expanded = true
-	m.expandedTab = tabDescription
 	m.checkCursor = 0
-	if v, ok := m.cursorVars(); ok {
-		if d, cached := m.detail[v.Number]; cached {
-			if ps, ok := m.section.(*PRSection); ok {
-				m.expandedTab = jumpTabIndex(triage.Compute(ps.prAt(m.cursor), d, m.viewerLogin, ps.stackParentNumber(m.cursor)).JumpTab)
-			}
-		}
-	}
 	m.renderExpanded()
 }
 

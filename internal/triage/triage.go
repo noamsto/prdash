@@ -23,8 +23,7 @@ const (
 	KindPending
 )
 
-// Card is the triage summary for one PR: the top blocker, its one-key fix, and
-// which expanded tab to deep-link into.
+// Card is the triage summary for one PR: the top blocker and its one-key fix.
 type Card struct {
 	Kind        Kind
 	Headline    string
@@ -32,8 +31,7 @@ type Card struct {
 	Running     []string // in-progress check labels
 	ActionKey   string   // key the user presses to act ("" if none)
 	ActionLabel string
-	JumpTab     string // "" | "checks" | "reviews" | "conversation"
-	AutoMerge   bool   // GitHub auto-merge is armed on this PR (display-only)
+	AutoMerge   bool // GitHub auto-merge is armed on this PR (display-only)
 }
 
 // Compute returns the highest-priority triage card for pr given its detail.
@@ -67,7 +65,7 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string,
 		return checksFailingCard(failing, pending)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: changesRequestedHeadline(d),
-			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}
+			ActionKey: "enter", ActionLabel: "worktree to address"}
 	case mss == "BEHIND":
 		return Card{Kind: KindBehind, Headline: "Behind base",
 			ActionKey: "u", ActionLabel: "update branch"}
@@ -75,20 +73,19 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string,
 	// the specific "awaiting review" card. Reserve this generic one for BLOCKED
 	// from other protections (e.g. unresolved threads).
 	case mss == "BLOCKED" && pr.ReviewDecision != "REVIEW_REQUIRED":
-		return Card{Kind: KindBlocked, Headline: "Blocked by branch protection",
-			JumpTab: "conversation"}
+		return Card{Kind: KindBlocked, Headline: "Blocked by branch protection"}
 	case pr.ReviewDecision == "REVIEW_REQUIRED":
 		return awaitingReviewCard(awaitingHeadline(d), pr.Author.Login, viewer)
 	case len(pending) > 0 || mss == "UNSTABLE":
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
-			Running: pending, JumpTab: "checks"}
+			Running: pending}
 	case mss == "CLEAN" || mss == "HAS_HOOKS":
 		return Card{Kind: KindReady, Headline: "Ready to merge",
 			ActionKey: "m", ActionLabel: "merge (squash)"}
 	case mss == "UNKNOWN" || mss == "":
 		return Card{Kind: KindPending, Headline: "Merge state pending…"}
 	default:
-		return Card{Kind: KindFallback, Headline: "", JumpTab: "conversation"}
+		return Card{Kind: KindFallback, Headline: ""}
 	}
 }
 
@@ -114,10 +111,10 @@ func preliminaryCard(pr gh.PR, viewer string, parentNumber int) Card {
 		return checksFailingCard(failing, pending)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
-			ActionKey: "enter", ActionLabel: "worktree to address", JumpTab: "reviews"}
+			ActionKey: "enter", ActionLabel: "worktree to address"}
 	case pr.CIState() == "pending":
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
-			Running: pending, JumpTab: "checks"}
+			Running: pending}
 	case pr.ReviewDecision == "REVIEW_REQUIRED":
 		return awaitingReviewCard("Awaiting review", pr.Author.Login, viewer)
 	default:
@@ -134,7 +131,7 @@ func checksFailingCard(failing, pending []string) Card {
 	}
 	return Card{Kind: KindChecksFailing, Headline: headline,
 		Failing: failing, Running: pending,
-		ActionKey: "r", ActionLabel: "rerun checks", JumpTab: "checks"}
+		ActionKey: "r", ActionLabel: "rerun checks"}
 }
 
 // ChecksFailingHeadline renders the failing-checks count with correct grammar.
@@ -182,7 +179,7 @@ func awaitingHeadline(d gh.PRDetail) string {
 // GitHub rejects self-approval, and an unresolved viewer ("") can't be
 // distinguished from yourself, so it stays informational.
 func awaitingReviewCard(headline, author, viewer string) Card {
-	c := Card{Kind: KindAwaitingReview, Headline: headline, JumpTab: "reviews"}
+	c := Card{Kind: KindAwaitingReview, Headline: headline}
 	if viewer != "" && author != viewer {
 		c.ActionKey, c.ActionLabel = "L", "approve"
 	}
