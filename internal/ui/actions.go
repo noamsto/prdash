@@ -211,7 +211,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		text := m.copyPayload(a.Command.Builtin)
 		ok := copiedLabel(a.Command.Builtin, len(m.selectedOrCursor()), m.section.Kind())
 		if m.sel.count() > 0 {
-			m.sel.clear() // a batch copy consumes the selection
+			m.clearSelection() // a batch copy consumes the selection
 		}
 		// Prefer a native clipboard tool: tmux 3.6 drops OSC 52 sent from a popup
 		// (prdash's prefix+p launch), so tea.SetClipboard silently fails there.
@@ -729,7 +729,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	if a.Refresh {
 		m.invalidateLaunchCache(nums...)
 	}
-	m.sel.clear() // the batch op consumes the selection
+	m.clearSelection() // the batch op consumes the selection
 	// The actionDoneMsg arm assigns err unconditionally, so a spawn that works
 	// would nil this error out and settle to an empty ✓.
 	openerFail := ""
@@ -813,7 +813,7 @@ func (m *Model) runCascade(a action.Action, p *cascadePlan) tea.Cmd {
 	m.cascade = &cascadeRun{plan: p, stat: stat, skipped: p.dropped} // plan.dropped seeds skipped — cascadeRun.failed() depends on it
 	m.actionStatus = stat
 	m.invalidateLaunchCache(nums...)
-	m.sel.clear() // the run consumes the selection, exactly as runBulkNative does
+	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
 	return tea.Batch(m.cascadeMutateCmd(), m.startSpinner())
 }
 

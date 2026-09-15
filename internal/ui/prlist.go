@@ -651,6 +651,14 @@ func (m *Model) advanceSelection() {
 	m.sel.clear()
 }
 
+// clearSelection drops the selection and repaints. Rows are cached per rowKey,
+// which carries the selected flag, so a bare sel.clear() leaves them painted
+// with the selection bar.
+func (m *Model) clearSelection() {
+	m.sel.clear()
+	m.renderList()
+}
+
 // moveCursor clamps the cursor to the shown set and keeps it visible.
 func (m *Model) moveCursor(delta int) {
 	n := m.section.Len()
