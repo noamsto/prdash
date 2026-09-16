@@ -839,11 +839,12 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 	// never execs. Drive the cmd and it needs a real body, or Start fails
 	// ENOEXEC and the failure path passes for the wrong reason.
 	dir := t.TempDir()
-	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
+	stub := filepath.Join(dir, browserArgv(runtime.GOOS, "")[0])
 	if err := os.WriteFile(stub, nil, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
+	t.Setenv("BROWSER", "") // pin the default opener the stub is named for
 
 	m := NewModel("/repo", "is:open", nil)
 	sec := NewPRSection("is:open")
@@ -877,13 +878,14 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 // gap the final review flagged as Important #1.
 func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 	dir := t.TempDir()
-	stub := filepath.Join(dir, browserArgv(runtime.GOOS)[0])
+	stub := filepath.Join(dir, browserArgv(runtime.GOOS, "")[0])
 	// This stub must really run: the branch under test is the one where every
 	// spawn succeeded, and an empty file execs ENOEXEC into the failure path.
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir) // stub opener present, no linear
+	t.Setenv("PATH", dir)   // stub opener present, no linear
+	t.Setenv("BROWSER", "") // pin the default opener the stub is named for
 
 	m := NewModel("/repo", "is:open", nil)
 	sec := NewPRSection("is:open")

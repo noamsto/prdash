@@ -1,13 +1,18 @@
 package ui
 
 import (
+	"os"
 	"os/exec"
 	"runtime"
 )
 
-// browserArgv is the OS command that opens a URL. Split out (like clipboardArgv)
-// so the choice is unit-testable without spawning anything.
-func browserArgv(goos string) []string {
+// browserArgv is the command that opens a URL; $BROWSER wins when set (in a
+// lazytmux mirror it is og-open, which opens on the controlling host). Split out
+// (like clipboardArgv) so the choice is unit-testable without spawning anything.
+func browserArgv(goos, browser string) []string {
+	if browser != "" {
+		return []string{browser}
+	}
 	if goos == "darwin" {
 		return []string{"open"}
 	}
@@ -28,5 +33,5 @@ func spawnDetached(argv []string) error {
 
 // openURL opens url in the default browser.
 func openURL(url string) error {
-	return spawnDetached(append(browserArgv(runtime.GOOS), url))
+	return spawnDetached(append(browserArgv(runtime.GOOS, os.Getenv("BROWSER")), url))
 }

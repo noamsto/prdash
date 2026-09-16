@@ -34,7 +34,7 @@ func TestLinkedIssueArgv(t *testing.T) {
 		{"issue board url", "#213", "https://github.com/noamsto/prdash/issues/133", nil},
 		{"empty url", "#213", "", nil},
 	} {
-		got := linkedIssueArgv("linux", tc.ticket, tc.prURL)
+		got := linkedIssueArgv("linux", "", tc.ticket, tc.prURL)
 		if !slices.Equal(got, tc.want) {
 			t.Errorf("%s: linkedIssueArgv(%q, %q) = %v, want %v",
 				tc.name, tc.ticket, tc.prURL, got, tc.want)
@@ -43,7 +43,7 @@ func TestLinkedIssueArgv(t *testing.T) {
 }
 
 func TestLinkedIssueArgvUsesDarwinOpener(t *testing.T) {
-	got := linkedIssueArgv("darwin", "#213", "https://github.com/noamsto/prdash/pull/117")
+	got := linkedIssueArgv("darwin", "", "#213", "https://github.com/noamsto/prdash/pull/117")
 	want := []string{"open", "https://github.com/noamsto/prdash/issues/213"}
 	if !slices.Equal(got, want) {
 		t.Errorf("linkedIssueArgv(darwin) = %v, want %v", got, want)
@@ -54,7 +54,7 @@ func TestLinkedIssueArgvUsesDarwinOpener(t *testing.T) {
 // itself, so goos is irrelevant there.
 func TestLinkedIssueArgvLinearIgnoresGOOS(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
-		got := linkedIssueArgv(goos, "ENG-1", "https://github.com/o/r/pull/1")
+		got := linkedIssueArgv(goos, "", "ENG-1", "https://github.com/o/r/pull/1")
 		want := []string{"linear", "issue", "url", "ENG-1"}
 		if !slices.Equal(got, want) {
 			t.Errorf("goos=%s: got %v, want %v", goos, got, want)
@@ -76,10 +76,11 @@ func TestOpenLinkedIssueResolvesLinearThenOpens(t *testing.T) {
 		}
 	}
 	write("linear", "#!/bin/sh\nprintf '%s\\n' '"+url+"'\n")
-	write(browserArgv(runtime.GOOS)[0], "#!/bin/sh\nprintf '%s\\n' \"$@\" >> "+rec+"\n")
+	write(browserArgv(runtime.GOOS, "")[0], "#!/bin/sh\nprintf '%s\\n' \"$@\" >> "+rec+"\n")
 	t.Setenv("PATH", dir)
+	t.Setenv("BROWSER", "") // pin the default opener the stub is named for
 
-	if err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "ENG-7659", "")); err != nil {
+	if err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "", "ENG-7659", "")); err != nil {
 		t.Fatalf("resolve+open failed: %v", err)
 	}
 	for i := 0; i < 200; i++ {
@@ -102,7 +103,7 @@ func TestOpenLinkedIssueSurfacesResolverFailure(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 
-	err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "ENG-7659", ""))
+	err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "", "ENG-7659", ""))
 	if err == nil {
 		t.Fatal("a resolver exiting non-zero must return an error, not report success")
 	}
@@ -119,7 +120,7 @@ func TestOpenLinkedIssueRejectsEmptyURL(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 
-	if err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "ENG-7659", "")); err == nil {
+	if err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "", "ENG-7659", "")); err == nil {
 		t.Fatal("empty resolver output must be an error")
 	}
 }
