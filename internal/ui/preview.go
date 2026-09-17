@@ -387,7 +387,7 @@ func (m Model) renderOverview(w int) string {
 // lands in a later milestone.
 func (m Model) issuePreviewParts(is *IssueSection, w, bw int) (head, body string) {
 	iss := is.issueAt(m.cursor)
-	head = identityHeaderIssue(iss)
+	head = identityHeaderIssue(iss, bw)
 	d, cached := m.issueDetail[iss.Number]
 	if !cached {
 		return head, dimStyle.Render("  loading details…")
@@ -400,11 +400,16 @@ func (m Model) issuePreviewParts(is *IssueSection, w, bw int) (head, body string
 }
 
 // identityHeaderIssue mirrors identityHeader for issues (no branch/head ref line).
-func identityHeaderIssue(is gh.Issue) string {
-	line1 := issueAccentStyle.Render(fmt.Sprintf("#%d", is.Number)) + " " + headerStyle.Render(is.Title)
-	line2 := authorStyle(is.Author.Login).Render(is.Author.Login) +
-		dimStyle.Render(" · "+ageString(is.UpdatedAt))
-	return line1 + "\n" + line2
+func identityHeaderIssue(is gh.Issue, w int) string {
+	lines := []string{
+		issueAccentStyle.Render(fmt.Sprintf("#%d", is.Number)) + " " + headerStyle.Render(is.Title),
+		authorStyle(is.Author.Login).Render(is.Author.Login) +
+			dimStyle.Render(" · "+ageString(is.UpdatedAt)),
+	}
+	if chips := renderChips(is.Labels, w); chips != "" {
+		lines = append(lines, chips)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // previewTitle is the side pane's border title.
