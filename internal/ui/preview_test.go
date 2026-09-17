@@ -86,6 +86,20 @@ func TestIdentityHeaderCarriesBaseArrowAndLabels(t *testing.T) {
 	}
 }
 
+func TestIdentityHeaderIssueCarriesLabels(t *testing.T) {
+	is := gh.Issue{
+		Number: 47, Title: "make prdash gh-CLI-free",
+		UpdatedAt: time.Now().Add(-3 * time.Hour),
+		Labels:    []gh.Label{{Name: "enhancement", Color: "a6e3a1"}},
+	}
+	is.Author.Login = "noamsto"
+
+	got := stripANSIForTest(identityHeaderIssue(is, 80))
+	if !strings.Contains(got, "enhancement") {
+		t.Errorf("label chips must appear in the issue identity block:\n%s", got)
+	}
+}
+
 // hasReviewer reports whether the roster has a line naming this login with this
 // status label. Spacing between them varies with alignment padding, so it checks
 // co-occurrence on one line rather than an exact substring.
