@@ -27,7 +27,7 @@ Run in any GitHub repo checkout (requires the [`gh`](https://cli.github.com) CLI
 authenticated):
 
 ```sh
-nix run git+ssh://git@github.com/noamsto/prdash      # flake (private repo → git+ssh)
+nix run github:noamsto/prdash
 # or
 go build -o prdash . && ./prdash
 ```
