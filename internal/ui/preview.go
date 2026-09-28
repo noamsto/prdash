@@ -49,7 +49,7 @@ func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
 	return func() tea.Msg {
 		d, raw, err := src.FetchIssueDetail(number)
 		if err != nil {
-			return fetchFailedMsg{err: err}
+			return detailFailedMsg{err: err, numbers: []int{number}}
 		}
 		return issueDetailMsg{number: number, detail: d, raw: raw}
 	}
@@ -136,7 +136,7 @@ func (m Model) batchDetailCmd(numbers []int) tea.Cmd {
 	return func() tea.Msg {
 		details, raws, err := src.FetchDetails(numbers)
 		if err != nil {
-			return fetchFailedMsg{err: err}
+			return detailFailedMsg{err: err, numbers: numbers}
 		}
 		return detailsBatchMsg{details: details, raws: raws}
 	}
@@ -368,6 +368,10 @@ func (m Model) renderOverview(w int) string {
 		}
 	}
 	if !cached {
+		if err := m.detailErr[v.Number]; err != nil {
+			blocks = append(blocks, failStyle.Render("  details failed: "+err.Error()))
+			return strings.Join(blocks, "\n\n")
+		}
 		blocks = append(blocks, dimStyle.Render("  loading details…"))
 		return strings.Join(blocks, "\n\n")
 	}
@@ -390,6 +394,9 @@ func (m Model) issuePreviewParts(is *IssueSection, w, bw int) (head, body string
 	head = identityHeaderIssue(iss, bw)
 	d, cached := m.issueDetail[iss.Number]
 	if !cached {
+		if err := m.detailErr[iss.Number]; err != nil {
+			return head, failStyle.Render("  details failed: " + err.Error())
+		}
 		return head, dimStyle.Render("  loading details…")
 	}
 	md, err := preview.Render(d.Body, bw)

@@ -147,6 +147,9 @@ func (m Model) expandedBody(w int) string {
 	}
 	d, cached := m.detail[v.Number]
 	if !cached {
+		if err := m.detailErr[v.Number]; err != nil {
+			return failStyle.Render("  details failed: " + err.Error())
+		}
 		return dimStyle.Render("  Loading…")
 	}
 	switch m.expandedTab {

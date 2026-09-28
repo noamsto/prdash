@@ -86,6 +86,7 @@ type Model struct {
 	actionCursor      int
 	sel               selection
 	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	detailErr         map[int]error       // per-number background detail failure; never becomes the board error
 	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
 	reviewRequested   map[int]bool        // PR numbers in the latest review-requested half; gates the ◐ marker off on re-request
 	reviewedSet       map[int]bool        // PR numbers in the latest reviewed-by-me half; the ◐ marker's candidates
@@ -126,6 +127,7 @@ type Model struct {
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
 	members           []gh.User  // cached assignable users for this repo
+	membersErr        error      // last member-fetch failure; hints the picker/omni dropdown
 	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
 	switchNotice      string     // read-only wt preflight failure; held until a keypress
@@ -149,7 +151,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		cache: c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
-		detail:  map[int]gh.PRDetail{}, fresh: map[int]bool{},
+		detail:  map[int]gh.PRDetail{}, detailErr: map[int]error{}, fresh: map[int]bool{},
 		reviewRequested: map[int]bool{}, reviewedSet: map[int]bool{},
 		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
@@ -977,6 +979,13 @@ const omniSuggestDropdownRows = 6
 func (m Model) omniSuggestDropdown() string {
 	sug := m.omniSuggestions()
 	if len(sug) == 0 {
+		// An @-partial with a failed member fetch would otherwise show an empty
+		// dropdown indistinguishable from "no such user".
+		if m.membersErr != nil && len(m.members) == 0 {
+			if _, ok := m.omniActivePartial(); ok {
+				return titledBox(dimStyle.Render("member list unavailable"), 30, 3, "members")
+			}
+		}
 		return ""
 	}
 	frame := 2 // the box's own edges, on both axes
@@ -1148,6 +1157,7 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		m.detail[num] = d
+		delete(m.detailErr, num) // a hydrated detail is a successful detail load
 	}
 }
 
@@ -1292,14 +1302,17 @@ func (m Model) sectionsFetchCmd() tea.Cmd {
 			open.prs, open.raw, open.err = src.FetchPRs("is:open", openListLimit)
 		}()
 		wg.Wait()
+		// Report the board filter, not the failing half's, so the handler's filter
+		// guard accepts it (see issueSectionsFetchCmd).
+		boardFilter := searchFor("pr", state, "")
 		if review.err != nil {
-			return fetchFailedMsg{err: review.err, mode: "pr", filter: reviewF}
+			return fetchFailedMsg{err: review.err, mode: "pr", filter: boardFilter}
 		}
 		if reviewed.err != nil {
-			return fetchFailedMsg{err: reviewed.err, mode: "pr", filter: reviewedF}
+			return fetchFailedMsg{err: reviewed.err, mode: "pr", filter: boardFilter}
 		}
 		if open.err != nil {
-			return fetchFailedMsg{err: open.err, mode: "pr", filter: "is:open"}
+			return fetchFailedMsg{err: open.err, mode: "pr", filter: boardFilter}
 		}
 		return sectionsFetchedMsg{state: state,
 			review: review.prs, reviewRaw: review.raw,
@@ -1685,7 +1698,7 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 	m.showPicker = true
 	m.pickerMode = mode
 	m.pick = newPicker(title, m.members, checked)
-	if m.members == nil {
+	if len(m.members) == 0 || m.membersErr != nil {
 		return m.fetchMembersCmd()
 	}
 	return nil
@@ -1697,7 +1710,7 @@ func (m Model) fetchMembersCmd() tea.Cmd {
 	return func() tea.Msg {
 		users, raw, err := src.FetchAssignableUsers()
 		if err != nil {
-			return fetchFailedMsg{err: err}
+			return membersFailedMsg{err: err}
 		}
 		return membersFetchedMsg{users: users, raw: raw}
 	}
@@ -1864,6 +1877,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // background prewarm of another preset: cache only
 		}
 		m.refreshing = false
+		m.err = nil
 		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
@@ -1880,6 +1894,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // background prewarm of another issue filter
 		}
 		m.refreshing = false
+		m.err = nil
 		m.loaded = true
 		m.sel.clear()
 		m.setIssues(msg.issues)
@@ -1898,6 +1913,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a server qualifier became active, or state changed: cache only
 		}
 		m.refreshing = false
+		m.err = nil
 		m.loaded = true
 		m.sel.clear()
 		m.setSections(msg.review, msg.reviewed, msg.open, m.viewerLogin)
@@ -1923,6 +1939,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // launch prewarm while on the PR board: cache only
 		}
 		m.refreshing = false
+		m.err = nil
 		m.loaded = true
 		m.sel.clear()
 		m.setIssueSections(msg.assigned, msg.authored, msg.open, m.viewerLogin)
@@ -1950,12 +1967,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case membersFetchedMsg:
 		m.members = msg.users
+		m.membersErr = nil
 		if m.cache != nil {
 			m.cache.Set(membersKey(m.repo), msg.raw)
 		}
 		if m.showPicker {
 			m.pick.cands = msg.users
 		}
+		return m, nil
+	case membersFailedMsg:
+		m.membersErr = msg.err
+		return m, nil
+	case detailFailedMsg:
+		if m.detailErr == nil {
+			m.detailErr = map[int]error{}
+		}
+		for _, n := range msg.numbers {
+			m.detailErr[n] = msg.err
+		}
+		m.repaintActive() // paint the failure beside the detail that is missing
 		return m, nil
 	case viewerFetchedMsg:
 		m.viewerLogin = msg.login
@@ -1984,6 +2014,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail
+		delete(m.detailErr, msg.number)
 		m.fresh[msg.number] = true
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
@@ -1993,6 +2024,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailsBatchMsg:
 		for num, d := range msg.details {
 			m.detail[num] = d
+			delete(m.detailErr, num)
 			m.fresh[num] = true
 			if m.cache != nil {
 				if raw := msg.raws[num]; raw != nil {
@@ -2019,6 +2051,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case issueDetailMsg:
 		m.issueDetail[msg.number] = msg.detail
+		delete(m.detailErr, msg.number)
 		m.issueFresh[msg.number] = true
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(issueDetailKey(m.repo, msg.number), msg.raw)
@@ -2213,6 +2246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the wait this whole mechanism exists for never happens.
 			mergeable, mss = msg.detail.Mergeable, msg.detail.MergeStateStatus
 			m.detail[msg.number] = msg.detail
+			delete(m.detailErr, msg.number) // a live probe is a successful detail load
 			m.fresh[msg.number] = true
 			if m.cache != nil && msg.raw != nil {
 				m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
