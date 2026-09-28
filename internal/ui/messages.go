@@ -58,6 +58,19 @@ type fetchFailedMsg struct {
 	filter string // set for list fetches; a background prewarm failure is dropped
 }
 
+// membersFailedMsg reports a failed assignable-users fetch. It is surfaced
+// inside the picker rather than through the board-level error, so a dead member
+// query never leaves the modal on "Loading…" with nothing to read or retry.
+type membersFailedMsg struct{ err error }
+
+// detailFailedMsg reports a failed background detail fetch. It is deliberately
+// not a fetchFailedMsg: a detail failure is not a board failure, so it is kept
+// out of m.err and surfaced beside the detail it failed to load.
+type detailFailedMsg struct {
+	err     error
+	numbers []int
+}
+
 // membersFetchedMsg carries the assignable-users list; raw is the marshaled
 // []User for the members cache (see hydrateMembers/membersKey).
 type membersFetchedMsg struct {

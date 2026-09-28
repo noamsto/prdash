@@ -12,6 +12,7 @@ import (
 type picker struct {
 	title   string
 	cands   []gh.User
+	err     error // member-fetch failure; surfaced in the picker, not the board
 	checked map[string]bool
 	cursor  int
 	filter  textinput.Model
@@ -80,6 +81,9 @@ func (m Model) pickerView() string {
 	var b strings.Builder
 	b.WriteString(p.filter.View() + "\n\n")
 	switch {
+	case p.err != nil:
+		b.WriteString(failStyle.Render("Failed to load: "+p.err.Error()) + "\n")
+		b.WriteString(dimStyle.Render("esc, then R to retry"))
 	case p.cands == nil:
 		b.WriteString(dimStyle.Render("Loading…"))
 	case len(p.cands) == 0:
