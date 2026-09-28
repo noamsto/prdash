@@ -2238,6 +2238,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit // hard quit from every surface: prompts, pickers, palette, legend, filter bar
+		}
 		if m.switchNotice != "" {
 			m.switchNotice = ""
 			return m, nil
@@ -2445,7 +2448,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "D":
 			if m.mode != "pr" {
-				return m, nil
+				return m.prOnly("Hiding drafts", "D")
 			}
 			m.hideDrafts = !m.hideDrafts
 			if ps, ok := m.section.(*PRSection); ok {
@@ -2456,7 +2459,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "R":
 			if m.mode != "pr" {
-				return m, nil
+				return m.prOnly("Assigning reviewers", "R")
 			}
 			if _, ok := m.cursorVars(); ok {
 				return m, m.openPicker("reviewer")
@@ -2486,7 +2489,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.applyFilter()
 			return m, nil
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
 		case "space":
 			m.sel.toggle(m.cursor)
@@ -2497,6 +2500,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderList()
 			return m, nil
 		case "p":
+			if m.mode != "pr" {
+				return m, nil // the fold is only read by the PR Overview timeline
+			}
 			m.previewExpanded = !m.previewExpanded
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
@@ -2546,9 +2552,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.runAction(a)
 			}
+			if m.mode != "pr" {
+				if a, ok := action.DefaultPRActions()[msg.String()]; ok {
+					return m.prOnly(a.Label, a.Key)
+				}
+			}
 		}
 	}
 	return m, nil
+}
+
+// prOnly surfaces a PR-only key pressed on the issue board as a transient
+// status instead of a silent no-op. An in-flight action keeps its badge.
+func (m Model) prOnly(label, key string) (tea.Model, tea.Cmd) {
+	if m.actionRunning() {
+		return m, nil
+	}
+	msg := fmt.Sprintf("%s is PR-only (%s)", label, key)
+	m.actionStatus = &actionStat{err: errors.New(msg), fail: msg, settled: true}
+	return m, clearStatusCmd()
 }
 
 func (m Model) View() tea.View {
