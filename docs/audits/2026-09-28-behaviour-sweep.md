@@ -67,11 +67,13 @@ the surface open.
 ## 2. A failed PR-sections fetch is silently dropped: no error, spinner never stops — `confirmed`
 
 **Symptom.** On the default open PR board the list is fetched as three
-concurrent halves (review-requested, reviewed-by-me, wide). If any half fails
-(rate limit, network blip), the failure is discarded: no error is shown, the
-header spinner keeps spinning, and the board stays on whatever it had. The user
-sees a permanently-refreshing board and has no idea a fetch failed. The issue
-board already fixed exactly this; the PR board did not.
+concurrent halves (review-requested, reviewed-by-me, wide). When the
+**review-requested or reviewed-by-me** half fails (rate limit, network blip),
+the failure is discarded: no error is shown, the header spinner keeps spinning,
+and the board stays on whatever it had. The user sees a permanently-refreshing
+board and has no idea a fetch failed. The wide `is:open` half's failure is
+handled (its filter equals `m.filter`); the other two are not. The issue board
+already fixed exactly this; the PR board did not.
 
 **Repro.** `Model.Update(fetchFailedMsg{err, mode:"pr", filter: reviewF})` on a
 `sectionsDefault()` board — `m.err` stays `nil` and `m.refreshing` stays `true`.
@@ -81,7 +83,7 @@ spin forever.
 **Evidence.**
 
 - `internal/ui/prlist.go:1296-1302` — `sectionsFetchCmd` returns `fetchFailedMsg` with the **failing half's** filter (`reviewF`/`reviewedF`/`open`), e.g. `is:open review-requested:@me`.
-- `internal/ui/prlist.go:1934-1949` — `fetchFailedMsg` guards with `if msg.filter != "" && msg.filter != m.filter { return m, nil }` **before** clearing `m.refreshing` and setting `m.err`. On a sections-default board `m.filter` is `is:open`, which never equals a half's filter, so the arm bails.
+- `internal/ui/prlist.go:1934-1949` — `fetchFailedMsg` guards with `if msg.filter != "" && msg.filter != m.filter { return m, nil }` **before** clearing `m.refreshing` and setting `m.err`. A default board's `m.filter` is `is:open` (`main.go:50` seeds `NewModel(dir, "is:open", …)`), and the wide half returns exactly `is:open` (`internal/ui/prlist.go:1302`), so that half's failure is handled. `reviewF`/`reviewedF` carry extra qualifiers (`is:open review-requested:@me`, `is:open reviewed-by:@me -author:@me`), so those two halves' failures bail before the error is recorded and the spinner is cleared.
 - `internal/ui/prlist.go:1338-1344` — `issueSectionsFetchCmd` reports `boardFilter := searchFor("issue", "open", "")` with the explicit comment that "a half's filter never equals `m.filter`, so the handler's filter guard would bail … and a disabled repo would show 'Loading…' forever". The PR path is missing that same fix.
 
 **Suggested fix.** Mirror the issue side: report `searchFor("pr", state, "")`
@@ -209,7 +211,7 @@ when the viewer resolves, then deliver `viewerFetchedMsg` (or call
 - `internal/ui/select.go:3` — `type selection struct{ set map[int]bool }`, indexes into the shown set.
 - `internal/ui/prlist.go:421-470` — `setSections` rewrites categorization and calls `m.applyFilter()`/`m.homeCursorOnMine()` without `m.sel.clear()`; the same is true of `setIssueSections` (`:471-517`).
 - `internal/ui/prlist.go:1960-1984` — `viewerFetchedMsg` calls `m.setSections(...)` from cache to re-split once the login lands.
-- Callers that *do* clear (`prsFetchedMsg` `:1865`, `sectionsFetchedMsg` `:1899`, `D` `:2459`) show the intended discipline; the viewer re-split is the gap.
+- Callers that *do* clear (`prsFetchedMsg` `:1865`, `sectionsFetchedMsg` `:1899`, `D` `:2454`) show the intended discipline; the viewer re-split is the gap.
 
 **Suggested fix.** Anchor the selection by PR (or issue) number rather than
 index, or at minimum clear it in `setSections`/`setIssueSections`. The
