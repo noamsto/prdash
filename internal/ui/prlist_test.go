@@ -2297,7 +2297,7 @@ func TestLegendDocumentsEveryRowGlyph(t *testing.T) {
 		{"stack root", stackRootGlyph},
 		{"stack member", stackMidGlyph},
 		{"stack last member", stackLastGlyph},
-		{"landed tag", strings.TrimSpace(landedTag)},
+		{"held tag", "merged"},
 	} {
 		if c.glyph == "" {
 			t.Errorf("%s: producer returned empty, test is not exercising it", c.what)

@@ -345,7 +345,12 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	checks := ps.prAt(m.cursor).Checks()
+	p := ps.prAt(m.cursor)
+	if err := m.mutable(p); err != nil {
+		m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
+		return m, clearStatusCmd()
+	}
+	checks := p.Checks()
 	if m.checkCursor < 0 || m.checkCursor >= len(checks) {
 		return m, nil
 	}
@@ -369,6 +374,12 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 	v, ok := m.cursorVars()
 	if !ok {
 		return m, nil
+	}
+	if ps, ok := m.section.(*PRSection); ok {
+		if err := m.mutable(ps.prAt(m.cursor)); err != nil {
+			m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
+			return m, clearStatusCmd()
+		}
 	}
 	branch, native := v.HeadRefName, m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",

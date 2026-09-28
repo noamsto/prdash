@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -49,9 +50,9 @@ func (m *Model) overlaySessionMerged(prs []gh.PR) []gh.PR {
 // merge, so a row prdash merged never reverts to its stale OPEN snapshot).
 // fetched must already carry the session-merge overlay (overlaySessionMerged)
 // — this only overlays the rows it carries forward. It also updates m.held to
-// match: a departed number is (re)held; a returned number whose State equals
-// the board state stops being held; a returned number whose State differs (a
-// stale-OPEN session merge) is held with its known state. When cats is
+// match: a departed number is (re)held; a returned number stops being held,
+// except a session merge returned off its board (search still says OPEN),
+// which is held with its known state. When cats is
 // non-nil (the sections paints), a carried row's previous category is
 // written into it so it keeps its group.
 func (m *Model) mergeHeldPRs(prev []gh.PR, prevCats map[int]string, fetched []gh.PR, cats map[int]string) []gh.PR {
@@ -59,10 +60,10 @@ func (m *Model) mergeHeldPRs(prev []gh.PR, prevCats map[int]string, fetched []gh
 	have := make(map[int]bool, len(fetched))
 	for _, p := range fetched {
 		have[p.Number] = true
-		if p.State == boardState {
-			delete(m.held, p.Number)
-		} else {
+		if _, merged := m.sessionMerged[p.Number]; merged && p.State != boardState {
 			m.held[p.Number] = p.State
+		} else {
+			delete(m.held, p.Number)
 		}
 	}
 	out := append([]gh.PR(nil), fetched...)
@@ -170,6 +171,48 @@ func (m *Model) applyHeldStates(states map[int]gh.ItemState) {
 	}
 }
 
+// heldTag reports whether shown row i is held and, if so, the tag to render
+// (without its leading space; renderItemRow adds that).
+//
+// PR board: a held row, or a merged/closed one off its own board (an
+// optimistic merge before any refetch), whose State differs from the board
+// state is tagged with that State. A held row still at the board state has no
+// tag until its lookup lands, then "left filter".
+//
+// Issue board: gh.Issue carries no State to compare against the board, so a
+// row is held purely by membership in m.held: "left filter" once the lookup
+// matches the board state, its lower-cased state otherwise, no tag pending.
+func (m *Model) heldTag(i int) (held bool, tag string) {
+	boardState := strings.ToUpper(m.state)
+	if ps, ok := m.section.(*PRSection); ok {
+		p := ps.prAt(i)
+		st, held := m.held[p.Number]
+		terminal := p.State == "MERGED" || p.State == "CLOSED"
+		switch {
+		case (held || terminal) && p.State != boardState:
+			return true, strings.ToLower(p.State)
+		case held && st != "":
+			return true, "left filter"
+		}
+		return held, ""
+	}
+	is, ok := m.section.(*IssueSection)
+	if !ok {
+		return false, ""
+	}
+	st, ok := m.held[is.numberAt(i)]
+	if !ok {
+		return false, ""
+	}
+	if st == "" {
+		return true, ""
+	}
+	if st == boardState {
+		return true, "left filter"
+	}
+	return true, strings.ToLower(st)
+}
+
 // numbered exposes a shown row's item number without the caller needing to
 // know whether the section holds PRs or issues.
 type numbered interface {
@@ -240,4 +283,17 @@ func (m *Model) restoreCursor(num int, order []int) {
 		}
 	}
 	m.cursor = min(max(m.cursor, 0), l-1)
+}
+
+// mutable refuses a mutation on a merged or closed PR, and on a held row
+// unless its lookup says it is still open: a departed row keeps its OPEN
+// snapshot while the lookup is pending.
+func (m *Model) mutable(p gh.PR) error {
+	if p.State == "MERGED" || p.State == "CLOSED" {
+		return fmt.Errorf("PR #%d is not open", p.Number)
+	}
+	if st, held := m.held[p.Number]; held && st != "OPEN" {
+		return fmt.Errorf("PR #%d is no longer on this board — ctrl+r to refresh", p.Number)
+	}
+	return nil
 }

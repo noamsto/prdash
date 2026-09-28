@@ -93,7 +93,6 @@ type Model struct {
 	reviewRequested   map[int]bool        // PR numbers in the latest review-requested half; gates the ◐ marker off on re-request
 	reviewedSet       map[int]bool        // PR numbers in the latest reviewed-by-me half; the ◐ marker's candidates
 	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
-	mergedSticky      map[int]gh.PR       // PRs prdash merged this session, kept on the open board until ctrl+r
 	held              map[int]string      // number → looked-up GitHub state ("" = lookup pending); a held row stays shown past an unrequested refetch
 	heldGen           int                 // bumped on every clearHeld, so a stale heldStatesMsg lookup response is dropped
 	sessionMerged     map[int]time.Time   // PR number → the time prdash saw its merge succeed this session; never cleared
@@ -158,8 +157,8 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, detailErr: map[int]error{}, fresh: map[int]bool{},
 		reviewRequested: map[int]bool{}, reviewedSet: map[int]bool{},
-		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
-		held: map[int]string{}, sessionMerged: map[int]time.Time{},
+		ciRerun: map[int]time.Time{},
+		held:    map[int]string{}, sessionMerged: map[int]time.Time{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:   2,
 		logCache:   map[string][]logStep{},
@@ -357,17 +356,6 @@ func hasCheckStartedAfter(p gh.PR, t time.Time) bool {
 // openPRBoard reports whether the view is the open PR list — the only board a
 // landed PR is held on.
 func (m Model) openPRBoard() bool { return m.mode == "pr" && m.state == "open" }
-
-// isLanded reports whether this row is a PR prdash merged, held on the open board
-// by applyMergedSticky. False on the merged board, where the same PR is just a
-// normal result and needs no tag.
-func (m *Model) isLanded(number int) bool {
-	if !m.openPRBoard() {
-		return false
-	}
-	_, ok := m.mergedSticky[number]
-	return ok
-}
 
 // setPRs, setIssues, setSections and setIssueSections repaint in merge mode:
 // rows the new data dropped stay on the board, held (see mergeHeldPRs).
@@ -719,7 +707,8 @@ type rowKey struct {
 	gen, w, numW, diffW, tktW, authorW int
 	focused, selected                  bool
 	flag                               string
-	landed                             bool
+	held                               bool
+	tag                                string
 	commented                          bool
 	compactDiff, initials              bool
 }
@@ -776,12 +765,12 @@ func (m *Model) renderList() {
 			mergeable, mss := mergeState(p, d, hasDetail)
 			flag = flagGlyph(mergeable, mss)
 		}
-		landed := isPR && m.isLanded(ps.prAt(i).Number)
+		held, tag := m.heldTag(i)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
-		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, authorW: authorW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, landed: landed, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
+		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, authorW: authorW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, held: held, tag: tag, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
-				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Landed: landed, Commented: commented,
+				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Held: held, Tag: tag, Commented: commented,
 				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,
 			})
 			m.rowSig[i] = key
@@ -1470,7 +1459,7 @@ func (m Model) checksPollDelay() time.Duration {
 	if v, ok := m.cursorVars(); ok {
 		cursorNum = v.Number
 	}
-	for _, i := range runningCheckRows(ps) {
+	for _, i := range runningCheckRows(ps, m.held) {
 		p := ps.prAt(i)
 		if p.Number == cursorNum || (m.viewerLogin != "" && p.Author.Login == m.viewerLogin) {
 			return pollIntervalHot
@@ -1565,10 +1554,16 @@ func themeWatchTick(lastMod time.Time) tea.Cmd {
 // runningCheckRows returns the shown indexes whose PR has an in-flight check.
 // It scans individual checks rather than PR.CIState(), which collapses to
 // "fail" when any check failed and would hide checks still running behind it.
-func runningCheckRows(ps *PRSection) []int {
+// A merged, closed or held row is skipped: its rollup is frozen at whatever it
+// was when it left the board, and polling it would keep the poll alive forever.
+func runningCheckRows(ps *PRSection, held map[int]string) []int {
 	var out []int
 	for i := 0; i < ps.Len(); i++ {
-		for _, c := range ps.prAt(i).Checks() {
+		p := ps.prAt(i)
+		if _, ok := held[p.Number]; ok || p.State == "MERGED" || p.State == "CLOSED" {
+			continue
+		}
+		for _, c := range p.Checks() {
 			if c.Result() == "pending" {
 				out = append(out, i)
 				break
@@ -1584,7 +1579,7 @@ func (m Model) anyChecksRunning() bool {
 	if !ok {
 		return false
 	}
-	return len(runningCheckRows(ps)) > 0
+	return len(runningCheckRows(ps, m.held)) > 0
 }
 
 // pollBusy reports whether a user interaction or an in-flight fetch should defer
@@ -1613,7 +1608,7 @@ func (m Model) pollChecksCmd() tea.Cmd {
 	if !ok || m.checksSource == nil {
 		return nil
 	}
-	rows := runningCheckRows(ps)
+	rows := runningCheckRows(ps, m.held)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -2019,6 +2014,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.detailCmdForCursor()
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.heldStatesCmd())
+	case heldStatesMsg:
+		if msg.gen != m.heldGen {
+			return m, nil // a clearHeld (ctrl+r, filter switch) fired since this lookup was sent
+		}
+		if msg.err == nil {
+			m.applyHeldStates(msg.states)
+		}
+		m.rowGen++
+		m.repaintActive()
+		return m, nil
 	case fetchFailedMsg:
 		if msg.mode != "" && msg.mode != m.mode {
 			return m, nil // wrong board entirely
@@ -2256,10 +2261,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 				delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
-				// Transitional: mergedSticky is removed once isLanded goes (Step 10);
-				// kept here so the landed tag still renders until then.
-				p.State, p.MergedAt = "MERGED", landed
-				m.mergedSticky[p.Number] = p
 			}
 			m.rowGen++
 			m.repaintActive()
@@ -2592,6 +2593,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.prOnly("Assigning reviewers", "R")
 			}
 			if _, ok := m.cursorVars(); ok {
+				if ps, ok := m.section.(*PRSection); ok {
+					if err := m.mutable(ps.prAt(m.cursor)); err != nil {
+						m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
+						return m, clearStatusCmd()
+					}
+				}
 				return m, m.openPicker("reviewer")
 			}
 			return m, nil
@@ -3219,11 +3226,12 @@ func (m Model) glyphPanes() []legendGroup {
 	if m.mode != "pr" {
 		return []legendGroup{bar, {"row", []keyHint{
 			{key: "age", label: "last update", style: &dimStyle},
+			{key: "merged", label: "dim: gone from refresh; ctrl+r clears", style: &dimStyle},
 		}}}
 	}
 	row := legendGroup{"row", []keyHint{
 		{key: "faint row", label: "draft", style: &dimStyle},
-		{key: strings.TrimSpace(landedTag), label: "merged this session", style: &dimStyle},
+		{key: "merged", label: "dim: gone from refresh; ctrl+r clears", style: &dimStyle},
 		{key: "age", label: "last update; merged/closed age from landing", style: &dimStyle},
 	}}
 	return []legendGroup{
@@ -3391,7 +3399,7 @@ func (m Model) legendView() string {
 // Drawn by renderItemRow, not hand-assembled, so it cannot drift from the
 // grammar it documents. Focused is load-bearing rather than decorative — the
 // leftmost cell stays blank unless a row is focused or selected, so without it
-// the focus bar is never demonstrated. Landed is deliberately left off: it
+// the focus bar is never demonstrated. Held is deliberately left off: its tag
 // shares the title budget with the stack-missing marker, and crowding both
 // teaches nothing the row block does not already say.
 func legendExampleRow(w int, mode string) string {

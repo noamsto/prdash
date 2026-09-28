@@ -237,6 +237,12 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			return cleanupDone(dir, p)
 		}, m.startSpinner())
 	case "rerun-failed":
+		if ps, ok := m.section.(*PRSection); ok {
+			if err := m.mutable(ps.prAt(m.cursor)); err != nil {
+				m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
+				return clearStatusCmd()
+			}
+		}
 		branch, native := v.HeadRefName, m.actionsSource
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
@@ -315,6 +321,12 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		switch native {
 		case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
 			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
+			return func() error { return err }, true
+		}
+	}
+	switch native {
+	case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
+		if err := m.mutable(p); err != nil {
 			return func() error { return err }, true
 		}
 	}

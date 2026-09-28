@@ -22,7 +22,8 @@ type RowOpts struct {
 	Focused      bool
 	Selected     bool
 	Draft        bool   // dim the title; drafts sort last (see sortPRs)
-	Landed       bool   // merged by prdash this session, held on the open board until ctrl+r
+	Held         bool   // gone from the latest refresh or no longer a member; dim until ctrl+r
+	Tag          string // held-row tag ("merged", "closed", "open", "left filter"); "" when not held
 	Commented    bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
 	Flag         string // pre-rendered ! column glyph (conflict/behind), "" when unknown
 	Tree         string // stack chain glyph, rendered between the gutter and the number
@@ -134,8 +135,9 @@ func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
 
 // stackParentNumber returns the immediate predecessor when it is visible in the
-// current board. A merged predecessor is absent from an open board, so a later
-// link becomes its visible root instead of inheriting a stale blocker.
+// current board. A merged or closed predecessor (absent from an open board, or
+// held on it) is not a live blocker, so a later link becomes its visible root
+// instead of inheriting a stale one.
 func (s *PRSection) stackParentNumber(i int) int {
 	p := s.prAt(i)
 	if p.Stack == nil || p.StackPosition <= 1 {
@@ -143,7 +145,7 @@ func (s *PRSection) stackParentNumber(i int) int {
 	}
 	for _, j := range s.shown {
 		parent := s.prs[j]
-		if parent.State != "MERGED" && parent.Stack != nil && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
+		if parent.State != "MERGED" && parent.State != "CLOSED" && parent.Stack != nil && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
 			return parent.Number
 		}
 	}
@@ -688,10 +690,6 @@ func oneCell(s string) string {
 	return s
 }
 
-// landedTag suffixes the title of a PR merged during this session; without it a
-// merge glyph on the open board reads as a live PR. ASCII, so len is its width.
-const landedTag = " landed"
-
 // renderItemRow renders one dense row:
 //
 //	‹bar› ‹ci› ‹rv› ‹auto› ‹!› ‹num› ‹title…›            ‹author›  ‹age›
@@ -797,7 +795,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	//
 	// Neither the diffstat, the ticket id, nor the tag is truncatable like the
 	// author (there's no useful partial rendering of "+412 -18", a half "ENG-77…"
-	// is worse than absent, and " landed" clipped is a lie), so once even an
+	// is worse than absent, and " merged" clipped is a lie), so once even an
 	// empty author can't make room they drop out entirely rather than push the
 	// row past w — same responsive-ladder degradation the author gets above.
 	// diffExtra/tktExtra also reserve their own "  " separator.
@@ -812,8 +810,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// the FULL login; only the rendered text is truncated or cut to initials.
 	ageW := 2 + max(3, lipgloss.Width(age)) // matches the age suffix rendered below
 	tag := ""
-	if o.Landed {
-		tag += landedTag
+	if o.Tag != "" {
+		tag += " " + o.Tag
 	}
 	if o.StackMissing != "" {
 		tag += " " + o.StackMissing
@@ -874,6 +872,8 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	switch {
 	case o.Focused:
 		line = rowBgWrap(line, theme.RowBg)
+	case o.Held:
+		line = faintWrap(line) // gone from the latest refresh or no longer a member
 	case o.Draft:
 		line = faintWrap(line) // a draft recedes as a whole row, not just a gutter glyph
 	}

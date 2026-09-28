@@ -1386,10 +1386,11 @@ func TestCascadeErroredProbeDoesNotTouchDetailOrFresh(t *testing.T) {
 	}
 }
 
-// TestCascadeUOnMergedBoardNonStackedContinuesPastFailure covers AC 5's second
-// half: two non-stacked PRs on the merged board, one failing, still settle
-// with today's "N of M failed" badge and no cascade plan.
-func TestCascadeUOnMergedBoardNonStackedContinuesPastFailure(t *testing.T) {
+// TestCascadeUOnMergedBoardNonStackedRefusesEveryRow covers AC 5's second half:
+// two non-stacked PRs on the merged board build no cascade plan and settle
+// with today's "N of M failed" badge. A merged PR is never an update-branch
+// target, so every row is refused before it reaches the mutation source.
+func TestCascadeUOnMergedBoardNonStackedRefusesEveryRow(t *testing.T) {
 	pr1 := gh.PR{Number: 1, ID: "n1", State: "MERGED"}
 	pr2 := gh.PR{Number: 2, State: "MERGED"} // ID left unset: the stale-cache guard fails it
 
@@ -1411,13 +1412,13 @@ func TestCascadeUOnMergedBoardNonStackedContinuesPastFailure(t *testing.T) {
 	msg := driveBulk(t, cmd)
 	done, ok := msg.(actionDoneMsg)
 	if !ok || done.err == nil {
-		t.Fatalf("msg = %+v, want a partially-failed actionDoneMsg", msg)
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
 	}
-	if done.fail != "1 of 2 failed" {
-		t.Errorf("fail = %q, want %q", done.fail, "1 of 2 failed")
+	if done.fail != "2 of 2 failed" {
+		t.Errorf("fail = %q, want %q", done.fail, "2 of 2 failed")
 	}
-	if !slices.Equal(mut.updateBranchCalls, []string{"n1"}) {
-		t.Errorf("updateBranchCalls = %v, want [n1]", mut.updateBranchCalls)
+	if len(mut.updateBranchCalls) != 0 {
+		t.Errorf("updateBranchCalls = %v, want none on merged PRs", mut.updateBranchCalls)
 	}
 }
 

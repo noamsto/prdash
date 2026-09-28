@@ -146,10 +146,15 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 					// pairing that actually exercises that ordering (and, at the
 					// narrowest widths, the ticket's drop-out path).
 					for _, tc := range tickets {
-						// Landed appends a " landed" tag inside the title's room; it is a
-						// dimension because that tag is drawn unconditionally, so a room
-						// calculation that ignores it overflows the row.
-						for _, landed := range []bool{false, true} {
+						// A held row appends its tag inside the title's room; it is a
+						// dimension because that tag is drawn unconditionally, so a
+						// room calculation that ignores it overflows the row. "left
+						// filter" is the widest tag.
+						for _, held := range []bool{false, true} {
+							tag := ""
+							if held {
+								tag = "left filter"
+							}
 							for ai, age := range ages {
 								for ni, nc := range nums {
 									if w < floor[ni][ai] {
@@ -161,7 +166,8 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 										NumWidth:    nc.width,
 										Focused:     st.focused,
 										Selected:    st.selected,
-										Landed:      landed,
+										Held:        held,
+										Tag:         tag,
 										DiffWidth:   dc.width,
 										TicketWidth: tc.width,
 									}
@@ -174,12 +180,12 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 										row := renderItemRow(opts, accentStyle, num, title, tc.ticket, login, age, dc.diff, ci, review, auto)
 
 										if got := lipgloss.Width(row); got != w {
-											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q age=%s: row width %d, want exactly %d",
-												login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, age, got, w)
+											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s held=%v num=%q age=%s: row width %d, want exactly %d",
+												login, len(login), w, tree, st.name, dc.name, tc.name, held, num, age, got, w)
 										}
 										if strings.Contains(row, "\n") {
-											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q age=%s: row is not a single line: %q",
-												login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, age, row)
+											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s held=%v num=%q age=%s: row is not a single line: %q",
+												login, len(login), w, tree, st.name, dc.name, tc.name, held, num, age, row)
 										}
 
 										// Trap: strings.Index below returns a BYTE offset. Box-drawing
@@ -191,21 +197,21 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 										plain := ansi.Strip(row)
 
 										if !strings.Contains(plain, age) {
-											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q: age %q missing from row: %q",
-												login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, age, plain)
+											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s held=%v num=%q: age %q missing from row: %q",
+												login, len(login), w, tree, st.name, dc.name, tc.name, held, num, age, plain)
 										}
 
 										idx := strings.Index(plain, num)
 										if idx < 0 {
-											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v age=%s: %q not found in row: %q",
-												login, len(login), w, tree, st.name, dc.name, tc.name, landed, age, num, plain)
+											t.Fatalf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s held=%v age=%s: %q not found in row: %q",
+												login, len(login), w, tree, st.name, dc.name, tc.name, held, age, num, plain)
 										}
 										offset := lipgloss.Width(plain[:idx])
 										if ti == 0 {
 											baseOffset = offset
 										} else if offset != baseOffset {
-											t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q age=%s: #number at col %d, want %d (tree slot must stay a fixed 3 cells)",
-												login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, age, offset, baseOffset)
+											t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s held=%v num=%q age=%s: #number at col %d, want %d (tree slot must stay a fixed 3 cells)",
+												login, len(login), w, tree, st.name, dc.name, tc.name, held, num, age, offset, baseOffset)
 										}
 
 										// Invariant 5, the actual pin for defect 2: the hue must come
@@ -214,8 +220,8 @@ func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
 										// prefix authorStyle(login) produces on the full login catches
 										// a regression to hashing the truncated display text instead.
 										if wantSGR != "" && !strings.Contains(row, wantSGR) {
-											t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s landed=%v num=%q age=%s: row missing author hue SGR %q for the full login (hue must not be derived from truncated display text)",
-												login, len(login), w, tree, st.name, dc.name, tc.name, landed, num, age, wantSGR)
+											t.Errorf("login=%q(len %d) w=%d tree=%q state=%s diff=%s ticket=%s held=%v num=%q age=%s: row missing author hue SGR %q for the full login (hue must not be derived from truncated display text)",
+												login, len(login), w, tree, st.name, dc.name, tc.name, held, num, age, wantSGR)
 										}
 									}
 								}
