@@ -127,29 +127,22 @@ func TestIssueBoardPLeavesPreviewExpanded(t *testing.T) {
 }
 
 func TestIssueBoardPROnlyKeysSetStatus(t *testing.T) {
-	tests := []struct {
-		key  string
-		want string
-	}{
-		{"R", "R"},
-		{"D", "D"},
-		{"L", "L"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.key, func(t *testing.T) {
+	for _, key := range []string{"R", "D", "L"} {
+		t.Run(key, func(t *testing.T) {
 			m := newTestModelWithRows(t)
 			u, _ := m.Update(keyMsg("tab"))
 			m = u.(Model)
 			if m.mode != "issue" {
 				t.Fatal("expected tab to switch to the issue board")
 			}
-			u, _ = m.Update(keyMsg(tc.key))
+			u, _ = m.Update(keyMsg(key))
 			m = u.(Model)
 			if m.actionStatus == nil {
-				t.Fatalf("expected %q to set an action status on the issue board", tc.key)
+				t.Fatalf("expected %q to set an action status on the issue board", key)
 			}
-			if !strings.Contains(m.actionStatus.fail, tc.want) || !strings.Contains(m.actionStatus.fail, "PR-only") {
-				t.Fatalf("actionStatus.fail = %q, want it to contain %q and \"PR-only\"", m.actionStatus.fail, tc.want)
+			// "(R)", not "R": "PR-only" itself contains an R.
+			if want := "is PR-only (" + key + ")"; !strings.HasSuffix(m.actionStatus.fail, want) {
+				t.Fatalf("actionStatus.fail = %q, want suffix %q", m.actionStatus.fail, want)
 			}
 		})
 	}
