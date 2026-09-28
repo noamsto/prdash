@@ -112,6 +112,57 @@ func TestDetailPrefetchFailureNotBoardError(t *testing.T) {
 	}
 }
 
+// TestExpandedBodyShowsDetailFailure: the full-screen expanded tabs share the
+// detail surface, so a failed detail fetch must show the failure there too, not
+// "Loading…" forever (m.err is deliberately not involved).
+func TestExpandedBodyShowsDetailFailure(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	m.setPRs([]gh.PR{{Number: 1, Title: "one"}})
+	m.expanded = true
+	m.expandedTab = tabReviews
+	m.SetDetailSource(failDetailSource{err: errors.New("detail boom")})
+
+	got, _ := m.Update(m.batchDetailCmd([]int{1})())
+	out := got.(Model)
+	body := out.expandedBody(80)
+	if strings.Contains(body, "Loading") {
+		t.Fatalf("expanded tab stuck on Loading after a detail failure: %q", body)
+	}
+	if !strings.Contains(body, "detail boom") {
+		t.Fatalf("expanded tab should surface the detail failure: %q", body)
+	}
+}
+
+// TestOmniDropdownShowsMembersFailureWhenPickerClosed: a member fetch that fails
+// while the picker is closed must not vanish — the @-mention dropdown says the
+// list is unavailable instead of showing an ordinary empty result.
+func TestOmniDropdownShowsMembersFailureWhenPickerClosed(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+
+	got, _ := m.Update(membersFailedMsg{err: errors.New("members boom")})
+	m = got.(Model)
+	if m.membersErr == nil {
+		t.Fatal("members failure should be recorded on the model")
+	}
+
+	m.filtering = true
+	m.filterInput.Focus()
+	m.filterInput.SetValue("@")
+	m.filterInput.SetCursor(len("@"))
+	dd := m.omniSuggestDropdown()
+	if dd == "" {
+		t.Fatal("a failed member fetch with an @-partial should show a hint, not an empty dropdown")
+	}
+	if !strings.Contains(dd, "unavailable") {
+		t.Fatalf("hint should name the failure: %q", dd)
+	}
+}
+
 // TestPickerShowsMembersFailure: when the assignable-users fetch fails with the
 // picker open, the picker must render the failure, not stay on "Loading…".
 func TestPickerShowsMembersFailure(t *testing.T) {

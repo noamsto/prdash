@@ -127,6 +127,7 @@ type Model struct {
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
 	members           []gh.User  // cached assignable users for this repo
+	membersErr        error      // last member-fetch failure; hints the picker/omni dropdown
 	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
 	switchNotice      string     // read-only wt preflight failure; held until a keypress
@@ -978,6 +979,13 @@ const omniSuggestDropdownRows = 6
 func (m Model) omniSuggestDropdown() string {
 	sug := m.omniSuggestions()
 	if len(sug) == 0 {
+		// An @-partial with a failed member fetch would otherwise show an empty
+		// dropdown indistinguishable from "no such user".
+		if m.membersErr != nil {
+			if _, ok := m.omniActivePartial(); ok {
+				return titledBox(dimStyle.Render("member list unavailable"), 30, 3, "members")
+			}
+		}
 		return ""
 	}
 	frame := 2 // the box's own edges, on both axes
@@ -1149,6 +1157,7 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		m.detail[num] = d
+		delete(m.detailErr, num) // a hydrated detail is a successful detail load
 	}
 }
 
@@ -1959,17 +1968,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case membersFetchedMsg:
 		m.members = msg.users
+		m.membersErr = nil
 		if m.cache != nil {
 			m.cache.Set(membersKey(m.repo), msg.raw)
 		}
-		m.pick.err = nil
 		if m.showPicker {
 			m.pick.cands = msg.users
 		}
 		return m, nil
 	case membersFailedMsg:
+		m.membersErr = msg.err
 		if m.showPicker {
-			m.pick.err = msg.err
 			m.pick.cands = nil
 		}
 		return m, nil
@@ -2241,6 +2250,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the wait this whole mechanism exists for never happens.
 			mergeable, mss = msg.detail.Mergeable, msg.detail.MergeStateStatus
 			m.detail[msg.number] = msg.detail
+			delete(m.detailErr, msg.number) // a live probe is a successful detail load
 			m.fresh[msg.number] = true
 			if m.cache != nil && msg.raw != nil {
 				m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
