@@ -83,6 +83,26 @@ func (m *Model) selectedOrCursor() []int {
 	return idx
 }
 
+// targetNumbers returns the PR/issue numbers of selectedOrCursor's rows,
+// sorted, so confirmAnswer can tell whether the target set changed while a
+// confirm prompt was open.
+func (m *Model) targetNumbers() []int {
+	n, ok := m.section.(numbered)
+	if !ok {
+		return nil
+	}
+	l := m.section.Len()
+	var nums []int
+	for _, i := range m.selectedOrCursor() {
+		if i < 0 || i >= l {
+			continue
+		}
+		nums = append(nums, n.numberAt(i))
+	}
+	slices.Sort(nums)
+	return nums
+}
+
 // copyPayload joins the clipboard text for every selected row (or the cursor),
 // so the copy actions grab the whole selection at once.
 func (m *Model) copyPayload(builtin string) string {
@@ -237,6 +257,12 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			return cleanupDone(dir, p)
 		}, m.startSpinner())
 	case "rerun-failed":
+		if ps, ok := m.section.(*PRSection); ok {
+			if err := m.mutable(ps.prAt(m.cursor)); err != nil {
+				m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
+				return clearStatusCmd()
+			}
+		}
 		branch, native := v.HeadRefName, m.actionsSource
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
@@ -282,14 +308,18 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 	m.actionStatus = statFor(a)
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = []int{p.Number}
-	if a.Command.Native == "merge-squash" {
-		m.actionStatus.merged = []gh.PR{p}
-	}
+	merge := a.Command.Native == "merge-squash"
 	if a.Refresh {
 		m.invalidateLaunchCache(p.Number)
 	}
 	return tea.Batch(func() tea.Msg {
-		return actionDoneMsg{err: fn()}
+		if err := fn(); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		if merge {
+			return actionDoneMsg{merged: []gh.PR{p}}
+		}
+		return actionDoneMsg{}
 	}, m.startSpinner()), true
 }
 
@@ -311,6 +341,12 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		switch native {
 		case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
 			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
+			return func() error { return err }, true
+		}
+	}
+	switch native {
+	case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
+		if err := m.mutable(p); err != nil {
 			return func() error { return err }, true
 		}
 	}
@@ -432,12 +468,11 @@ type actionStat struct {
 	fail    string // shown on failure
 	settled bool
 	err     error
-	refresh bool    // true when the action mutated the PR(s) → refetch on success
-	rerunCI bool    // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
-	nums    []int   // PR numbers the action touched, for detail-freshness invalidation
-	merged  []gh.PR // PRs a merge targeted, snapshotted pre-merge → mergedSticky on success
-	native  string  // a.Command.Native — drives optimistic row patches on success
-	partial []int   // PRs that succeeded even though the run as a whole failed
+	refresh bool   // true when the action mutated the PR(s) → refetch on success
+	rerunCI bool   // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
+	nums    []int  // PR numbers the action touched, for detail-freshness invalidation
+	native  string // a.Command.Native — drives optimistic row patches on success
+	partial []int  // PRs that succeeded even though the run as a whole failed
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -504,7 +539,7 @@ func (m Model) assignReviewersCmd(number int, prID string, add, remove []string,
 		return func() tea.Msg { return fetchFailedMsg{err: err} }
 	}
 	delete(m.fresh, number) // reviewer set changed → summary must revalidate
-	fetch := m.fetchCmd(m.filter)
+	fetch := m.fetchCmd(m.filter, false)
 	src := m.mutationSource
 	var logins []string
 	for login, on := range picked {
@@ -525,6 +560,8 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	m.pending = nil
 	p := m.pendingCascade
 	m.pendingCascade = nil // the field's whole lifetime: written by startBulk, consumed or cleared here
+	targets := m.pendingTargets
+	m.pendingTargets = nil
 	if !yes || a == nil {
 		return nil
 	}
@@ -532,6 +569,14 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 		return m.runCascade(*a, p)
 	}
 	if a.Scope == "per-selected" {
+		if !slices.Equal(m.targetNumbers(), targets) {
+			// A refetch held rows out from under the prompt or emptied the
+			// selection — firing on whatever selectedOrCursor falls back to now
+			// would mutate PRs the user never confirmed. (A reorder alone passes:
+			// targetNumbers sorts.)
+			m.actionStatus = &actionStat{fail: "selection changed — press again", err: errors.New("selection changed"), settled: true}
+			return clearStatusCmd()
+		}
 		return m.runBulk(*a)
 	}
 	return m.runAction(*a)
@@ -563,6 +608,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
 	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
 		m.pending = &a
+		m.pendingTargets = m.targetNumbers()
 		return nil
 	}
 	return m.runBulk(a)
@@ -662,8 +708,9 @@ func (m Model) resolvePRAction(a action.Action) action.Action {
 // skipped when the active board isn't the PR section.
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
+	var callNums []int // parallel to calls; 0 for open-web/open-issue entries
 	var nums []int
-	var merging []gh.PR
+	merging := map[int]gh.PR{}
 	var noTicket int
 	var openerErr string
 	for _, i := range m.selectedOrCursor() {
@@ -673,6 +720,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		if a.Command.Native == "open-web" {
 			url := m.section.VarsAt(i).URL
 			calls = append(calls, func() error { return openURL(url) })
+			callNums = append(callNums, 0)
 			continue
 		}
 		if a.Command.Native == "open-issue" {
@@ -691,6 +739,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				continue
 			}
 			calls = append(calls, func() error { return openLinkedIssue(argv) })
+			callNums = append(callNums, 0)
 			continue
 		}
 		ps, ok := m.section.(*PRSection)
@@ -703,11 +752,12 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			continue
 		}
 		calls = append(calls, fn)
+		callNums = append(callNums, p.Number)
 		nums = append(nums, p.Number)
 		if a.Command.Native == "merge-squash" {
 			// Snapshot now: once the merge lands, the refetch drops the PR from the
 			// open list and there is nothing left to keep showing.
-			merging = append(merging, p)
+			merging[p.Number] = p
 		}
 	}
 	if len(calls) == 0 {
@@ -725,7 +775,6 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	}
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.nums = nums
-	m.actionStatus.merged = merging
 	if a.Refresh {
 		m.invalidateLaunchCache(nums...)
 	}
@@ -736,29 +785,43 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	if openerErr != "" {
 		openerFail = m.actionStatus.fail
 	}
+	rerunCI := rerunsCI(a)
 	return tea.Batch(func() tea.Msg {
 		var failed int
 		var lastErr error
-		for _, fn := range calls {
+		var landed []int
+		var mergedOK []gh.PR
+		for idx, fn := range calls {
 			if err := fn(); err != nil {
 				failed++
 				lastErr = err
+				continue
+			}
+			if callNums[idx] == 0 {
+				continue
+			}
+			landed = append(landed, callNums[idx])
+			if p, ok := merging[callNums[idx]]; ok {
+				mergedOK = append(mergedOK, p)
 			}
 		}
 		if failed == 0 {
 			if openerFail != "" {
-				return actionDoneMsg{err: errors.New(openerFail), fail: openerFail}
+				return actionDoneMsg{err: errors.New(openerFail), fail: openerFail, rerunCI: rerunCI}
 			}
-			return actionDoneMsg{}
+			return actionDoneMsg{merged: mergedOK, rerunCI: rerunCI}
 		}
 		if n == 1 {
 			// A single-target batch's error is worth showing verbatim — "N of M
 			// failed" is opaque when N and M are both 1.
-			return actionDoneMsg{err: lastErr, fail: lastErr.Error()}
+			return actionDoneMsg{err: lastErr, fail: lastErr.Error(), rerunCI: rerunCI}
 		}
 		return actionDoneMsg{
-			err:  fmt.Errorf("%d of %d failed", failed, n),
-			fail: fmt.Sprintf("%d of %d failed", failed, n),
+			err:     fmt.Errorf("%d of %d failed", failed, n),
+			fail:    fmt.Sprintf("%d of %d failed", failed, n),
+			partial: landed,
+			merged:  mergedOK,
+			rerunCI: rerunCI,
 		}
 	}, m.startSpinner())
 }

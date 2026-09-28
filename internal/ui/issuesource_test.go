@@ -62,7 +62,7 @@ func TestIssueFetchCmdUsesNativeSource(t *testing.T) {
 	m := issueSourceModel(t)
 	m.SetIssueSource(fs)
 
-	cmd := m.issueFetchCmd("is:open assignee:@me")
+	cmd := m.issueFetchCmd("is:open assignee:@me", false)
 	if cmd == nil {
 		t.Fatal("issueFetchCmd should return a command")
 	}

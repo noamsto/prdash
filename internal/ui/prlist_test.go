@@ -1465,7 +1465,7 @@ func TestOmniNoClobberAppliesLiveBareFilterToFreshRows(t *testing.T) {
 	m.filterInput.SetValue("flaky")
 	m.applyFilter()
 
-	fresh := prsFetchedMsg{filter: "is:open label:x", prs: []gh.PR{
+	fresh := prsFetchedMsg{filter: "is:open label:x", replace: true, prs: []gh.PR{ // a committed query's fetch is a requested replace
 		{Number: 10, Title: "flaky test fix", Author: author("a")},
 		{Number: 11, Title: "unrelated", Author: author("b")},
 	}}
@@ -2297,7 +2297,7 @@ func TestLegendDocumentsEveryRowGlyph(t *testing.T) {
 		{"stack root", stackRootGlyph},
 		{"stack member", stackMidGlyph},
 		{"stack last member", stackLastGlyph},
-		{"landed tag", strings.TrimSpace(landedTag)},
+		{"held tag", "merged"},
 	} {
 		if c.glyph == "" {
 			t.Errorf("%s: producer returned empty, test is not exercising it", c.what)
