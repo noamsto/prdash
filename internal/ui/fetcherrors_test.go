@@ -49,7 +49,7 @@ func TestSectionsHalfFailureSurfacesError(t *testing.T) {
 	m.SetPRSource(halfFailPRSource{fail: map[string]error{reviewF: errors.New("rate limited")}})
 	m.refreshing = true
 
-	msg := m.sectionsFetchCmd()()
+	msg := m.sectionsFetchCmd(false)()
 	got, _ := m.Update(msg)
 	out := got.(Model)
 	if out.err == nil {
@@ -77,7 +77,7 @@ func TestSuccessClearsStaleBoardError(t *testing.T) {
 
 	u, _ = m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{{Number: 1, Title: "one"}}})
 	m = u.(Model)
-	m.setPRs(nil) // shown set becomes legitimately empty
+	m.paintPRs(nil, true) // shown set becomes legitimately empty
 	m.renderList()
 	out := m.render()
 	if strings.Contains(out, "Error:") {
@@ -105,7 +105,7 @@ func TestDetailPrefetchFailureNotBoardError(t *testing.T) {
 		t.Fatalf("detail prefetch failure must not set the board error: %v", out.err)
 	}
 
-	out.setPRs(nil)
+	out.paintPRs(nil, true) // an empty shown set is what renders the error screen
 	out.renderList()
 	if strings.Contains(out.render(), "Error:") {
 		t.Fatalf("detail failure leaked into the board error screen: %q", out.render())
