@@ -1302,9 +1302,8 @@ func (m Model) sectionsFetchCmd() tea.Cmd {
 			open.prs, open.raw, open.err = src.FetchPRs("is:open", openListLimit)
 		}()
 		wg.Wait()
-		// Report the board filter, not the failing half's: a half's filter never
-		// equals m.filter, so the handler's filter guard would discard the failure
-		// and leave m.refreshing stuck true. Mirrors issueSectionsFetchCmd.
+		// Report the board filter, not the failing half's, so the handler's filter
+		// guard accepts it (see issueSectionsFetchCmd).
 		boardFilter := searchFor("pr", state, "")
 		if review.err != nil {
 			return fetchFailedMsg{err: review.err, mode: "pr", filter: boardFilter}
@@ -1878,7 +1877,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // background prewarm of another preset: cache only
 		}
 		m.refreshing = false
-		m.err = nil // a successful fetch clears any stale error; it must not latch
+		m.err = nil
 		m.loaded = true
 		m.sel.clear() // selection indexes the shown set; new data invalidates it
 		m.setPRs(msg.prs)
@@ -1895,7 +1894,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // background prewarm of another issue filter
 		}
 		m.refreshing = false
-		m.err = nil // a successful fetch clears any stale error; it must not latch
+		m.err = nil
 		m.loaded = true
 		m.sel.clear()
 		m.setIssues(msg.issues)
@@ -1914,7 +1913,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a server qualifier became active, or state changed: cache only
 		}
 		m.refreshing = false
-		m.err = nil // a successful fetch clears any stale error; it must not latch
+		m.err = nil
 		m.loaded = true
 		m.sel.clear()
 		m.setSections(msg.review, msg.reviewed, msg.open, m.viewerLogin)
@@ -1940,7 +1939,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // launch prewarm while on the PR board: cache only
 		}
 		m.refreshing = false
-		m.err = nil // a successful fetch clears any stale error; it must not latch
+		m.err = nil
 		m.loaded = true
 		m.sel.clear()
 		m.setIssueSections(msg.assigned, msg.authored, msg.open, m.viewerLogin)
