@@ -80,7 +80,7 @@ func (m Model) pickerView() string {
 	var b strings.Builder
 	b.WriteString(p.filter.View() + "\n\n")
 	switch {
-	case m.membersErr != nil:
+	case m.membersErr != nil && len(p.cands) == 0:
 		b.WriteString(failStyle.Render("Failed to load: "+m.membersErr.Error()) + "\n")
 		b.WriteString(dimStyle.Render("esc, then R to retry"))
 	case p.cands == nil:
@@ -88,6 +88,10 @@ func (m Model) pickerView() string {
 	case len(p.cands) == 0:
 		b.WriteString(dimStyle.Render("No assignable users."))
 	default:
+		if m.membersErr != nil {
+			b.WriteString(failStyle.Render("Failed to load: "+m.membersErr.Error()) + "\n")
+			b.WriteString(dimStyle.Render("showing cached list; esc, then R to retry") + "\n")
+		}
 		vis := p.visible()
 		start := 0 // scroll the window so the cursor stays visible
 		if p.cursor >= pickerRows {

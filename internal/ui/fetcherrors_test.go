@@ -163,6 +163,75 @@ func TestOmniDropdownShowsMembersFailureWhenPickerClosed(t *testing.T) {
 	}
 }
 
+// TestPickerKeepsValidMembersOnStaleError: a failed refresh must never hide a
+// valid member list already held on the model; the failure rides beside it.
+func TestPickerKeepsValidMembersOnStaleError(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	u, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	m = u.(Model)
+	u, _ = m.Update(membersFailedMsg{err: errors.New("members boom")})
+	m = u.(Model)
+
+	_ = m.openPicker("reviewer")
+	view := m.pickerView()
+	if !strings.Contains(view, "alice") {
+		t.Fatalf("a stale member error must not hide the valid list: %q", view)
+	}
+	if !strings.Contains(view, "members boom") {
+		t.Fatalf("the stale failure should be disclosed beside the list: %q", view)
+	}
+	if strings.Contains(view, "Loading") {
+		t.Fatalf("picker should not show Loading with a valid list: %q", view)
+	}
+}
+
+// TestPickerRetryableAfterStaleError: opening the picker with a stale error and
+// valid cached members must issue a refetch, so esc+R is a real retry.
+func TestPickerRetryableAfterStaleError(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	u, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	m = u.(Model)
+	u, _ = m.Update(membersFailedMsg{err: errors.New("members boom")})
+	m = u.(Model)
+
+	if cmd := m.openPicker("reviewer"); cmd == nil {
+		t.Fatal("openPicker must refetch when a stale member error is latched")
+	}
+}
+
+// TestOmniDropdownKeepsValidMembersOnStaleError: a valid member list must never
+// report "unavailable"; an unmatched @partial is an ordinary empty dropdown.
+func TestOmniDropdownKeepsValidMembersOnStaleError(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("noamsto/prdash")
+	m.width, m.height = 100, 30
+	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
+	u, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	m = u.(Model)
+	u, _ = m.Update(membersFailedMsg{err: errors.New("members boom")})
+	m = u.(Model)
+	m.filtering = true
+	m.filterInput.Focus()
+
+	m.filterInput.SetValue("@zzz")
+	m.filterInput.SetCursor(len("@zzz"))
+	if dd := m.omniSuggestDropdown(); strings.Contains(dd, "unavailable") {
+		t.Fatalf("a valid list must not be reported unavailable: %q", dd)
+	}
+
+	m.filterInput.SetValue("@al")
+	m.filterInput.SetCursor(len("@al"))
+	if dd := m.omniSuggestDropdown(); !strings.Contains(dd, "alice") {
+		t.Fatalf("a valid list should still suggest matching users: %q", dd)
+	}
+}
+
 // TestPickerShowsMembersFailure: when the assignable-users fetch fails with the
 // picker open, the picker must render the failure, not stay on "Loading…".
 func TestPickerShowsMembersFailure(t *testing.T) {

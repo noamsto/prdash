@@ -981,7 +981,7 @@ func (m Model) omniSuggestDropdown() string {
 	if len(sug) == 0 {
 		// An @-partial with a failed member fetch would otherwise show an empty
 		// dropdown indistinguishable from "no such user".
-		if m.membersErr != nil {
+		if m.membersErr != nil && len(m.members) == 0 {
 			if _, ok := m.omniActivePartial(); ok {
 				return titledBox(dimStyle.Render("member list unavailable"), 30, 3, "members")
 			}
@@ -1699,7 +1699,7 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 	m.showPicker = true
 	m.pickerMode = mode
 	m.pick = newPicker(title, m.members, checked)
-	if m.members == nil {
+	if len(m.members) == 0 || m.membersErr != nil {
 		return m.fetchMembersCmd()
 	}
 	return nil
@@ -1978,9 +1978,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case membersFailedMsg:
 		m.membersErr = msg.err
-		if m.showPicker {
-			m.pick.cands = nil
-		}
 		return m, nil
 	case detailFailedMsg:
 		if m.detailErr == nil {
