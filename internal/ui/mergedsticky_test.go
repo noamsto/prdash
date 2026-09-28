@@ -12,18 +12,6 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
-func openPR(number int, author string) gh.PR {
-	p := gh.PR{Number: number, Title: "pr " + author, State: "OPEN", HeadRefName: "feat/x"}
-	p.Author.Login = author
-	return p
-}
-
-func mergedPR(number int, author string) gh.PR {
-	p := openPR(number, author)
-	p.State, p.MergedAt = "MERGED", time.Now().Add(-2*time.Minute)
-	return p
-}
-
 func TestApplyMergedStickyAppendsWhatTheFetchDropped(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.mergedSticky[61] = mergedPR(61, "alice")

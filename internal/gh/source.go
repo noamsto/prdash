@@ -1,5 +1,7 @@
 package gh
 
+import "time"
+
 // PRSource fetches a PR list for a search filter, returning the parsed PRs and
 // the JSON bytes to persist in the on-disk cache. The []byte is the marshalled
 // []PR, so the on-disk cache hydrate path round-trips it back unchanged.
@@ -20,6 +22,21 @@ type DetailSource interface {
 // the board, and the poll applies it to rows it already has.
 type ChecksSource interface {
 	FetchChecks(numbers []int) (checks map[int][]Check, err error)
+}
+
+// ItemState is the current GitHub state of a held row, looked up by number.
+// MergedAt is PRs only; zero otherwise.
+type ItemState struct {
+	State    string
+	MergedAt time.Time
+	ClosedAt time.Time
+}
+
+// StateSource looks up the current state of issues/PRs by number in one
+// aliased request, for the held-row lookup: a departed row's real state
+// without a full list refetch.
+type StateSource interface {
+	FetchStates(numbers []int) (map[int]ItemState, error)
 }
 
 // IssueSource fetches an issue list for a search filter, mirroring PRSource:

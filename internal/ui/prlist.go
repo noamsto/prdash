@@ -47,6 +47,7 @@ type Model struct {
 	prSource          gh.PRSource          // PR-list backend (githubv4)
 	detailSource      gh.DetailSource      // batched per-PR detail backend
 	checksSource      gh.ChecksSource      // rollup-only backend for the live-checks poll
+	stateSource       gh.StateSource       // held-row lookup backend
 	issueSource       gh.IssueSource       // issue-list backend
 	issueDetailSource gh.IssueDetailSource // per-issue detail backend
 	viewerSource      gh.ViewerSource      // viewer-login backend
@@ -172,6 +173,9 @@ func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 // SetChecksSource installs the rollup-only backend the live-checks poll uses
 // instead of refetching the whole list.
 func (m *Model) SetChecksSource(s gh.ChecksSource) { m.checksSource = s }
+
+// SetStateSource installs the held-row lookup backend.
+func (m *Model) SetStateSource(s gh.StateSource) { m.stateSource = s }
 
 // SetIssueSource installs the issue-list backend (githubv4).
 func (m *Model) SetIssueSource(s gh.IssueSource) { m.issueSource = s }
