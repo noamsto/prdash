@@ -10,19 +10,16 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
-// clearHeld drops all held-row state and bumps the generation, so an
-// in-flight heldStatesMsg lookup issued under the old generation is dropped
-// when it lands (see heldStatesCmd).
+// clearHeld drops all held-row state. Bumping heldGen makes a lookup still in
+// flight land as stale.
 func (m *Model) clearHeld() {
 	m.held = map[int]string{}
 	m.heldGen++
 }
 
-// overlaySessionMerged marks a fetched OPEN PR merged when prdash has already
-// seen it merge this session: GitHub's search index lags writes by seconds,
-// so a lagging search result must never contradict prdash's own knowledge.
-// Copy-on-write, like applyCIRerun — fetched slices may share the cache's
-// backing array.
+// overlaySessionMerged marks a fetched OPEN PR merged when prdash saw it merge
+// this session: GitHub's search index lags writes by seconds. Copy-on-write,
+// like applyCIRerun — fetched slices may share the cache's backing array.
 func (m *Model) overlaySessionMerged(prs []gh.PR) []gh.PR {
 	if len(m.sessionMerged) == 0 {
 		return prs
@@ -45,16 +42,11 @@ func (m *Model) overlaySessionMerged(prs []gh.PR) []gh.PR {
 	return out
 }
 
-// mergeHeldPRs returns fetched plus every previously-shown PR number it
-// dropped, carried forward at its previous value (overlaid with a session
-// merge, so a row prdash merged never reverts to its stale OPEN snapshot).
-// fetched must already carry the session-merge overlay (overlaySessionMerged)
-// — this only overlays the rows it carries forward. It also updates m.held to
-// match: a departed number is (re)held; a returned number stops being held,
-// except a session merge returned off its board (search still says OPEN),
-// which is held with its known state. When cats is
-// non-nil (the sections paints), a carried row's previous category is
-// written into it so it keeps its group.
+// mergeHeldPRs returns fetched plus every previous row it dropped, carried
+// forward at its previous value so it keeps its sort position, and updates
+// m.held to match. fetched must already carry overlaySessionMerged; a
+// session-merged row that search still returns OPEN stays held as MERGED. A
+// non-nil cats gets each carried row's previous category.
 func (m *Model) mergeHeldPRs(prev []gh.PR, prevCats map[int]string, fetched []gh.PR, cats map[int]string) []gh.PR {
 	boardState := strings.ToUpper(m.state)
 	have := make(map[int]bool, len(fetched))
@@ -87,9 +79,8 @@ func (m *Model) mergeHeldPRs(prev []gh.PR, prevCats map[int]string, fetched []gh
 	return out
 }
 
-// mergeHeldIssues mirrors mergeHeldPRs for the issue boards, without the
-// session-merge overlay or the board-state rule: issues have no sessionMerged
-// equivalent, so a returned issue always un-holds.
+// mergeHeldIssues is mergeHeldPRs for the issue boards. prdash merges no
+// issues, so a returned issue always stops being held.
 func (m *Model) mergeHeldIssues(prev []gh.Issue, prevCats map[int]string, fetched []gh.Issue, cats map[int]string) []gh.Issue {
 	have := make(map[int]bool, len(fetched))
 	for _, is := range fetched {
@@ -129,9 +120,7 @@ func (m *Model) heldLookupNumbers() []int {
 	return nums
 }
 
-// heldStatesCmd looks up the current GitHub state of every held row not
-// already known merged this session, in one batched request. nil when no
-// state backend is installed or there is nothing to look up.
+// heldStatesCmd looks up heldLookupNumbers in one batched request.
 func (m Model) heldStatesCmd() tea.Cmd {
 	numbers := m.heldLookupNumbers()
 	if m.stateSource == nil || len(numbers) == 0 {
@@ -146,9 +135,8 @@ func (m Model) heldStatesCmd() tea.Cmd {
 }
 
 // applyHeldStates records each held row's looked-up state and patches its PR
-// section row — State, MergedAt, ClosedAt — without disturbing the board's
-// own sort key: a merged board keeps its rows' MergedAt, a closed board its
-// ClosedAt, so a lookup can never reshuffle rows the board already sorted.
+// row, leaving the board's own sort key alone (MergedAt on the merged board,
+// ClosedAt on the closed one) so a lookup never reshuffles rows.
 func (m *Model) applyHeldStates(states map[int]gh.ItemState) {
 	ps, isPR := m.section.(*PRSection)
 	for n, st := range states {
@@ -230,10 +218,8 @@ type numbered interface {
 func (s *PRSection) numberAt(i int) int    { return s.prs[s.shown[i]].Number }
 func (s *IssueSection) numberAt(i int) int { return s.issues[s.shown[i]].Number }
 
-// cursorAnchor captures the cursor's identity before a repaint: the PR/issue
-// number it is on (0 when the board is empty) and the full shown order, so
-// restoreCursor can re-anchor it afterward even when that number itself
-// departed.
+// cursorAnchor captures the cursor's number (0 on an empty board) and the
+// shown order, for restoreCursor.
 func (m *Model) cursorAnchor() (num int, order []int) {
 	n, ok := m.section.(numbered)
 	if !ok {
@@ -250,14 +236,11 @@ func (m *Model) cursorAnchor() (num int, order []int) {
 	return num, order
 }
 
-// paintAnchor is cursorAnchor for the four board paints, except while the
-// cursor must stay on the top row rather than follow the row it is on (it
-// returns no anchor, so restoreCursor keeps index 0): a launch or filter/tab
-// switch whose live replace hasn't landed, since the cached top row it would
-// follow down is not what the user asked to be on; and, on the sections
-// boards (homing), while the opening jump to Mine is unspent, since anchoring
-// would move the cursor off 0 and homeCursorOnMine would then spend the jump
-// without taking it. Once the user moves off row 0, anchoring applies.
+// paintAnchor is cursorAnchor for the board paints, but returns no anchor while
+// a cursor on row 0 must stay there: after a launch or switch until its live
+// replace lands (the cached top row is not what the user asked to be on), and,
+// on the sections boards, while the jump to Mine is unspent (moving off 0 would
+// make homeCursorOnMine spend it without jumping).
 func (m *Model) paintAnchor(homing bool) (num int, order []int) {
 	if m.cursor == 0 && (m.cursorPinnedTop || homing && !m.cursorHomed) {
 		return 0, nil
@@ -265,13 +248,8 @@ func (m *Model) paintAnchor(homing bool) (num int, order []int) {
 	return m.cursorAnchor()
 }
 
-// restoreCursor re-anchors the cursor after a repaint. num is the PR/issue
-// number it was on before (0 when there wasn't one); order is the shown
-// numbers in their previous order. If num is still shown, the cursor moves to
-// its new index. Otherwise it walks order outward from the old position —
-// next row below first, then above, then further out — landing on the
-// nearest surviving neighbour; if nothing in order survived, it clamps into
-// range.
+// restoreCursor puts the cursor back on num, or else on its nearest surviving
+// neighbour in the previous order, preferring the row below.
 func (m *Model) restoreCursor(num int, order []int) {
 	n, ok := m.section.(numbered)
 	l := m.section.Len()
@@ -308,10 +286,8 @@ func (m *Model) restoreCursor(num int, order []int) {
 	m.cursor = min(max(m.cursor, 0), l-1)
 }
 
-// selectedRows captures the selection's identity before a paint mutates the
-// section: the selected numbers, and which of them heldTag already reported
-// held (so restoreSelection can tell a row that was already held from one
-// that becomes held in this same paint).
+// selectedRows captures the selected numbers before a paint, and which of them
+// were already held.
 func (m *Model) selectedRows() (nums []int, wasHeld map[int]bool) {
 	n, ok := m.section.(numbered)
 	if !ok {
@@ -331,12 +307,10 @@ func (m *Model) selectedRows() (nums []int, wasHeld map[int]bool) {
 	return nums, wasHeld
 }
 
-// restoreSelection rebuilds the selection at its members' new shown indexes
-// after a paint (nums, wasHeld as captured by selectedRows before the paint;
-// nil clears it, as a replace does). A number no longer shown is dropped, and
-// so is one that becomes held in this paint — but not one already held as of
-// the previous paint, since read-only bulk actions still reach it and
-// mutable() refuses mutations at action time regardless.
+// restoreSelection reselects nums at their new indexes, dropping any no longer
+// shown or that became held in this paint. A row held as of the previous paint
+// stays selected: read-only bulk actions still apply, and mutable() refuses
+// the rest.
 func (m *Model) restoreSelection(nums []int, wasHeld map[int]bool) {
 	m.sel.clear()
 	n, ok := m.section.(numbered)

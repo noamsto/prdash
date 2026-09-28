@@ -21,9 +21,6 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
-// openPR / mergedPR moved here from mergedsticky_test.go (#141): that file is
-// deleted once the held-row mechanism replaces mergedSticky, and these
-// fixtures are used by the tests below too.
 func openPR(number int, author string) gh.PR {
 	p := gh.PR{Number: number, Title: "pr " + author, State: "OPEN", HeadRefName: "feat/x"}
 	p.Author.Login = author
@@ -115,12 +112,9 @@ func invokeCmdTree(t *testing.T, cmd tea.Cmd) {
 	}
 }
 
-// TestBatchMergeShowsEveryMergedPRDespiteStaleSearch is acceptance A1: a batch
-// merge of #11-#13 followed by a refetch that still returns #12 as OPEN (a
-// lagging search index) and drops #11/#13 entirely must still show all three
-// merged. Red on main: applyMergedSticky only appends a held PR the fetch
-// dropped outright, so a stale-OPEN #12 the fetch still returns wins over the
-// merge prdash already saw succeed.
+// TestBatchMergeShowsEveryMergedPRDespiteStaleSearch: after a batch merge of
+// #11-#13, a refetch whose lagging search index still returns #12 as OPEN and
+// drops #11/#13 must still show all three merged, in place.
 func TestBatchMergeShowsEveryMergedPRDespiteStaleSearch(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("owner/repo")
@@ -169,12 +163,8 @@ func TestBatchMergeShowsEveryMergedPRDespiteStaleSearch(t *testing.T) {
 	}
 }
 
-// TestPartialBatchMergeMarksTheSuccessesAndRefreshes is acceptance A2: merging
-// three PRs where one MergePR call fails must still mark the two successes
-// merged immediately and return a cmd tree that includes a refresh. Red on
-// main: runBulkNative never sets actionDoneMsg.partial/merged, so the
-// actionDoneMsg arm's `msg.err == nil` guard skips the sticky-marking and the
-// refresh entirely on any partial failure.
+// TestPartialBatchMergeMarksTheSuccessesAndRefreshes: when one of three merges
+// fails, the two that landed read merged immediately and a refresh still runs.
 func TestPartialBatchMergeMarksTheSuccessesAndRefreshes(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 100, 40
@@ -275,9 +265,8 @@ func TestPartialBatchUpdateBranchStampsTheSuccesses(t *testing.T) {
 	}
 }
 
-// TestFailedMergeMarksNothing is acceptance A5's failed-merge counterpart to
-// TestBatchMergeShowsEveryMergedPRDespiteStaleSearch: a single merge that
-// fails must record nothing merged and leave the row OPEN.
+// TestFailedMergeMarksNothing: a merge that fails records nothing merged and
+// leaves the row OPEN.
 func TestFailedMergeMarksNothing(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 100, 40
@@ -302,9 +291,8 @@ func TestFailedMergeMarksNothing(t *testing.T) {
 	}
 }
 
-// TestCursorFollowsThePRAcrossARefetch is acceptance A3. Red on main: setPRs
-// only clamps the cursor index when the list shrinks; it never re-anchors it
-// to the PR the user was looking at.
+// TestCursorFollowsThePRAcrossARefetch: a refetch that reorders rows, removes
+// rows above the cursor and inserts rows above it leaves the cursor on its PR.
 func TestCursorFollowsThePRAcrossARefetch(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 100, 40
@@ -333,9 +321,8 @@ func TestCursorFollowsThePRAcrossARefetch(t *testing.T) {
 	}
 }
 
-// TestDepartedRowKeepsItsPosition is acceptance A4 (part 1): a row an
-// unrequested refetch doesn't return must stay shown, in its old position.
-// Red on main: setPRs replaces the section's rows wholesale.
+// TestDepartedRowKeepsItsPosition: a row an unrequested refetch doesn't return
+// stays shown, in its old position.
 func TestDepartedRowKeepsItsPosition(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 100, 40
@@ -353,9 +340,9 @@ func TestDepartedRowKeepsItsPosition(t *testing.T) {
 	}
 }
 
-// TestMergeHeldPRsCarriesDepartedRowWithCategory is Step 5: a number the
-// fetch drops is carried forward at its previous value, keeping its previous
-// category, and recorded pending in m.held.
+// TestMergeHeldPRsCarriesDepartedRowWithCategory: a number the fetch drops is
+// carried forward at its previous value, keeping its category, and recorded
+// pending in m.held.
 func TestMergeHeldPRsCarriesDepartedRowWithCategory(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	prev := []gh.PR{openPR(30, "alice"), openPR(29, "alice")}
@@ -487,9 +474,9 @@ func TestCursorAnchorEmptyBoard(t *testing.T) {
 }
 
 // TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps is
-// Step 6: restoreCursor walks the old shown order outward from the departed
-// number's old position — next row below first, then above — and clamps only
-// once nothing in the old order survived.
+// restoreCursor walks the old shown order outward from the departed number's
+// old position — below first, then above — and clamps only once nothing in the
+// old order survived.
 func TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps(t *testing.T) {
 	order := []int{50, 40, 30, 20, 10} // old shown order; cursor was on #30 (index 2)
 
@@ -524,10 +511,7 @@ func TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps(t *te
 	})
 }
 
-// TestHeldMergedRowRefusesUpdateBranch is acceptance A5 (part 1): a row that
-// is no longer OPEN must reject update-branch. Red on main: nativeMutationFn's
-// "update-branch" case has no state check at all (unlike merge/mark-ready/
-// convert-to-draft/approve).
+// TestHeldMergedRowRefusesUpdateBranch: update-branch is refused on a merged PR.
 func TestHeldMergedRowRefusesUpdateBranch(t *testing.T) {
 	m := NewModel("/repo", "is:merged", nil)
 	m.width, m.height = 100, 40
@@ -817,8 +801,8 @@ func rowTextFor(t *testing.T, m Model, number int) string {
 	return ansi.Strip(m.rowText[i])
 }
 
-// TestHeldRowTaggedFromLookup is A4 (part 2): a held row's tag comes from its
-// heldStatesMsg lookup, gated on the generation it was issued under.
+// TestHeldRowTaggedFromLookup: a held row's tag comes from its heldStatesMsg
+// lookup, gated on the generation it was issued under.
 func TestHeldRowTaggedFromLookup(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 100, 40
@@ -1052,8 +1036,8 @@ func TestHeldStatesLookupIssued(t *testing.T) {
 	})
 }
 
-// TestHeldRowsRejectMutations is acceptance A5: a session-merged row and a
-// pending-held (departed, lookup not yet landed) row must both refuse every
+// TestHeldRowsRejectMutations: a session-merged row and a pending-held
+// (departed, lookup not yet landed) row must both refuse every
 // mutating action, while a held row whose lookup confirms it is still OPEN
 // is mutable again.
 func TestHeldRowsRejectMutations(t *testing.T) {
