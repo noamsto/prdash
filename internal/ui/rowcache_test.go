@@ -30,7 +30,7 @@ func TestRowCacheReflectsContentChange(t *testing.T) {
 		t.Fatal("first render missing alpha-title")
 	}
 
-	m.setPRs([]gh.PR{{Number: 2, Title: "bravo-title", State: "OPEN"}})
+	m.paintPRs([]gh.PR{{Number: 2, Title: "bravo-title", State: "OPEN"}}, true)
 	joined := strings.Join(m.rowText, "\n")
 	if strings.Contains(joined, "alpha-title") {
 		t.Error("stale cached row survived a content change")

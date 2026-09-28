@@ -1465,7 +1465,7 @@ func TestOmniNoClobberAppliesLiveBareFilterToFreshRows(t *testing.T) {
 	m.filterInput.SetValue("flaky")
 	m.applyFilter()
 
-	fresh := prsFetchedMsg{filter: "is:open label:x", prs: []gh.PR{
+	fresh := prsFetchedMsg{filter: "is:open label:x", replace: true, prs: []gh.PR{ // a committed query's fetch is a requested replace
 		{Number: 10, Title: "flaky test fix", Author: author("a")},
 		{Number: 11, Title: "unrelated", Author: author("b")},
 	}}

@@ -269,7 +269,7 @@ func TestRefetchToEmptyCollapsesExpanded(t *testing.T) {
 	if !m.expanded {
 		t.Fatal("precondition: should be expanded with a PR")
 	}
-	updated, _ := m.Update(prsFetchedMsg{prs: []gh.PR{}})
+	updated, _ := m.Update(prsFetchedMsg{prs: []gh.PR{}, replace: true}) // an unrequested refetch never empties the board
 	m = updated.(Model)
 	if m.expanded {
 		t.Fatal("a refetch emptying the list should collapse the expanded view")

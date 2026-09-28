@@ -1,14 +1,18 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/noamsto/prdash/internal/action"
+	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -439,5 +443,245 @@ func TestHeldMergedRowRefusesUpdateBranch(t *testing.T) {
 	}
 	if done.err == nil {
 		t.Error("want an error settling update-branch on a held merged row")
+	}
+}
+
+// scriptedFetch is one canned FetchPRs result.
+type scriptedFetch struct {
+	prs []gh.PR
+	err error
+}
+
+// scriptedPRSource answers the i-th FetchPRs call with script[i] (the last
+// entry once the script runs out), so a test can drive the real fetch cmds
+// that ctrl+r and a filter switch return.
+type scriptedPRSource struct {
+	mu     sync.Mutex
+	calls  int
+	script []scriptedFetch
+}
+
+func (s *scriptedPRSource) FetchPRs(string, int) ([]gh.PR, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := s.script[min(s.calls, len(s.script)-1)]
+	s.calls++
+	return f.prs, nil, f.err
+}
+
+// listFetchMsg runs cmd's tree and returns the first list-fetch result in it
+// (prsFetchedMsg or fetchFailedMsg). Tick-based leaves (spinner, status clear)
+// get a short timeout and are skipped, as in invokeCmdTree.
+func listFetchMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		switch msg := msg.(type) {
+		case prsFetchedMsg, fetchFailedMsg:
+			return msg
+		case tea.BatchMsg:
+			for _, c := range msg {
+				if got := listFetchMsg(t, c); got != nil {
+					return got
+				}
+			}
+		}
+	case <-time.After(200 * time.Millisecond):
+	}
+	return nil
+}
+
+// heldBoard is a merged board showing #30,#29,#28 whose first unrequested
+// refetch dropped #29, so #29 is held.
+func heldBoard(t *testing.T, src gh.PRSource) Model {
+	t.Helper()
+	m := NewModel("/repo", "is:merged", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(src)
+	m.setPRs([]gh.PR{mergedPR(30, "alice"), mergedPR(29, "alice"), mergedPR(28, "alice")})
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
+	m = u.(Model)
+	if _, held := m.held[29]; !held || m.section.Len() != 3 {
+		t.Fatalf("test setup: want #29 held on a 3-row board, held = %v, rows = %d", m.held, m.section.Len())
+	}
+	return m
+}
+
+// shownNumbers is the board's shown set, ascending: these boards sort on
+// MergedAt/ClosedAt stamped at fixture build time, so display order isn't
+// what these tests pin.
+func shownNumbers(m Model) []int {
+	n := m.section.(numbered)
+	var out []int
+	for i := range m.section.Len() {
+		out = append(out, n.numberAt(i))
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestCtrlRDropsHeldRows(t *testing.T) {
+	src := &scriptedPRSource{script: []scriptedFetch{{prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}}}}
+	m := heldBoard(t, src)
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	msg := listFetchMsg(t, cmd)
+	if fm, ok := msg.(prsFetchedMsg); !ok || !fm.replace {
+		t.Fatalf("ctrl+r fetch = %+v, want a prsFetchedMsg marked replace", msg)
+	}
+	u, _ := m.Update(msg)
+	m = u.(Model)
+
+	if got := shownNumbers(m); !slices.Equal(got, []int{28, 30}) {
+		t.Errorf("shown = %v, want [28 30] — ctrl+r drops the held #29", got)
+	}
+	if len(m.held) != 0 {
+		t.Errorf("held = %v, want empty after ctrl+r", m.held)
+	}
+}
+
+// TestCtrlRWinsOverAnOlderUnrequestedFetch: an unrequested fetch that lands
+// between ctrl+r and its result merges as usual (holding what it dropped); the
+// ctrl+r result still replaces the board once it lands.
+func TestCtrlRWinsOverAnOlderUnrequestedFetch(t *testing.T) {
+	src := &scriptedPRSource{script: []scriptedFetch{{prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}}}}
+	m := NewModel("/repo", "is:merged", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(src)
+	m.setPRs([]gh.PR{mergedPR(30, "alice"), mergedPR(29, "alice"), mergedPR(28, "alice"), mergedPR(27, "alice")})
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice"), mergedPR(27, "alice")}})
+	m = u.(Model)
+
+	u, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m = u.(Model)
+	requested := listFetchMsg(t, cmd)
+
+	u, _ = m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
+	m = u.(Model)
+	for _, n := range []int{27, 29} {
+		if _, held := m.held[n]; !held {
+			t.Errorf("#%d not held after the unrequested fetch that landed first: held = %v", n, m.held)
+		}
+	}
+
+	u, _ = m.Update(requested)
+	m = u.(Model)
+	if got := shownNumbers(m); !slices.Equal(got, []int{28, 30}) {
+		t.Errorf("shown = %v, want [28 30] once the ctrl+r result lands", got)
+	}
+	if len(m.held) != 0 {
+		t.Errorf("held = %v, want empty", m.held)
+	}
+}
+
+// TestFailedCtrlRKeepsHeldRows: a ctrl+r whose fetch fails leaves nothing
+// pending, so the next unrequested refetch still merges.
+func TestFailedCtrlRKeepsHeldRows(t *testing.T) {
+	src := &scriptedPRSource{script: []scriptedFetch{{err: fmt.Errorf("network down")}}}
+	m := heldBoard(t, src)
+
+	u, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	m = u.(Model)
+	msg := listFetchMsg(t, cmd)
+	if _, ok := msg.(fetchFailedMsg); !ok {
+		t.Fatalf("ctrl+r fetch = %+v, want fetchFailedMsg", msg)
+	}
+	u, _ = m.Update(msg)
+	m = u.(Model)
+
+	u, _ = m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
+	m = u.(Model)
+	if got := shownNumbers(m); !slices.Contains(got, 29) {
+		t.Errorf("shown = %v, want #29 still held after a failed ctrl+r", got)
+	}
+	if _, held := m.held[29]; !held {
+		t.Errorf("held = %v, want #29 held", m.held)
+	}
+}
+
+func TestFilterSwitchDropsHeldRows(t *testing.T) {
+	closed := func(n int) gh.PR {
+		p := openPR(n, "alice")
+		p.State, p.ClosedAt = "CLOSED", time.Now()
+		return p
+	}
+	src := &scriptedPRSource{script: []scriptedFetch{{prs: []gh.PR{closed(40), closed(39)}}}}
+	m := heldBoard(t, src)
+	m.cursor = 2
+
+	u, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = u.(Model)
+	if m.state != "closed" {
+		t.Fatalf("test setup: state = %q, want closed after s", m.state)
+	}
+	msg := listFetchMsg(t, cmd)
+	if fm, ok := msg.(prsFetchedMsg); !ok || !fm.replace {
+		t.Fatalf("switch fetch = %+v, want a prsFetchedMsg marked replace", msg)
+	}
+	u, _ = m.Update(msg)
+	m = u.(Model)
+
+	if got := shownNumbers(m); !slices.Equal(got, []int{39, 40}) {
+		t.Errorf("shown = %v, want only the closed board's rows", got)
+	}
+	if len(m.held) != 0 {
+		t.Errorf("held = %v, want empty after a filter switch", m.held)
+	}
+	if m.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 after a filter switch", m.cursor)
+	}
+}
+
+// sectionsMsg builds a sectionsFetchedMsg whose raw halves round-trip through
+// the cache, so viewerFetchedMsg can re-split from them.
+func sectionsMsg(t *testing.T, review, open []gh.PR) sectionsFetchedMsg {
+	t.Helper()
+	reviewRaw, err := json.Marshal(review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openRaw, err := json.Marshal(open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sectionsFetchedMsg{state: "open", review: review, reviewRaw: reviewRaw,
+		reviewedRaw: []byte("[]"), open: open, openRaw: openRaw}
+}
+
+// TestMineHomeJumpSurvivesAReorderingFetch: a sections fetch that reorders
+// rows above the cursor before the viewer login resolves must not spend the
+// opening jump to Mine; once homed, later fetches anchor the cursor.
+func TestMineHomeJumpSurvivesAReorderingFetch(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	open := []gh.PR{openPR(5, "bob"), openPR(4, "me"), openPR(3, "bob")}
+
+	u, _ := m.Update(sectionsMsg(t, []gh.PR{openPR(7, "bob")}, open))
+	m = u.(Model)
+	u, _ = m.Update(sectionsMsg(t, []gh.PR{openPR(8, "bob"), openPR(7, "bob")}, open)) // #8 lands above the cursor's #7
+	m = u.(Model)
+	if m.cursor != 0 || m.cursorHomed {
+		t.Fatalf("before the login resolves: cursor = %d, homed = %v, want 0 and unspent", m.cursor, m.cursorHomed)
+	}
+
+	u, _ = m.Update(viewerFetchedMsg{login: "me"})
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	if got := ps.prAt(m.cursor).Number; got != 4 {
+		t.Fatalf("cursor PR = #%d, want #4 — the first Mine row", got)
+	}
+
+	u, _ = m.Update(sectionsMsg(t, []gh.PR{openPR(9, "bob"), openPR(8, "bob"), openPR(7, "bob")}, open))
+	m = u.(Model)
+	ps = m.section.(*PRSection)
+	if got := ps.prAt(m.cursor).Number; got != 4 {
+		t.Errorf("cursor PR = #%d, want #4 — after homing, a fetch anchors the cursor", got)
 	}
 }
