@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -242,6 +243,177 @@ func TestDepartedRowKeepsItsPosition(t *testing.T) {
 	if got := ps.prAt(1).Number; got != 29 {
 		t.Errorf("row 1 = #%d, want #29 to keep its position", got)
 	}
+}
+
+// TestMergeHeldPRsCarriesDepartedRowWithCategory is Step 5: a number the
+// fetch drops is carried forward at its previous value, keeping its previous
+// category, and recorded pending in m.held.
+func TestMergeHeldPRsCarriesDepartedRowWithCategory(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	prev := []gh.PR{openPR(30, "alice"), openPR(29, "alice")}
+	prevCats := map[int]string{30: "Mine", 29: "Others"}
+	fetched := []gh.PR{openPR(30, "alice")}
+	cats := map[int]string{30: "Mine"}
+
+	out := m.mergeHeldPRs(prev, prevCats, fetched, cats)
+
+	if len(out) != 2 {
+		t.Fatalf("out = %+v, want #29 carried forward alongside #30", out)
+	}
+	if cats[29] != "Others" {
+		t.Errorf("cats[29] = %q, want %q (carried from prevCats)", cats[29], "Others")
+	}
+	if st, ok := m.held[29]; !ok || st != "" {
+		t.Errorf("m.held[29] = (%q, %v), want (\"\", true) — pending lookup", st, ok)
+	}
+	if _, ok := m.held[30]; ok {
+		t.Error("m.held[30] should be absent — #30 is OPEN, matching the open board state")
+	}
+}
+
+// TestMergeHeldPRsSessionMergeReturnedStaleHeldAsMerged: a fetch that still
+// returns a session-merged PR as OPEN has already been overlaid to MERGED by
+// overlaySessionMerged before mergeHeldPRs runs; since its State then differs
+// from the open board's state, it is held (tagged merged) rather than
+// un-held — a lagging search result never outweighs prdash's own knowledge.
+func TestMergeHeldPRsSessionMergeReturnedStaleHeldAsMerged(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	stamp := time.Now()
+	m.sessionMerged[12] = stamp
+	p := openPR(12, "alice")
+	p.State, p.MergedAt = "MERGED", stamp // as overlaySessionMerged would have left it
+	fetched := []gh.PR{p}
+
+	out := m.mergeHeldPRs(nil, nil, fetched, nil)
+
+	if len(out) != 1 || out[0].State != "MERGED" {
+		t.Fatalf("out = %+v, want the single overlaid PR unchanged", out)
+	}
+	if got := m.held[12]; got != "MERGED" {
+		t.Errorf("m.held[12] = %q, want MERGED", got)
+	}
+}
+
+// TestMergeHeldPRsReturnedMemberUnholds: a number previously held that the
+// fetch returns with State equal to the board state is no longer held.
+func TestMergeHeldPRsReturnedMemberUnholds(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.held[14] = ""
+	fetched := []gh.PR{openPR(14, "alice")}
+
+	m.mergeHeldPRs(nil, nil, fetched, nil)
+
+	if _, ok := m.held[14]; ok {
+		t.Error("m.held[14] should be gone — the fetch returned it OPEN, matching the open board")
+	}
+}
+
+// TestMergeHeldPRsReturnedThenMissingReholds: a row that un-held on one
+// refetch is held again, pending, the next time it departs.
+func TestMergeHeldPRsReturnedThenMissingReholds(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	prev := []gh.PR{openPR(14, "alice")}
+	m.mergeHeldPRs(nil, nil, prev, nil) // returned: not held
+	if _, ok := m.held[14]; ok {
+		t.Fatalf("test setup: #14 should not be held yet")
+	}
+
+	m.mergeHeldPRs(prev, nil, nil, nil) // now missing entirely
+
+	if st, ok := m.held[14]; !ok || st != "" {
+		t.Errorf("m.held[14] = (%q, %v), want (\"\", true) after departing", st, ok)
+	}
+}
+
+// TestApplyHeldStatesPreservesTheClosedBoardsSortKey: a lookup patches State
+// but must not touch ClosedAt on the closed board — ClosedAt is its sort key,
+// and reordering rows the user is looking at is exactly what this mechanism
+// exists to avoid.
+func TestApplyHeldStatesPreservesTheClosedBoardsSortKey(t *testing.T) {
+	m := NewModel("/repo", "is:closed", nil)
+	m.width, m.height = 100, 40
+	original := time.Now().Add(-24 * time.Hour)
+	p := gh.PR{Number: 50, State: "CLOSED", ClosedAt: original}
+	m.setPRs([]gh.PR{p})
+	m.held[50] = ""
+
+	m.applyHeldStates(map[int]gh.ItemState{50: {State: "CLOSED", ClosedAt: time.Now()}})
+
+	ps := m.section.(*PRSection)
+	got := findPR(t, ps, 50)
+	if !got.ClosedAt.Equal(original) {
+		t.Errorf("ClosedAt = %v, want unchanged %v — it's the closed board's sort key", got.ClosedAt, original)
+	}
+	if m.held[50] != "CLOSED" {
+		t.Errorf("m.held[50] = %q, want CLOSED recorded from the lookup", m.held[50])
+	}
+}
+
+// TestCursorAnchorCapturesNumberAndOrder: cursorAnchor reads the cursor row's
+// number and the full shown order off the current section.
+func TestCursorAnchorCapturesNumberAndOrder(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs([]gh.PR{openPR(30, "alice"), openPR(20, "alice"), openPR(10, "alice")})
+	m.cursor = 1
+
+	num, order := m.cursorAnchor()
+
+	if num != 20 {
+		t.Errorf("num = %d, want #20 (the cursor row)", num)
+	}
+	if want := []int{30, 20, 10}; !slices.Equal(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+// TestCursorAnchorEmptyBoard: an empty board anchors to 0 with no order.
+func TestCursorAnchorEmptyBoard(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.setPRs(nil)
+
+	num, order := m.cursorAnchor()
+
+	if num != 0 || len(order) != 0 {
+		t.Errorf("cursorAnchor() = (%d, %v), want (0, empty)", num, order)
+	}
+}
+
+// TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps is
+// Step 6: restoreCursor walks the old shown order outward from the departed
+// number's old position — next row below first, then above — and clamps only
+// once nothing in the old order survived.
+func TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps(t *testing.T) {
+	order := []int{50, 40, 30, 20, 10} // old shown order; cursor was on #30 (index 2)
+
+	t.Run("prefers the neighbour below when both survive", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.setPRs([]gh.PR{openPR(40, "alice"), openPR(20, "alice")})
+		m.restoreCursor(30, order)
+		ps := m.section.(*PRSection)
+		if got := ps.prAt(m.cursor).Number; got != 20 {
+			t.Errorf("cursor PR = #%d, want #20 (the surviving neighbour below #30)", got)
+		}
+	})
+
+	t.Run("falls back to the neighbour above", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.setPRs([]gh.PR{openPR(40, "alice"), openPR(10, "alice")})
+		m.restoreCursor(30, order)
+		ps := m.section.(*PRSection)
+		if got := ps.prAt(m.cursor).Number; got != 40 {
+			t.Errorf("cursor PR = #%d, want #40 (the surviving neighbour above #30)", got)
+		}
+	})
+
+	t.Run("clamps when nothing in the old order survived", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.setPRs([]gh.PR{openPR(99, "alice"), openPR(98, "alice")})
+		m.cursor = 5 // stale, out of range
+		m.restoreCursor(30, order)
+		if m.cursor != 1 {
+			t.Errorf("cursor = %d, want clamped to the last row (1)", m.cursor)
+		}
+	})
 }
 
 // TestHeldMergedRowRefusesUpdateBranch is acceptance A5 (part 1): a row that

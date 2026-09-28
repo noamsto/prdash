@@ -94,6 +94,9 @@ type Model struct {
 	reviewedSet       map[int]bool        // PR numbers in the latest reviewed-by-me half; the ◐ marker's candidates
 	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
 	mergedSticky      map[int]gh.PR       // PRs prdash merged this session, kept on the open board until ctrl+r
+	held              map[int]string      // number → looked-up GitHub state ("" = lookup pending); a held row stays shown past an unrequested refetch
+	heldGen           int                 // bumped on every clearHeld, so a stale heldStatesMsg lookup response is dropped
+	sessionMerged     map[int]time.Time   // PR number → the time prdash saw its merge succeed this session; never cleared
 	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
 	previewN          int
@@ -156,6 +159,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		detail:  map[int]gh.PRDetail{}, detailErr: map[int]error{}, fresh: map[int]bool{},
 		reviewRequested: map[int]bool{}, reviewedSet: map[int]bool{},
 		ciRerun: map[int]time.Time{}, mergedSticky: map[int]gh.PR{},
+		held: map[int]string{}, sessionMerged: map[int]time.Time{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:   2,
 		logCache:   map[string][]logStep{},
@@ -1251,27 +1255,30 @@ func (m *Model) Hydrate() {
 
 // fetchCmd fetches the PR list for filter through the PR source, tagging the
 // result so a background prewarm of a non-current preset lands in the cache
-// without repainting the view.
-func (m Model) fetchCmd(filter string) tea.Cmd {
+// without repainting the view. replace rides onto prsFetchedMsg.replace,
+// marking the result as a requested replace (ctrl+r, filter/tab switch)
+// rather than an unrequested background reconcile.
+func (m Model) fetchCmd(filter string, replace bool) tea.Cmd {
 	src := m.prSource
 	return func() tea.Msg {
 		prs, raw, err := src.FetchPRs(filter, defaultLimit)
 		if err != nil {
 			return fetchFailedMsg{err: err, mode: "pr", filter: filter}
 		}
-		return prsFetchedMsg{filter: filter, prs: prs, raw: raw}
+		return prsFetchedMsg{filter: filter, prs: prs, raw: raw, replace: replace}
 	}
 }
 
 // issueFetchCmd fetches the issue list for filter through the issue source.
-func (m Model) issueFetchCmd(filter string) tea.Cmd {
+// replace rides onto issuesFetchedMsg.replace; see fetchCmd.
+func (m Model) issueFetchCmd(filter string, replace bool) tea.Cmd {
 	src := m.issueSource
 	return func() tea.Msg {
 		is, raw, err := src.FetchIssues(filter, defaultLimit)
 		if err != nil {
 			return fetchFailedMsg{err: err, mode: "issue", filter: filter}
 		}
-		return issuesFetchedMsg{filter: filter, issues: is, raw: raw}
+		return issuesFetchedMsg{filter: filter, issues: is, raw: raw, replace: replace}
 	}
 }
 
@@ -1280,7 +1287,8 @@ func (m Model) issueFetchCmd(filter string) tea.Cmd {
 // first search once the viewer submits a review), and the wider is:open list —
 // caching each under its own filter+limit key. The fetches run concurrently:
 // they're independent, so wall-clock is the slowest of them, not their sum.
-func (m Model) sectionsFetchCmd() tea.Cmd {
+// replace rides onto sectionsFetchedMsg.replace; see fetchCmd.
+func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 	src := m.prSource
 	state := m.state
 	reviewF := searchFor("pr", state, reviewBody)
@@ -1322,14 +1330,15 @@ func (m Model) sectionsFetchCmd() tea.Cmd {
 		return sectionsFetchedMsg{state: state,
 			review: review.prs, reviewRaw: review.raw,
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
-			open: open.prs, openRaw: open.raw}
+			open: open.prs, openRaw: open.raw, replace: replace}
 	}
 }
 
 // issueSectionsFetchCmd fetches the thirds of the issue sections view —
 // assigned, authored, and the wider open list — mirroring sectionsFetchCmd.
-// All three run through issueSectionFilters at issueListLimit.
-func (m Model) issueSectionsFetchCmd() tea.Cmd {
+// All three run through issueSectionFilters at issueListLimit. replace rides
+// onto issueSectionsFetchedMsg.replace; see fetchCmd.
+func (m Model) issueSectionsFetchCmd(replace bool) tea.Cmd {
 	src := m.issueSource
 	assignedF, authoredF, wideF := issueSectionFilters()
 	return func() tea.Msg {
@@ -1371,7 +1380,7 @@ func (m Model) issueSectionsFetchCmd() tea.Cmd {
 		return issueSectionsFetchedMsg{
 			assigned: assigned.issues, assignedRaw: assigned.raw,
 			authored: authored.issues, authoredRaw: authored.raw,
-			open: wide.issues, openRaw: wide.raw,
+			open: wide.issues, openRaw: wide.raw, replace: replace,
 		}
 	}
 }
@@ -1502,7 +1511,9 @@ func (m *Model) cascadeSettleCmd() tea.Cmd {
 		fail = r.badge()
 		err = errors.New(fail)
 	}
-	return func() tea.Msg { return actionDoneMsg{cascade: true, err: err, fail: fail, partial: partial} }
+	return func() tea.Msg {
+		return actionDoneMsg{cascade: true, err: err, fail: fail, partial: partial, rerunCI: true}
+	}
 }
 
 // InitTheme reads the system theme mode, applies the matching palette, and seeds
@@ -1600,17 +1611,24 @@ func (m Model) pollChecksCmd() tea.Cmd {
 // backgroundRefresh silently reconciles the current view without clearing rows —
 // the same fetch path as a filter switch, minus the row reset.
 func (m *Model) backgroundRefresh() tea.Cmd {
+	return m.refreshCmd(false)
+}
+
+// refreshCmd reconciles the current view: replace true is a requested replace
+// (ctrl+r), replace false an unrequested background reconcile (post-action,
+// CI poll, delayedRefreshMsg) that must not drop held rows.
+func (m *Model) refreshCmd(replace bool) tea.Cmd {
 	m.refreshing = true
 	if m.mode == "issue" {
-		fetch := m.issueFetchCmd(m.filter)
+		fetch := m.issueFetchCmd(m.filter, replace)
 		if m.issueSectionsDefault() {
-			fetch = m.issueSectionsFetchCmd()
+			fetch = m.issueSectionsFetchCmd(replace)
 		}
 		return tea.Batch(fetch, m.startSpinner())
 	}
-	fetch := m.fetchCmd(m.filter)
+	fetch := m.fetchCmd(m.filter, replace)
 	if m.sectionsDefault() {
-		fetch = m.sectionsFetchCmd()
+		fetch = m.sectionsFetchCmd(replace)
 	}
 	return tea.Batch(fetch, m.startSpinner())
 }
@@ -1633,9 +1651,9 @@ func (m *Model) switchToFilter() tea.Cmd {
 				m.setIssues(nil)
 			}
 		}
-		fetch := m.issueFetchCmd(m.filter)
+		fetch := m.issueFetchCmd(m.filter, true)
 		if m.issueSectionsDefault() {
-			fetch = m.issueSectionsFetchCmd()
+			fetch = m.issueSectionsFetchCmd(true)
 		}
 		return tea.Batch(fetch, m.startSpinner())
 	}
@@ -1646,9 +1664,9 @@ func (m *Model) switchToFilter() tea.Cmd {
 			m.setPRs(nil) // drop the previous preset's rows while the fetch is in flight
 		}
 	}
-	fetch := m.fetchCmd(m.filter)
+	fetch := m.fetchCmd(m.filter, true)
 	if m.sectionsDefault() {
-		fetch = m.sectionsFetchCmd()
+		fetch = m.sectionsFetchCmd(true)
 	}
 	return tea.Batch(fetch, m.startSpinner())
 }
@@ -1836,7 +1854,7 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {
-		cmds = append(cmds, m.sectionsFetchCmd())
+		cmds = append(cmds, m.sectionsFetchCmd(false))
 	}
 	// All-or-nothing, like the PR gate above: a fresh assigned half plus a
 	// missing wide half paints a board with no Others at all, so any one
@@ -1849,7 +1867,7 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 		}
 	}
 	if !issueSectionsFresh {
-		cmds = append(cmds, m.issueSectionsFetchCmd())
+		cmds = append(cmds, m.issueSectionsFetchCmd(false))
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
 		cmds = append(cmds, m.fetchMembersCmd())

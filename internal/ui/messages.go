@@ -11,15 +11,17 @@ type issueDetailMsg struct {
 }
 
 type prsFetchedMsg struct {
-	filter string // the search this result is for; "" means the current foreground fetch
-	prs    []gh.PR
-	raw    []byte
+	filter  string // the search this result is for; "" means the current foreground fetch
+	prs     []gh.PR
+	raw     []byte
+	replace bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
 }
 
 type issuesFetchedMsg struct {
-	filter string // the search this result is for; "" means the current foreground fetch
-	issues []gh.Issue
-	raw    []byte
+	filter  string // the search this result is for; "" means the current foreground fetch
+	issues  []gh.Issue
+	raw     []byte
+	replace bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
 }
 
 // sectionsFetchedMsg carries the async thirds of the empty-default open view
@@ -29,6 +31,7 @@ type sectionsFetchedMsg struct {
 	state                           string // the PR state (open/merged/closed) this result is for
 	review, reviewed, open          []gh.PR
 	reviewRaw, reviewedRaw, openRaw []byte
+	replace                         bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
 }
 
 // issueSectionsFetchedMsg carries the three halves of the issue sections view
@@ -38,6 +41,17 @@ type sectionsFetchedMsg struct {
 type issueSectionsFetchedMsg struct {
 	assigned, authored, open          []gh.Issue
 	assignedRaw, authoredRaw, openRaw []byte
+	replace                           bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
+}
+
+// heldStatesMsg carries one batched by-number state lookup for the rows
+// currently held on the board. gen ties it to the held generation it was
+// issued under, so a lookup for an already-cleared hold (ctrl+r, filter
+// switch) in flight when the response lands is dropped.
+type heldStatesMsg struct {
+	gen    int
+	states map[int]gh.ItemState
+	err    error
 }
 
 // detailsBatchMsg carries one batched detail fetch — the whole prefetch window
@@ -108,8 +122,10 @@ type fetchSkippedMsg struct{}
 type actionDoneMsg struct {
 	err      error
 	ok, fail string
-	cascade  bool  // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
-	partial  []int // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
+	cascade  bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+	partial  []int   // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
+	merged   []gh.PR // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
+	rerunCI  bool    // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
 }
 
 // cascadeUpdatedMsg carries one link's UpdateBranch result back to the run.

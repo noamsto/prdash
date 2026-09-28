@@ -504,7 +504,7 @@ func (m Model) assignReviewersCmd(number int, prID string, add, remove []string,
 		return func() tea.Msg { return fetchFailedMsg{err: err} }
 	}
 	delete(m.fresh, number) // reviewer set changed → summary must revalidate
-	fetch := m.fetchCmd(m.filter)
+	fetch := m.fetchCmd(m.filter, false)
 	src := m.mutationSource
 	var logins []string
 	for login, on := range picked {

@@ -260,7 +260,7 @@ func TestIssueBoardFailurePathIsModeScoped(t *testing.T) {
 	m.SetIssueSource(fs)
 	_ = m.toggleMode() // pr -> issue; m.filter becomes m.other's default ("is:open")
 
-	msg := m.issueSectionsFetchCmd()()
+	msg := m.issueSectionsFetchCmd(false)()
 	ffm, ok := msg.(fetchFailedMsg)
 	if !ok {
 		t.Fatalf("msg = %T, want fetchFailedMsg", msg)
@@ -298,7 +298,7 @@ func TestIssueBoardFailurePathIsModeScoped(t *testing.T) {
 		m3.SetPRSource(erroringWidePRSource{err: errors.New("boom")})
 		_ = m3.toggleMode() // pr -> issue
 
-		prMsg := m3.sectionsFetchCmd()()
+		prMsg := m3.sectionsFetchCmd(false)()
 		prFfm, ok := prMsg.(fetchFailedMsg)
 		if !ok || prFfm.mode != "pr" {
 			t.Fatalf("msg = %+v, want a pr-mode fetchFailedMsg", prMsg)
