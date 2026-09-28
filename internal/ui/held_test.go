@@ -3,13 +3,17 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
@@ -783,4 +787,446 @@ func TestMineHomeJumpSurvivesAReorderingFetch(t *testing.T) {
 	if got := ps.prAt(m.cursor).Number; got != 4 {
 		t.Errorf("cursor PR = #%d, want #4 — after homing, a fetch anchors the cursor", got)
 	}
+}
+
+// shownIndex returns number's index among the currently shown rows (PR or
+// issue board), or -1 if it isn't shown.
+func shownIndex(m Model, number int) int {
+	n, ok := m.section.(numbered)
+	if !ok {
+		return -1
+	}
+	for i := 0; i < m.section.Len(); i++ {
+		if n.numberAt(i) == number {
+			return i
+		}
+	}
+	return -1
+}
+
+// rowTextFor returns number's ansi-stripped rendered row text. The caller must
+// have called m.renderList() (directly, or via an Update that repaints) since
+// its last change to the board.
+func rowTextFor(t *testing.T, m Model, number int) string {
+	t.Helper()
+	i := shownIndex(m, number)
+	if i < 0 {
+		t.Fatalf("number #%d not found among shown rows", number)
+	}
+	return ansi.Strip(m.rowText[i])
+}
+
+// TestHeldRowTaggedFromLookup is A4 (part 2): a held row's tag comes from its
+// heldStatesMsg lookup, gated on the generation it was issued under.
+func TestHeldRowTaggedFromLookup(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.setPRs([]gh.PR{openPR(30, "alice"), openPR(29, "alice"), openPR(28, "alice")})
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(30, "alice"), openPR(28, "alice")}})
+	m = u.(Model)
+
+	staleGen := m.heldGen - 1
+	u, _ = m.Update(heldStatesMsg{gen: staleGen, states: map[int]gh.ItemState{29: {State: "CLOSED"}}})
+	m = u.(Model)
+	m.renderList()
+	if got := rowTextFor(t, m, 29); strings.Contains(got, "closed") {
+		t.Errorf("row #29 = %q, want a stale-gen lookup to change nothing", got)
+	}
+
+	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "CLOSED"}}})
+	m = u.(Model)
+	m.renderList()
+
+	if got := rowTextFor(t, m, 29); !strings.Contains(got, "closed") {
+		t.Errorf("row #29 = %q, want it tagged closed", got)
+	}
+	if got := rowTextFor(t, m, 30); strings.Contains(got, "closed") {
+		t.Errorf("row #30 = %q, want no closed tag — it was never held", got)
+	}
+	if got := shownIndex(m, 29); got != 1 {
+		t.Errorf("row #29 shown index = %d, want 1 (its old position)", got)
+	}
+}
+
+// TestHeldRowUntaggedWhilePending: a held row renders untagged until its
+// lookup lands.
+func TestHeldRowUntaggedWhilePending(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.setPRs([]gh.PR{openPR(30, "alice"), openPR(29, "alice"), openPR(28, "alice")})
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(30, "alice"), openPR(28, "alice")}})
+	m = u.(Model)
+	m.renderList()
+
+	got := rowTextFor(t, m, 29)
+	for _, tag := range []string{"merged", "closed", "left filter"} {
+		if strings.Contains(got, tag) {
+			t.Errorf("row #29 = %q, want no %q tag while its lookup is pending", got, tag)
+		}
+	}
+}
+
+// TestSessionMergedRowTaggedMerged: a merge success tags its row merged
+// immediately, and the tag survives a refetch that still shows it OPEN.
+func TestSessionMergedRowTaggedMerged(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(stubSource{})
+	m.setPRs([]gh.PR{mergeablePR(61, "alice")})
+	m.SetMutationSource(&fakeMutationSource{})
+
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+	u, _ := m.Update(done)
+	m = u.(Model)
+	m.renderList()
+
+	if got := rowTextFor(t, m, 61); !strings.Contains(got, "merged") {
+		t.Errorf("row #61 = %q, want it tagged merged before any refetch", got)
+	}
+
+	u, _ = m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(61, "alice")}})
+	m = u.(Model)
+	m.renderList()
+
+	if got := rowTextFor(t, m, 61); !strings.Contains(got, "merged") {
+		t.Errorf("row #61 = %q, want it still tagged merged after a stale-OPEN refetch", got)
+	}
+	if p := findPR(t, m.section.(*PRSection), 61); p.State != "MERGED" {
+		t.Errorf("#61 state = %q, want MERGED", p.State)
+	}
+}
+
+// TestLeftFilterTag: a held row whose lookup lands still at the board's own
+// state (search just hasn't caught up yet) is tagged "left filter".
+func TestLeftFilterTag(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.setPRs([]gh.PR{openPR(30, "alice"), openPR(29, "alice"), openPR(28, "alice")})
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(30, "alice"), openPR(28, "alice")}})
+	m = u.(Model)
+
+	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "OPEN"}}})
+	m = u.(Model)
+	m.renderList()
+
+	if got := rowTextFor(t, m, 29); !strings.Contains(got, "left filter") {
+		t.Errorf("row #29 = %q, want it tagged left filter", got)
+	}
+}
+
+// TestIssueHeldRowTagged mirrors TestHeldRowTaggedFromLookup for the issue
+// board, which has no State field to compare against the board's own —
+// membership in m.held is the only signal.
+func TestIssueHeldRowTagged(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.filter = "is:open"
+	m.width, m.height = 100, 40
+	m.setIssues([]gh.Issue{{Number: 30, Title: "a"}, {Number: 29, Title: "b"}, {Number: 28, Title: "c"}})
+
+	u, _ := m.Update(issuesFetchedMsg{filter: m.filter, issues: []gh.Issue{{Number: 30, Title: "a"}, {Number: 28, Title: "c"}}})
+	m = u.(Model)
+	if _, held := m.held[29]; !held {
+		t.Fatalf("test setup: want issue #29 held, held = %v", m.held)
+	}
+
+	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "CLOSED"}}})
+	m = u.(Model)
+	m.renderList()
+
+	if got := rowTextFor(t, m, 29); !strings.Contains(got, "closed") {
+		t.Errorf("issue #29 row = %q, want it tagged closed", got)
+	}
+}
+
+// TestHeldTagIsPartOfTheRowCacheKey: a row's cached text must change when its
+// held tag flips, even with nothing else (no rowGen bump) forcing a re-render.
+func TestHeldTagIsPartOfTheRowCacheKey(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.setPRs([]gh.PR{openPR(30, "alice"), openPR(29, "alice"), openPR(28, "alice")})
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(30, "alice"), openPR(28, "alice")}})
+	m = u.(Model)
+	m.renderList()
+	before := rowTextFor(t, m, 29)
+
+	m.applyHeldStates(map[int]gh.ItemState{29: {State: "CLOSED"}}) // no rowGen bump
+	m.renderList()
+	after := rowTextFor(t, m, 29)
+
+	if before == after {
+		t.Error("row text unchanged after the held tag flipped pending → closed — held/tag must be part of rowKey")
+	}
+	if !strings.Contains(after, "closed") {
+		t.Errorf("after = %q, want it tagged closed", after)
+	}
+}
+
+// fakeStateSource is a gh.StateSource that records the numbers each call
+// receives, so a test can assert what heldStatesCmd asked for.
+type fakeStateSource struct {
+	mu     sync.Mutex
+	calls  [][]int
+	states map[int]gh.ItemState
+}
+
+func (f *fakeStateSource) FetchStates(numbers []int) (map[int]gh.ItemState, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, append([]int(nil), numbers...))
+	f.mu.Unlock()
+	return f.states, nil
+}
+
+func (f *fakeStateSource) calledWith() [][]int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestHeldStatesLookupIssued: an unrequested fetch that departs a row issues a
+// lookup for it; a session-merged departed row is skipped (its state is
+// already known); a replace (ctrl+r) result issues no lookup at all.
+func TestHeldStatesLookupIssued(t *testing.T) {
+	t.Run("departed row is looked up", func(t *testing.T) {
+		src := &fakeStateSource{}
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		m.SetPRSource(stubSource{})
+		m.SetStateSource(src)
+		m.setPRs([]gh.PR{openPR(30, "alice"), openPR(29, "alice"), openPR(28, "alice")})
+
+		_, cmd := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(30, "alice"), openPR(28, "alice")}})
+		invokeCmdTree(t, cmd)
+
+		calls := src.calledWith()
+		if len(calls) != 1 || !slices.Contains(calls[0], 29) {
+			t.Fatalf("FetchStates calls = %v, want one call containing #29", calls)
+		}
+	})
+
+	t.Run("session-merged departed row is not looked up", func(t *testing.T) {
+		src := &fakeStateSource{}
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		m.SetPRSource(stubSource{})
+		m.SetStateSource(src)
+		m.setPRs([]gh.PR{mergeablePR(61, "alice"), mergeablePR(60, "alice")})
+		m.SetMutationSource(&fakeMutationSource{})
+
+		msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+		done, ok := msg.(actionDoneMsg)
+		if !ok || done.err != nil {
+			t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+		}
+		u, _ := m.Update(done)
+		m = u.(Model)
+
+		_, cmd := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(60, "alice")}})
+		invokeCmdTree(t, cmd)
+
+		if calls := src.calledWith(); len(calls) != 0 {
+			t.Errorf("FetchStates calls = %v, want none — #61 is session-merged", calls)
+		}
+	})
+
+	t.Run("a replace result issues no lookup", func(t *testing.T) {
+		src := &fakeStateSource{}
+		m := heldBoard(t, &scriptedPRSource{script: []scriptedFetch{{prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}}}})
+		m.SetStateSource(src)
+
+		_, cmd := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}, replace: true})
+		invokeCmdTree(t, cmd)
+
+		if calls := src.calledWith(); len(calls) != 0 {
+			t.Errorf("FetchStates calls = %v, want none after a replace", calls)
+		}
+	})
+}
+
+// TestHeldRowsRejectMutations is acceptance A5: a session-merged row and a
+// pending-held (departed, lookup not yet landed) row must both refuse every
+// mutating action, while a held row whose lookup confirms it is still OPEN
+// is mutable again.
+func TestHeldRowsRejectMutations(t *testing.T) {
+	t.Run("session-merged row refuses mutations", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		m.SetPRSource(stubSource{})
+		m.setPRs([]gh.PR{mergeablePR(61, "alice")})
+		m.SetMutationSource(&fakeMutationSource{})
+
+		msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+		done, ok := msg.(actionDoneMsg)
+		if !ok || done.err != nil {
+			t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+		}
+		u, _ := m.Update(done)
+		m = u.(Model)
+
+		fs := &fakeMutationSource{}
+		m.SetMutationSource(fs)
+		for _, key := range []string{"m", "L", "u", "M"} {
+			got := driveBulk(t, m.runBulk(action.DefaultPRActions()[key]))
+			done, ok := got.(actionDoneMsg)
+			if !ok || done.err == nil {
+				t.Errorf("%s on a session-merged row: msg = %+v, want an error", key, got)
+			}
+		}
+		if n := len(fs.mergeCalls) + len(fs.approveCalls) + len(fs.updateBranchCalls) + len(fs.markReadyCalls); n != 0 {
+			t.Errorf("mutation source called %d times on a session-merged row, want 0: %+v", n, fs)
+		}
+	})
+
+	t.Run("pending-held row refuses mutations", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		m.SetPRSource(stubSource{})
+		m.setPRs([]gh.PR{mergeablePR(30, "alice"), mergeablePR(29, "alice"), mergeablePR(28, "alice")})
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(30, "alice"), mergeablePR(28, "alice")}})
+		m = u.(Model)
+		m.cursor = shownIndex(m, 29)
+
+		fs := &fakeMutationSource{}
+		m.SetMutationSource(fs)
+		for _, key := range []string{"m", "L", "u", "M"} {
+			got := driveBulk(t, m.runBulk(action.DefaultPRActions()[key]))
+			done, ok := got.(actionDoneMsg)
+			if !ok || done.err == nil {
+				t.Errorf("%s on a pending-held row: msg = %+v, want an error", key, got)
+			}
+		}
+		if n := len(fs.mergeCalls) + len(fs.approveCalls) + len(fs.updateBranchCalls) + len(fs.markReadyCalls); n != 0 {
+			t.Errorf("mutation source called %d times on a pending-held row, want 0: %+v", n, fs)
+		}
+
+		u, _ = m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
+		m = u.(Model)
+		if m.showPicker {
+			t.Error("R opened the reviewer picker on a held row")
+		}
+		if m.actionStatus == nil || m.actionStatus.err == nil {
+			t.Error("R on a held row must settle an error status")
+		}
+
+		cmd := m.runAction(action.DefaultPRActions()["r"])
+		if cmd == nil {
+			t.Error("rerun-failed on a held row must still return a clear-status cmd")
+		}
+		if m.actionStatus == nil || m.actionStatus.err == nil || !m.actionStatus.settled {
+			t.Error("rerun-failed on a held row must settle an error status")
+		}
+	})
+
+	t.Run("a held row confirmed OPEN is mutable", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		m.SetPRSource(stubSource{})
+		m.setPRs([]gh.PR{mergeablePR(30, "alice"), mergeablePR(29, "alice"), mergeablePR(28, "alice")})
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(30, "alice"), mergeablePR(28, "alice")}})
+		m = u.(Model)
+		u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "OPEN"}}})
+		m = u.(Model)
+		m.cursor = shownIndex(m, 29)
+
+		fs := &fakeMutationSource{}
+		m.SetMutationSource(fs)
+		msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+		done, ok := msg.(actionDoneMsg)
+		if !ok || done.err != nil {
+			t.Fatalf("merge on a held-but-confirmed-OPEN row: msg = %+v, want success", msg)
+		}
+		if len(fs.mergeCalls) != 1 {
+			t.Errorf("mergeCalls = %v, want the mutation source reached", fs.mergeCalls)
+		}
+	})
+}
+
+// TestHeldRowsKeepReadOnlyActions: a held row still allows the actions that
+// touch no GitHub state a lookup could contradict — copy, open in browser,
+// and local branch cleanup.
+func TestHeldRowsKeepReadOnlyActions(t *testing.T) {
+	m := heldBoard(t, &scriptedPRSource{script: []scriptedFetch{{prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}}}})
+	m.cursor = shownIndex(m, 29)
+
+	t.Run("copy-number", func(t *testing.T) {
+		cmd := m.runAction(action.DefaultPRActions()["y"])
+		if cmd == nil {
+			t.Error("copy-number on a held row returned no cmd")
+		}
+		if m.actionStatus == nil || m.actionStatus.err != nil {
+			t.Errorf("actionStatus = %+v, want an ok status", m.actionStatus)
+		}
+	})
+
+	t.Run("open-web", func(t *testing.T) {
+		dir := t.TempDir()
+		stub := filepath.Join(dir, browserArgv(runtime.GOOS, "")[0])
+		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", dir)
+		t.Setenv("BROWSER", "") // pin the default opener the stub is named for
+
+		cmd := m.runBulk(action.DefaultPRActions()["o"])
+		if cmd == nil {
+			t.Fatal("open-web on a held row returned no cmd")
+		}
+		msg := driveBulk(t, cmd)
+		done, ok := msg.(actionDoneMsg)
+		if !ok || done.err != nil {
+			t.Errorf("msg = %+v, want a successful actionDoneMsg — open-web must dispatch on a held row", msg)
+		}
+	})
+
+	t.Run("cleanup-branch", func(t *testing.T) {
+		dir := cleanupRepo(t)
+		gitIn(t, dir, "branch", "feat/x")
+		m.dir = dir
+
+		cmd := m.runAction(action.DefaultPRActions()["X"])
+		if cmd == nil {
+			t.Fatal("cleanup-branch on a held row returned no cmd")
+		}
+		msg := driveBulk(t, cmd)
+		if _, ok := msg.(actionDoneMsg); !ok {
+			t.Errorf("msg = %+v, want an actionDoneMsg — cleanup-branch must dispatch on a held row", msg)
+		}
+	})
+}
+
+// TestPollIgnoresHeldRows: a held row's pending check must not keep the poll
+// loop alive, but an ordinary OPEN row's still does.
+func TestPollIgnoresHeldRows(t *testing.T) {
+	t.Run("held row does not count", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		p := openPR(29, "alice")
+		p.StatusCheckRollup = pending()
+		m.setPRs([]gh.PR{p})
+		m.held[29] = ""
+
+		if m.anyChecksRunning() {
+			t.Error("a held row's pending check must not keep the poll alive")
+		}
+	})
+
+	t.Run("ordinary OPEN row counts", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 40
+		p := openPR(30, "alice")
+		p.StatusCheckRollup = pending()
+		m.setPRs([]gh.PR{p})
+
+		if !m.anyChecksRunning() {
+			t.Error("an ordinary OPEN row's pending check must count")
+		}
+	})
 }
