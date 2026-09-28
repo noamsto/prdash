@@ -334,9 +334,9 @@ func (m *Model) selectedRows() (nums []int, wasHeld map[int]bool) {
 // restoreSelection rebuilds the selection at its members' new shown indexes
 // after a paint (nums, wasHeld as captured by selectedRows before the paint;
 // nil clears it, as a replace does). A number no longer shown is dropped, and
-// so is one that became held in this paint and wasn't already — a row
-// already held when selected stays selected, since read-only bulk actions
-// still reach it and mutable() refuses mutations at action time regardless.
+// so is one that becomes held in this paint — but not one already held as of
+// the previous paint, since read-only bulk actions still reach it and
+// mutable() refuses mutations at action time regardless.
 func (m *Model) restoreSelection(nums []int, wasHeld map[int]bool) {
 	m.sel.clear()
 	n, ok := m.section.(numbered)

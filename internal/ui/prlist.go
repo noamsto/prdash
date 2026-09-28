@@ -81,6 +81,7 @@ type Model struct {
 	repo              string
 	actions           map[string]action.Action
 	pending           *action.Action
+	pendingTargets    []int // per-selected pending's target numbers, as of the prompt; confirmAnswer refuses a changed set
 	showActions       bool
 	showLegend        bool
 	legendQuery       string // live substring filter typed while the legend overlay is open

@@ -1694,3 +1694,201 @@ func TestReplaceClearsTheSelection(t *testing.T) {
 		t.Errorf("sel.count() = %d, want 0 after a replace", got)
 	}
 }
+
+// TestConfirmPromptCancelsWhenTheSelectionLeaves: select #12 and #13, cursor
+// on #20, press merge — the prompt reads "for 2 PRs". An unrequested refetch
+// that drops #12 and #13 (they go held, restoreSelection empties the
+// selection) must not let the confirmed y fall back to merging the cursor
+// row, #20, instead.
+func TestConfirmPromptCancelsWhenTheSelectionLeaves(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{
+		mergeablePR(20, "alice"), mergeablePR(13, "alice"), mergeablePR(12, "alice"),
+	})
+	m.sel.toggle(shownIndex(m, 13))
+	m.sel.toggle(shownIndex(m, 12))
+	m.cursor = shownIndex(m, 20)
+
+	if cmd := m.startBulk(action.DefaultPRActions()["m"]); cmd != nil || m.pending == nil {
+		t.Fatalf("merge on a bulk selection should prompt: cmd=%v pending=%v", cmd, m.pending)
+	}
+	if q := m.confirmQuestion(); !strings.Contains(q, "2 PRs") {
+		t.Fatalf("confirmQuestion = %q, want it to name 2 PRs", q)
+	}
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(20, "alice")}})
+	m = u.(Model)
+	if m.sel.count() != 0 {
+		t.Fatalf("test setup: selection should empty once #12/#13 depart, got %d", m.sel.count())
+	}
+	if m.pending == nil {
+		t.Fatal("test setup: an unrequested refetch must not clear a pending confirm")
+	}
+
+	if cmd := m.confirmAnswer(true); cmd != nil {
+		invokeCmdTree(t, cmd) // drives the merge network call too, if the fix regresses and fires one
+	}
+
+	if len(fs.mergeCalls) != 0 {
+		t.Fatalf("mergeCalls = %v, want none — the target set changed under the prompt", fs.mergeCalls)
+	}
+	if m.actionStatus == nil || m.actionStatus.fail == "" {
+		t.Fatalf("actionStatus = %+v, want a settled failure badge", m.actionStatus)
+	}
+	if m.pending != nil || m.pendingTargets != nil {
+		t.Fatalf("pending/pendingTargets should clear on the answer, got %v / %v", m.pending, m.pendingTargets)
+	}
+}
+
+// TestConfirmPromptRunsWhenTargetsUnchanged: a refetch that reorders the board
+// but keeps both selected PRs shown must still merge exactly #12 and #13 once
+// confirmed.
+func TestConfirmPromptRunsWhenTargetsUnchanged(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{
+		mergeablePR(20, "alice"), mergeablePR(13, "alice"), mergeablePR(12, "alice"),
+	})
+	m.sel.toggle(shownIndex(m, 13))
+	m.sel.toggle(shownIndex(m, 12))
+	m.cursor = shownIndex(m, 20)
+
+	if cmd := m.startBulk(action.DefaultPRActions()["m"]); cmd != nil || m.pending == nil {
+		t.Fatalf("merge on a bulk selection should prompt: cmd=%v pending=%v", cmd, m.pending)
+	}
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{
+		mergeablePR(25, "alice"), mergeablePR(20, "alice"), mergeablePR(13, "alice"), mergeablePR(12, "alice"),
+	}})
+	m = u.(Model)
+	if got := m.sel.count(); got != 2 {
+		t.Fatalf("test setup: both #12/#13 should survive the reorder, sel.count() = %d", got)
+	}
+
+	msg := driveBulk(t, m.confirmAnswer(true))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err != nil {
+		t.Fatalf("msg = %+v, want a successful actionDoneMsg", msg)
+	}
+
+	got := slices.Clone(fs.mergeCalls)
+	slices.Sort(got)
+	want := []string{"pr12node", "pr13node"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("mergeCalls = %v, want %v", got, want)
+	}
+}
+
+// TestIssueBoardSelectionSurvivesAReorderingRefetch: mirrors
+// TestSelectionSurvivesAReorderingRefetch for the flat issue board (setIssues).
+func TestIssueBoardSelectionSurvivesAReorderingRefetch(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.width, m.height = 100, 40
+	m.setIssues([]gh.Issue{{Number: 16, Title: "a"}, {Number: 14, Title: "b"}, {Number: 12, Title: "c"}})
+	m.cursor = shownIndex(m, 12) // an unselected row
+	m.sel.toggle(shownIndex(m, 14))
+
+	u, _ := m.Update(issuesFetchedMsg{filter: m.filter, issues: []gh.Issue{
+		{Number: 20, Title: "x"}, {Number: 18, Title: "y"}, {Number: 16, Title: "a"}, {Number: 14, Title: "b"}, {Number: 12, Title: "c"},
+	}})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	is := m.section.(*IssueSection)
+	if len(nums) != 1 || is.issueAt(nums[0]).Number != 14 {
+		t.Errorf("selectedOrCursor = %v, want exactly #14", nums)
+	}
+	if got := m.sel.count(); got != 1 {
+		t.Errorf("sel.count() = %d, want 1", got)
+	}
+}
+
+// TestIssueSectionsSelectionSurvivesAReorderingRefetch: mirrors
+// TestSelectionSurvivesAReorderingRefetch for the issue sections board
+// (setIssueSections).
+func TestIssueSectionsSelectionSurvivesAReorderingRefetch(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.width, m.height = 100, 40
+	m.setIssueSections(nil, nil, []gh.Issue{
+		{Number: 16, Title: "a"}, {Number: 14, Title: "b"}, {Number: 12, Title: "c"},
+	}, "")
+	m.cursor = shownIndex(m, 12) // an unselected row
+	m.sel.toggle(shownIndex(m, 14))
+
+	u, _ := m.Update(issueSectionsFetchedMsg{open: []gh.Issue{
+		{Number: 20, Title: "x"}, {Number: 18, Title: "y"}, {Number: 16, Title: "a"}, {Number: 14, Title: "b"}, {Number: 12, Title: "c"},
+	}})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	is := m.section.(*IssueSection)
+	if len(nums) != 1 || is.issueAt(nums[0]).Number != 14 {
+		t.Errorf("selectedOrCursor = %v, want exactly #14", nums)
+	}
+	if got := m.sel.count(); got != 1 {
+		t.Errorf("sel.count() = %d, want 1", got)
+	}
+}
+
+// issueSectionsMsg is sectionsMsg's issue-sections counterpart: its raw
+// halves round-trip through the cache, so viewerFetchedMsg can re-split from
+// them.
+func issueSectionsMsg(t *testing.T, assigned, authored, open []gh.Issue) issueSectionsFetchedMsg {
+	t.Helper()
+	assignedRaw, err := json.Marshal(assigned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoredRaw, err := json.Marshal(authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openRaw, err := json.Marshal(open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issueSectionsFetchedMsg{
+		assigned: assigned, assignedRaw: assignedRaw,
+		authored: authored, authoredRaw: authoredRaw,
+		open: open, openRaw: openRaw,
+	}
+}
+
+// TestIssueSectionsSelectionSurvivesViewerResolve mirrors
+// TestSelectionFollowsThePRWhenTheViewerResolves for the issue sections board:
+// a viewerFetchedMsg that re-partitions Mine/Others must not lose the
+// selection off the issue it names.
+func TestIssueSectionsSelectionSurvivesViewerResolve(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.mode = "issue"
+	m.section = NewIssueSection("is:open")
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	open := []gh.Issue{{Number: 5, Title: "a"}, {Number: 4, Title: "b"}, {Number: 3, Title: "c"}}
+	open[0].Author.Login, open[1].Author.Login, open[2].Author.Login = "bob", "me", "bob"
+
+	u, _ := m.Update(issueSectionsMsg(t, nil, nil, open))
+	m = u.(Model)
+
+	// Viewer unresolved: all three land in Others, number-descending: #5,#4,#3.
+	oldIdx := shownIndex(m, 4)
+	m.sel.toggle(oldIdx)
+	m.cursor = shownIndex(m, 5)
+
+	u, _ = m.Update(viewerFetchedMsg{login: "me"})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	is := m.section.(*IssueSection)
+	if len(nums) != 1 || is.issueAt(nums[0]).Number != 4 {
+		t.Fatalf("selectedOrCursor = %v, want exactly #4", nums)
+	}
+	newIdx := shownIndex(m, 4)
+	if newIdx == oldIdx {
+		t.Fatalf("test setup: #4 didn't move groups (still at %d)", oldIdx)
+	}
+	if got := m.sel.count(); got != 1 {
+		t.Errorf("sel.count() = %d, want 1", got)
+	}
+}

@@ -83,6 +83,26 @@ func (m *Model) selectedOrCursor() []int {
 	return idx
 }
 
+// targetNumbers returns the PR/issue numbers of selectedOrCursor's rows,
+// sorted, so confirmAnswer can tell whether the target set changed while a
+// confirm prompt was open.
+func (m *Model) targetNumbers() []int {
+	n, ok := m.section.(numbered)
+	if !ok {
+		return nil
+	}
+	l := m.section.Len()
+	var nums []int
+	for _, i := range m.selectedOrCursor() {
+		if i < 0 || i >= l {
+			continue
+		}
+		nums = append(nums, n.numberAt(i))
+	}
+	slices.Sort(nums)
+	return nums
+}
+
 // copyPayload joins the clipboard text for every selected row (or the cursor),
 // so the copy actions grab the whole selection at once.
 func (m *Model) copyPayload(builtin string) string {
@@ -540,6 +560,8 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	m.pending = nil
 	p := m.pendingCascade
 	m.pendingCascade = nil // the field's whole lifetime: written by startBulk, consumed or cleared here
+	targets := m.pendingTargets
+	m.pendingTargets = nil
 	if !yes || a == nil {
 		return nil
 	}
@@ -547,6 +569,13 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 		return m.runCascade(*a, p)
 	}
 	if a.Scope == "per-selected" {
+		if !slices.Equal(m.targetNumbers(), targets) {
+			// The set the prompt named is gone (a refetch held or reordered rows
+			// out from under it) — firing on whatever selectedOrCursor falls back
+			// to now would mutate PRs the user never confirmed.
+			m.actionStatus = &actionStat{fail: "selection changed — press again", err: errors.New("selection changed"), settled: true}
+			return clearStatusCmd()
+		}
 		return m.runBulk(*a)
 	}
 	return m.runAction(*a)
@@ -578,6 +607,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
 	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
 		m.pending = &a
+		m.pendingTargets = m.targetNumbers()
 		return nil
 	}
 	return m.runBulk(a)
