@@ -1754,12 +1754,18 @@ func TestConfirmPromptRunsWhenTargetsUnchanged(t *testing.T) {
 		t.Fatalf("merge on a bulk selection should prompt: cmd=%v pending=%v", cmd, m.pending)
 	}
 
+	// #13 turned draft sorts below #12, so the selected rows swap order too.
+	draft13 := mergeablePR(13, "alice")
+	draft13.IsDraft = true
 	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{
-		mergeablePR(25, "alice"), mergeablePR(20, "alice"), mergeablePR(13, "alice"), mergeablePR(12, "alice"),
+		mergeablePR(25, "alice"), mergeablePR(20, "alice"), draft13, mergeablePR(12, "alice"),
 	}})
 	m = u.(Model)
 	if got := m.sel.count(); got != 2 {
 		t.Fatalf("test setup: both #12/#13 should survive the reorder, sel.count() = %d", got)
+	}
+	if shownIndex(m, 13) < shownIndex(m, 12) {
+		t.Fatal("test setup: the refetch should move #13 below #12")
 	}
 
 	msg := driveBulk(t, m.confirmAnswer(true))

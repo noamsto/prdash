@@ -570,9 +570,10 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	}
 	if a.Scope == "per-selected" {
 		if !slices.Equal(m.targetNumbers(), targets) {
-			// The set the prompt named is gone (a refetch held or reordered rows
-			// out from under it) — firing on whatever selectedOrCursor falls back
-			// to now would mutate PRs the user never confirmed.
+			// A refetch held rows out from under the prompt or emptied the
+			// selection — firing on whatever selectedOrCursor falls back to now
+			// would mutate PRs the user never confirmed. (A reorder alone passes:
+			// targetNumbers sorts.)
 			m.actionStatus = &actionStat{fail: "selection changed — press again", err: errors.New("selection changed"), settled: true}
 			return clearStatusCmd()
 		}
