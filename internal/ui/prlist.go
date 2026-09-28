@@ -2239,7 +2239,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
 		if msg.String() == "ctrl+c" {
-			return m, tea.Quit // hard quit from every surface: prompts, pickers, palette, legend, filter bar
+			return m, tea.Quit // hard quit, ahead of every overlay that would read it as input
 		}
 		if m.switchNotice != "" {
 			m.switchNotice = ""

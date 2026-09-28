@@ -7,8 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// ctrlC builds the ctrl+c key message the way the terminal actually delivers
-// it, matching msg.String() == "ctrl+c".
 func ctrlC() tea.KeyMsg {
 	return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 }
