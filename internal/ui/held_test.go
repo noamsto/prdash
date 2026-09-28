@@ -1283,6 +1283,34 @@ func TestLaunchReconcileReplacesTheHydratedBoard(t *testing.T) {
 	}
 }
 
+// TestLaunchReplaceThenAnchors: the launch replace pins the cursor to the top
+// row just like a filter switch (paintAnchor's homing rule also pins it while
+// the opening jump to Mine is unspent — cursorHomed is set directly here to
+// isolate that from cursorPinnedTop). Once the replace lands, cursorPinnedTop
+// clears and a later refetch anchors the cursor on its PR instead of pinning
+// it back to row 0.
+func TestLaunchReplaceThenAnchors(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	m.setSections(nil, nil, []gh.PR{openPR(5, "bob")}, "") // what Hydrate paints
+
+	u, _ := m.Update(sectionsFetchedMsg{state: "open", open: []gh.PR{openPR(6, "bob"), openPR(5, "bob")}, replace: true})
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	if m.cursor != 0 || ps.prAt(0).Number != 6 {
+		t.Fatalf("after the launch replace: cursor = %d on #%d, want 0 on #6", m.cursor, ps.prAt(m.cursor).Number)
+	}
+
+	m.cursorHomed = true // the opening jump to Mine has been spent
+	u, _ = m.Update(sectionsFetchedMsg{state: "open", open: []gh.PR{openPR(7, "bob"), openPR(6, "bob"), openPR(5, "bob")}})
+	m = u.(Model)
+	ps = m.section.(*PRSection)
+	if got := ps.prAt(m.cursor).Number; got != 6 {
+		t.Errorf("cursor PR = #%d after the later refetch, want #6 — the cursor anchors once the launch replace landed", got)
+	}
+}
+
 // TestFilterSwitchKeepsTheCursorOnTop: a switch paints the new preset's cached
 // rows with the cursor on the top row; when its live result lands with newer
 // rows above that cached top, the cursor stays on the top row rather than
@@ -1302,12 +1330,14 @@ func TestFilterSwitchKeepsTheCursorOnTop(t *testing.T) {
 		m.width, m.height = 100, 40
 		m.SetPRSource(stubSource{})
 		m.setPRs([]gh.PR{openPR(1, "alice")})
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(1, "alice")}, replace: true})
+		m = u.(Model) // clears cursorPinnedTop, so the switch below must set it itself
 		raw, err := json.Marshal([]gh.PR{merged(40), merged(39)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		c.Set(prKey(m.repo, searchFor("pr", "merged", ""), defaultLimit), raw)
-		u, _ := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+		u, _ = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 		m = u.(Model)
 		if m.state != "merged" || m.section.Len() != 2 || m.cursor != 0 {
 			t.Fatalf("test setup: state = %q, rows = %d, cursor = %d, want the merged cache painted at the top", m.state, m.section.Len(), m.cursor)
@@ -1456,14 +1486,25 @@ func TestHeldRowOffAFullPageIsNotTaggedLeftFilter(t *testing.T) {
 		}
 	})
 
-	t.Run("issue board, full page", func(t *testing.T) {
-		issues := func(lo, hi int) []gh.Issue {
-			var out []gh.Issue
-			for n := hi; n >= lo; n-- {
-				out = append(out, gh.Issue{Number: n, Title: "issue"})
-			}
-			return out
+	t.Run("sections board, full review half, empty open half", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 200
+		m.setSections(prs(1, defaultLimit+1), nil, nil, "")
+		u, _ := m.Update(sectionsFetchedMsg{state: "open", review: prs(2, defaultLimit+1)})
+		if got := lookup(t, u.(Model), 1); strings.Contains(got, "left filter") {
+			t.Errorf("row #1 = %q, want no left filter tag — the review half alone was full", got)
 		}
+	})
+
+	issues := func(lo, hi int) []gh.Issue {
+		var out []gh.Issue
+		for n := hi; n >= lo; n-- {
+			out = append(out, gh.Issue{Number: n, Title: "issue"})
+		}
+		return out
+	}
+
+	t.Run("issue board, full page", func(t *testing.T) {
 		m := NewModel("/repo", "is:open", nil)
 		m.mode = "issue"
 		m.section = NewIssueSection("is:open")
@@ -1472,6 +1513,18 @@ func TestHeldRowOffAFullPageIsNotTaggedLeftFilter(t *testing.T) {
 		u, _ := m.Update(issuesFetchedMsg{filter: m.filter, issues: issues(2, defaultLimit+1)})
 		if got := lookup(t, u.(Model), 1); strings.Contains(got, "left filter") {
 			t.Errorf("issue #1 = %q, want no left filter tag off a full page", got)
+		}
+	})
+
+	t.Run("issue sections board, full assigned half, empty other halves", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.mode = "issue"
+		m.section = NewIssueSection("is:open")
+		m.width, m.height = 100, 200
+		m.setIssueSections(issues(1, issueListLimit+1), nil, nil, "")
+		u, _ := m.Update(issueSectionsFetchedMsg{assigned: issues(2, issueListLimit+1)})
+		if got := lookup(t, u.(Model), 1); strings.Contains(got, "left filter") {
+			t.Errorf("issue #1 = %q, want no left filter tag — the assigned half alone was full", got)
 		}
 	})
 }
@@ -1529,5 +1582,115 @@ func TestHeldMergedRowRefusesChecksRerun(t *testing.T) {
 		if m.actionStatus == nil || m.actionStatus.err == nil || !strings.Contains(m.actionStatus.fail, "not open") {
 			t.Errorf("%s on a held merged row: status = %+v, want a not-open refusal", key, m.actionStatus)
 		}
+	}
+}
+
+// TestSelectionFollowsThePRWhenTheViewerResolves is the addendum's I7 test: a
+// selection made before the viewer login resolves must still name the same
+// PR once viewerFetchedMsg re-partitions the board, not whatever row now
+// sits at its old index.
+func TestSelectionFollowsThePRWhenTheViewerResolves(t *testing.T) {
+	c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+	m := NewModel("/repo", "is:open", c)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	open := []gh.PR{openPR(5, "bob"), openPR(4, "me"), openPR(3, "bob")}
+
+	u, _ := m.Update(sectionsMsg(t, nil, open))
+	m = u.(Model)
+
+	// Viewer unresolved: all three land in Others, number-descending: #5,#4,#3.
+	oldIdx := shownIndex(m, 4)
+	m.sel.toggle(oldIdx)
+	m.cursor = shownIndex(m, 5)
+
+	u, _ = m.Update(viewerFetchedMsg{login: "me"})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	ps := m.section.(*PRSection)
+	if len(nums) != 1 || ps.prAt(nums[0]).Number != 4 {
+		t.Fatalf("selectedOrCursor = %v, want exactly #4", nums)
+	}
+	newIdx := shownIndex(m, 4)
+	if newIdx == oldIdx {
+		t.Fatalf("test setup: #4 didn't move groups (still at %d)", oldIdx)
+	}
+	if got := rowTextFor(t, m, 4); !strings.Contains(got, selBarGlyph) {
+		t.Errorf("row #4 (new index %d) = %q, want the selection bar", newIdx, got)
+	}
+	if got := ansi.Strip(m.rowText[oldIdx]); strings.Contains(got, selBarGlyph) {
+		t.Errorf("row at #4's old index %d = %q, want no selection bar", oldIdx, got)
+	}
+}
+
+// TestSelectionSurvivesAReorderingRefetch: an unrequested refetch that
+// inserts rows above the selection must not shift it onto a different PR.
+func TestSelectionSurvivesAReorderingRefetch(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.setPRs([]gh.PR{openPR(16, "alice"), openPR(14, "alice"), openPR(12, "alice")})
+	m.cursor = shownIndex(m, 12)
+	m.sel.toggle(shownIndex(m, 14))
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{
+		openPR(20, "alice"), openPR(18, "alice"), openPR(16, "alice"), openPR(14, "alice"), openPR(12, "alice"),
+	}})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	ps := m.section.(*PRSection)
+	if len(nums) != 1 || ps.prAt(nums[0]).Number != 14 {
+		t.Errorf("selectedOrCursor = %v, want exactly #14", nums)
+	}
+}
+
+// TestSelectionDropsARowThatDeparts: a selected row the refetch drops (and so
+// holds) falls out of the selection; a selected row that survives does not.
+func TestSelectionDropsARowThatDeparts(t *testing.T) {
+	m := NewModel("/repo", "is:merged", nil)
+	m.width, m.height = 100, 40
+	m.setPRs([]gh.PR{mergedPR(30, "alice"), mergedPR(29, "alice"), mergedPR(28, "alice")})
+	m.sel.toggle(shownIndex(m, 29))
+	m.sel.toggle(shownIndex(m, 28))
+	m.cursor = shownIndex(m, 30) // away from #28, so a bare fallback-to-cursor can't accidentally pass
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	ps := m.section.(*PRSection)
+	if len(nums) != 1 || ps.prAt(nums[0]).Number != 28 {
+		t.Errorf("selectedOrCursor = %v, want exactly #28 — #29 departed and dropped out", nums)
+	}
+}
+
+// TestSelectionKeepsAnAlreadyHeldRow: a row already held when the user
+// selects it (e.g. to open-web it) stays selected across a later refetch.
+func TestSelectionKeepsAnAlreadyHeldRow(t *testing.T) {
+	m := heldBoard(t, stubSource{}) // #29 held, board shows #30,#29,#28
+	m.sel.toggle(shownIndex(m, 29))
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
+	m = u.(Model)
+
+	nums := m.selectedOrCursor()
+	ps := m.section.(*PRSection)
+	if len(nums) != 1 || ps.prAt(nums[0]).Number != 29 {
+		t.Errorf("selectedOrCursor = %v, want exactly #29 — already held when selected, so it stays", nums)
+	}
+}
+
+// TestReplaceClearsTheSelection: a requested replace (ctrl+r) always clears
+// the selection, whether or not any row departed.
+func TestReplaceClearsTheSelection(t *testing.T) {
+	m := heldBoard(t, stubSource{})
+	m.sel.toggle(shownIndex(m, 28))
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}, replace: true})
+	m = u.(Model)
+
+	if got := m.sel.count(); got != 0 {
+		t.Errorf("sel.count() = %d, want 0 after a replace", got)
 	}
 }

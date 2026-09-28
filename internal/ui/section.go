@@ -703,7 +703,7 @@ const authorColMax = 17
 // widths, so the header aligns with every row by construction rather than by a
 // second copy of the arithmetic.
 type rightCols struct {
-	tag, diff, ticket, author, age int
+	missing, diff, ticket, author, age int
 }
 
 // reserveRightCols carves the optional right-hand columns out of one slack
@@ -717,19 +717,19 @@ type rightCols struct {
 // sized to the widest shown author so every row's columns land at the same cell.
 // Either way the author is the last to be carved and shrinks toward empty before
 // the fixed columns drop, so the title never starves.
-func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, tagW int) rightCols {
+func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, missingW int) rightCols {
 	slack := w - leftW - ageW - 2 - 1
 	c := rightCols{age: ageW}
-	if tagW > 0 && slack-tagW >= 0 {
-		c.tag = tagW
+	if missingW > 0 && slack-missingW >= 0 {
+		c.missing = missingW
 	}
-	if diffW > 0 && slack-c.tag-2-diffW >= 0 {
+	if diffW > 0 && slack-c.missing-2-diffW >= 0 {
 		c.diff = 2 + diffW
 	}
-	if tktW > 0 && slack-c.tag-c.diff-2-tktW >= 0 {
+	if tktW > 0 && slack-c.missing-c.diff-2-tktW >= 0 {
 		c.ticket = 2 + tktW
 	}
-	avail := max(0, slack-c.tag-c.diff-c.ticket)
+	avail := max(0, slack-c.missing-c.diff-c.ticket)
 	if authorW > 0 {
 		c.author = min(authorW, avail)
 	} else {
@@ -818,7 +818,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 		missing = " " + o.StackMissing
 	}
 	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, lipgloss.Width(missing))
-	missingW, diffExtra, tktExtra, authorCap := cols.tag, cols.diff, cols.ticket, cols.author
+	missingW, diffExtra, tktExtra, authorCap := cols.missing, cols.diff, cols.ticket, cols.author
 	right := ""
 	if tktExtra > 0 {
 		// Clamp before padding, exactly as the diffstat does below: TicketWidth is

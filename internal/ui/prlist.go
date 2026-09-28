@@ -402,6 +402,7 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 // stays on the PR it was on.
 func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 	num, order := m.paintAnchor(false)
+	selNums, wasHeld := m.selectedRows()
 	prs = m.overlaySessionMerged(m.applyCIRerun(prs))
 	m.heldPageFull = len(prs) >= defaultLimit
 	if s, ok := m.section.(*PRSection); ok {
@@ -409,6 +410,7 @@ func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
+			selNums, wasHeld = nil, nil
 		} else {
 			prev = s.prs
 		}
@@ -420,17 +422,20 @@ func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 	}
 	m.applyFilter()
 	m.restoreCursor(num, order)
+	m.restoreSelection(selNums, wasHeld)
 }
 
 // paintIssues is paintPRs for the flat issue board.
 func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 	num, order := m.paintAnchor(false)
+	selNums, wasHeld := m.selectedRows()
 	m.heldPageFull = len(is) >= defaultLimit
 	if s, ok := m.section.(*IssueSection); ok {
 		var prev []gh.Issue
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
+			selNums, wasHeld = nil, nil
 		} else {
 			prev = s.issues
 		}
@@ -438,6 +443,7 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 	}
 	m.applyFilter()
 	m.restoreCursor(num, order)
+	m.restoreSelection(selNums, wasHeld)
 }
 
 // paintSections paints the empty-default open view: Review requested → Mine →
@@ -450,6 +456,7 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 // A held row keeps the category it had; replace as in paintPRs.
 func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, replace bool) {
 	num, order := m.paintAnchor(true)
+	selNums, wasHeld := m.selectedRows()
 	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit
 	review = m.overlaySessionMerged(review)
 	reviewed = m.overlaySessionMerged(reviewed)
@@ -489,6 +496,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
+			selNums, wasHeld = nil, nil
 		} else {
 			prev, prevCats = s.prs, s.cats
 		}
@@ -497,6 +505,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 	}
 	m.applyFilter()
 	m.restoreCursor(num, order)
+	m.restoreSelection(selNums, wasHeld)
 	m.homeCursorOnMine()
 }
 
@@ -509,6 +518,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 // the cursor as in paintSections.
 func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer string, replace bool) {
 	num, order := m.paintAnchor(true)
+	selNums, wasHeld := m.selectedRows()
 	m.heldPageFull = len(assigned) >= issueListLimit || len(authored) >= issueListLimit || len(open) >= issueListLimit
 	cats := make(map[int]string, len(assigned)+len(authored)+len(open))
 	all := make([]gh.Issue, 0, len(assigned)+len(authored)+len(open))
@@ -547,6 +557,7 @@ func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer s
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
+			selNums, wasHeld = nil, nil
 		} else {
 			prev, prevCats = s.issues, s.cats
 		}
@@ -554,6 +565,7 @@ func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer s
 	}
 	m.applyFilter()
 	m.restoreCursor(num, order)
+	m.restoreSelection(selNums, wasHeld)
 	m.homeCursorOnMine()
 }
 
@@ -1959,8 +1971,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.sel.clear() // selection indexes the shown set; new data invalidates it
-		m.paintPRs(msg.prs, msg.replace)
+		m.paintPRs(msg.prs, msg.replace) // the paint carries the selection over by number (a replace clears it)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
@@ -1980,7 +1991,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.sel.clear()
 		m.paintIssues(msg.issues, msg.replace)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
@@ -2002,7 +2012,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.sel.clear()
 		m.paintSections(msg.review, msg.reviewed, msg.open, m.viewerLogin, msg.replace)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
@@ -2032,7 +2041,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.sel.clear()
 		m.paintIssueSections(msg.assigned, msg.authored, msg.open, m.viewerLogin, msg.replace)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
@@ -2117,6 +2125,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setIssueSections(assigned, authored, wide, m.viewerLogin)
 			}
 		}
+		m.repaintActive() // the re-partition above moved rows; match the cursor focus and selection bars to it
 		return m, nil
 	case prDetailMsg:
 		m.detail[msg.number] = msg.detail

@@ -308,6 +308,58 @@ func (m *Model) restoreCursor(num int, order []int) {
 	m.cursor = min(max(m.cursor, 0), l-1)
 }
 
+// selectedRows captures the selection's identity before a paint mutates the
+// section: the selected numbers, and which of them heldTag already reported
+// held (so restoreSelection can tell a row that was already held from one
+// that becomes held in this same paint).
+func (m *Model) selectedRows() (nums []int, wasHeld map[int]bool) {
+	n, ok := m.section.(numbered)
+	if !ok {
+		return nil, nil
+	}
+	l := m.section.Len()
+	wasHeld = make(map[int]bool, m.sel.count())
+	for _, i := range m.sel.indices() {
+		if i < 0 || i >= l {
+			continue
+		}
+		num := n.numberAt(i)
+		nums = append(nums, num)
+		held, _ := m.heldTag(i)
+		wasHeld[num] = held
+	}
+	return nums, wasHeld
+}
+
+// restoreSelection rebuilds the selection at its members' new shown indexes
+// after a paint (nums, wasHeld as captured by selectedRows before the paint;
+// nil clears it, as a replace does). A number no longer shown is dropped, and
+// so is one that became held in this paint and wasn't already — a row
+// already held when selected stays selected, since read-only bulk actions
+// still reach it and mutable() refuses mutations at action time regardless.
+func (m *Model) restoreSelection(nums []int, wasHeld map[int]bool) {
+	m.sel.clear()
+	n, ok := m.section.(numbered)
+	if !ok {
+		return
+	}
+	l := m.section.Len()
+	shown := make(map[int]int, l) // number → new shown index
+	for i := range l {
+		shown[n.numberAt(i)] = i
+	}
+	for _, num := range nums {
+		i, ok := shown[num]
+		if !ok {
+			continue
+		}
+		if held, _ := m.heldTag(i); held && !wasHeld[num] {
+			continue
+		}
+		m.sel.toggle(i)
+	}
+}
+
 // mutable refuses a mutation on a merged or closed PR, and on a held row
 // unless its lookup says it is still open: a departed row keeps its OPEN
 // snapshot while the lookup is pending.
