@@ -868,6 +868,23 @@ func TestToggleModeSwapsBoard(t *testing.T) {
 	}
 }
 
+func TestHideDraftsSurvivesBoardToggle(t *testing.T) {
+	m := NewModel(".", "is:open author:@me", nil)
+	m.hideDrafts = true
+
+	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	got := out.(Model)
+	if got.hideDrafts {
+		t.Error("hideDrafts should be inert while on the issue board")
+	}
+
+	back, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	b := back.(Model)
+	if !b.hideDrafts {
+		t.Error("hideDrafts should be restored on toggle back to the PR board")
+	}
+}
+
 func TestPROnlyKeysInertInIssueMode(t *testing.T) {
 	m := NewModel(".", "is:open", nil)
 	m.mode = "issue"

@@ -29,6 +29,7 @@ import (
 // lands on the same state/body the user left.
 type boardView struct {
 	state, body, filter string
+	hideDrafts          bool
 }
 
 type Model struct {
@@ -1639,8 +1640,9 @@ func (m *Model) switchToFilter() tea.Cmd {
 // selection, restores the other's, swaps the section + action set, resets all
 // per-item/preview view state, and re-fetches (cached → instant).
 func (m *Model) toggleMode() tea.Cmd {
-	cur := boardView{state: m.state, body: m.body, filter: m.filter}
+	cur := boardView{state: m.state, body: m.body, filter: m.filter, hideDrafts: m.hideDrafts}
 	m.state, m.body, m.filter = m.other.state, m.other.body, m.other.filter
+	m.hideDrafts = m.other.hideDrafts
 	m.other = cur
 
 	if m.mode == "pr" {
@@ -1651,13 +1653,15 @@ func (m *Model) toggleMode() tea.Cmd {
 		m.mode = "pr"
 		m.section = NewPRSection(m.filter)
 		m.actions = action.DefaultPRActions()
+		if ps, ok := m.section.(*PRSection); ok {
+			ps.SetHideDrafts(m.hideDrafts)
+		}
 	}
 
 	// Reset view state so nothing from the other board leaks through.
 	m.previewExpanded = false
 	m.previewMax = false
 	m.previewOffset = 0
-	m.hideDrafts = false
 	m.expanded = false
 	m.err = nil
 	m.detailSeq++ // cancel any in-flight detail debounce/fetch for the old board
