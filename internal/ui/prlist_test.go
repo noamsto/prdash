@@ -870,7 +870,13 @@ func TestToggleModeSwapsBoard(t *testing.T) {
 
 func TestHideDraftsSurvivesBoardToggle(t *testing.T) {
 	m := NewModel(".", "is:open author:@me", nil)
+	fetched, _ := m.Update(prsFetchedMsg{prs: []gh.PR{
+		{Number: 1, IsDraft: true},
+		{Number: 2, IsDraft: false},
+	}})
+	m = fetched.(Model)
 	m.hideDrafts = true
+	m.section.(*PRSection).SetHideDrafts(true)
 
 	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := out.(Model)
@@ -882,6 +888,23 @@ func TestHideDraftsSurvivesBoardToggle(t *testing.T) {
 	b := back.(Model)
 	if !b.hideDrafts {
 		t.Error("hideDrafts should be restored on toggle back to the PR board")
+	}
+
+	// Deliver the refetch through the real path so the restored hideDrafts
+	// actually gets re-applied to the shown set, not just the flag.
+	refetched, _ := b.Update(prsFetchedMsg{prs: []gh.PR{
+		{Number: 1, IsDraft: true},
+		{Number: 2, IsDraft: false},
+	}})
+	final := refetched.(Model)
+	fps := final.section.(*PRSection)
+	for i := range fps.Len() {
+		if fps.prAt(i).IsDraft {
+			t.Errorf("draft PR #%d still shown after board round-trip", fps.prAt(i).Number)
+		}
+	}
+	if fps.Len() != 1 {
+		t.Errorf("expected exactly the 1 non-draft PR shown, got %d", fps.Len())
 	}
 }
 
