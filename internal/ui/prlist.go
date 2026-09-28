@@ -66,6 +66,7 @@ type Model struct {
 	cursorRows        int  // display height of the cursor row
 	cursorTop         int  // topmost line to keep visible for the cursor (its group header, if any)
 	cursorHomed       bool // the opening jump to Mine has been spent
+	cursorPinnedTop   bool // a launch or filter/tab switch is awaiting its live replace; the cursor stays on the top row until it lands
 	previewOffset     int  // alt+j/k scroll position within the side preview
 	width             int
 	height            int
@@ -95,6 +96,7 @@ type Model struct {
 	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
 	held              map[int]string      // number → looked-up GitHub state ("" = lookup pending); a held row stays shown past an unrequested refetch
 	heldGen           int                 // bumped on every clearHeld, so a stale heldStatesMsg lookup response is dropped
+	heldPageFull      bool                // the latest paint's list (any half of it) hit its fetch limit; see heldTag
 	sessionMerged     map[int]time.Time   // PR number → the time prdash saw its merge succeed this session; never cleared
 	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
@@ -160,9 +162,10 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		ciRerun: map[int]time.Time{},
 		held:    map[int]string{}, sessionMerged: map[int]time.Time{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
-		previewN:   2,
-		logCache:   map[string][]logStep{},
-		refreshing: true,
+		previewN:        2,
+		logCache:        map[string][]logStep{},
+		refreshing:      true,
+		cursorPinnedTop: true,
 	}
 }
 
@@ -353,9 +356,31 @@ func hasCheckStartedAfter(p gh.PR, t time.Time) bool {
 	return false
 }
 
-// openPRBoard reports whether the view is the open PR list — the only board a
-// landed PR is held on.
+// openPRBoard reports whether the view is the open PR list, the only board
+// whose rows can carry the commented-by-me marker.
 func (m Model) openPRBoard() bool { return m.mode == "pr" && m.state == "open" }
+
+// markSessionMerged records each PR whose merge call succeeded and patches its
+// row merged before any refetch. Not gated on the action's error: a partial
+// batch still landed some merges.
+func (m *Model) markSessionMerged(merged []gh.PR) {
+	if len(merged) == 0 {
+		return
+	}
+	landed := time.Now()
+	ps, isPR := m.section.(*PRSection)
+	for _, p := range merged {
+		m.sessionMerged[p.Number] = landed
+		if isPR {
+			ps.updatePR(p.Number, func(pr *gh.PR) {
+				pr.State, pr.MergedAt = "MERGED", landed
+			})
+		}
+		delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
+	}
+	m.rowGen++
+	m.repaintActive()
+}
 
 // setPRs, setIssues, setSections and setIssueSections repaint in merge mode:
 // rows the new data dropped stay on the board, held (see mergeHeldPRs).
@@ -376,12 +401,14 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 // row the fetch dropped is carried forward and held. Either way the cursor
 // stays on the PR it was on.
 func (m *Model) paintPRs(prs []gh.PR, replace bool) {
-	num, order := m.cursorAnchor()
+	num, order := m.paintAnchor(false)
 	prs = m.overlaySessionMerged(m.applyCIRerun(prs))
+	m.heldPageFull = len(prs) >= defaultLimit
 	if s, ok := m.section.(*PRSection); ok {
 		var prev []gh.PR
 		if replace {
 			m.clearHeld()
+			m.cursorPinnedTop = false
 		} else {
 			prev = s.prs
 		}
@@ -397,11 +424,13 @@ func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 
 // paintIssues is paintPRs for the flat issue board.
 func (m *Model) paintIssues(is []gh.Issue, replace bool) {
-	num, order := m.cursorAnchor()
+	num, order := m.paintAnchor(false)
+	m.heldPageFull = len(is) >= defaultLimit
 	if s, ok := m.section.(*IssueSection); ok {
 		var prev []gh.Issue
 		if replace {
 			m.clearHeld()
+			m.cursorPinnedTop = false
 		} else {
 			prev = s.issues
 		}
@@ -420,12 +449,8 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 // and carry the ◐ marker (see commentedByMe) instead of sinking into Others.
 // A held row keeps the category it had; replace as in paintPRs.
 func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, replace bool) {
-	num, order := m.cursorAnchor()
-	if !m.cursorHomed && m.cursor == 0 {
-		// The Mine jump is still unspent: anchoring now would move the cursor off
-		// 0 and homeCursorOnMine would then spend the jump without taking it.
-		num, order = 0, nil
-	}
+	num, order := m.paintAnchor(true)
+	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit
 	review = m.overlaySessionMerged(review)
 	reviewed = m.overlaySessionMerged(reviewed)
 	open = m.overlaySessionMerged(open)
@@ -463,6 +488,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		var prevCats map[int]string
 		if replace {
 			m.clearHeld()
+			m.cursorPinnedTop = false
 		} else {
 			prev, prevCats = s.prs, s.cats
 		}
@@ -482,10 +508,8 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 // fetch window but still mine would otherwise land in Others. Held rows and
 // the cursor as in paintSections.
 func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer string, replace bool) {
-	num, order := m.cursorAnchor()
-	if !m.cursorHomed && m.cursor == 0 {
-		num, order = 0, nil // see paintSections
-	}
+	num, order := m.paintAnchor(true)
+	m.heldPageFull = len(assigned) >= issueListLimit || len(authored) >= issueListLimit || len(open) >= issueListLimit
 	cats := make(map[int]string, len(assigned)+len(authored)+len(open))
 	all := make([]gh.Issue, 0, len(assigned)+len(authored)+len(open))
 	for _, is := range assigned {
@@ -522,6 +546,7 @@ func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer s
 		var prevCats map[int]string
 		if replace {
 			m.clearHeld()
+			m.cursorPinnedTop = false
 		} else {
 			prev, prevCats = s.issues, s.cats
 		}
@@ -1657,6 +1682,7 @@ func (m *Model) refreshCmd(replace bool) tea.Cmd {
 // hydrating, so they are neither held nor used as a cursor anchor.
 func (m *Model) switchToFilter() tea.Cmd {
 	m.cursor = 0
+	m.cursorPinnedTop = true
 	m.sel.clear()
 	m.clearHeld()
 	switch s := m.section.(type) {
@@ -1867,7 +1893,9 @@ func (m Model) invalidateLaunchCache(nums ...int) {
 // view plus the prewarmed issue board, member list, and viewer login — omitting
 // any whose cache is still fresh. When the current view is reused, it emits
 // fetchSkippedMsg so the refresh spinner still clears. Split out so the
-// freshness gating is unit-testable without the ticker commands.
+// freshness gating is unit-testable without the ticker commands. The list
+// fetches are requested replaces: Hydrate painted a disk cache that can be
+// days old, and nothing on it was shown live this session.
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 	sectionsFresh := true
@@ -1880,7 +1908,7 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {
-		cmds = append(cmds, m.sectionsFetchCmd(false))
+		cmds = append(cmds, m.sectionsFetchCmd(true))
 	}
 	// All-or-nothing, like the PR gate above: a fresh assigned half plus a
 	// missing wide half paints a board with no Others at all, so any one
@@ -1893,7 +1921,7 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 		}
 	}
 	if !issueSectionsFresh {
-		cmds = append(cmds, m.issueSectionsFetchCmd(false))
+		cmds = append(cmds, m.issueSectionsFetchCmd(true))
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
 		cmds = append(cmds, m.fetchMembersCmd())
@@ -2018,7 +2046,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.heldGen {
 			return m, nil // a clearHeld (ctrl+r, filter switch) fired since this lookup was sent
 		}
-		if msg.err == nil {
+		if msg.err != nil {
+			slog.Debug("held-state lookup failed", "err", msg.err)
+		} else {
 			m.applyHeldStates(msg.states)
 		}
 		m.rowGen++
@@ -2146,9 +2176,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.switchToFilter() // SWR: hydrate cached instant, fetch to reconcile
 	case fetchSkippedMsg:
 		// Current view served from a fresh cache: no fetch ran, so settle the
-		// state the hydrated rows were painted under and warm detail/poll.
+		// state the hydrated rows were painted under and warm detail/poll. The
+		// fresh cache stands in for the live load, so the cursor anchors from here.
 		m.refreshing = false
 		m.loaded = true
+		m.cursorPinnedTop = false
 		return m, tea.Batch(m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll())
 	case spinnerTickMsg:
 		if !m.refreshing && !m.actionRunning() && !m.logLoading && !m.switchChecking {
@@ -2228,8 +2260,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case actionDoneMsg:
+		// Before the status guard: a merge that landed after its status was
+		// replaced and cleared still merged, and still needs reconciling.
+		m.markSessionMerged(msg.merged)
 		// Scope the error to the status line rather than m.err, which blanks the board.
 		if m.actionStatus == nil {
+			if len(msg.merged) > 0 || len(msg.partial) > 0 {
+				return m, tea.Batch(clearStatusCmd(), m.backgroundRefresh())
+			}
 			return m, clearStatusCmd()
 		}
 		m.actionStatus.settled = true
@@ -2248,23 +2286,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cascade = nil
 		}
 		cmds := []tea.Cmd{clearStatusCmd()}
-		// Not gated on msg.err: a partial batch still landed some merges, and
-		// those rows read merged before any refetch too.
-		if len(msg.merged) > 0 {
-			landed := time.Now()
-			ps, isPR := m.section.(*PRSection)
-			for _, p := range msg.merged {
-				m.sessionMerged[p.Number] = landed
-				if isPR {
-					ps.updatePR(p.Number, func(pr *gh.PR) {
-						pr.State, pr.MergedAt = "MERGED", landed
-					})
-				}
-				delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
-			}
-			m.rowGen++
-			m.repaintActive()
-		}
 		if msg.err == nil {
 			m.applyOptimisticAction()
 		}
@@ -3226,12 +3247,12 @@ func (m Model) glyphPanes() []legendGroup {
 	if m.mode != "pr" {
 		return []legendGroup{bar, {"row", []keyHint{
 			{key: "age", label: "last update", style: &dimStyle},
-			{key: "merged", label: "dim: gone from refresh; ctrl+r clears", style: &dimStyle},
+			heldHint("closed"),
 		}}}
 	}
 	row := legendGroup{"row", []keyHint{
 		{key: "faint row", label: "draft", style: &dimStyle},
-		{key: "merged", label: "dim: gone from refresh; ctrl+r clears", style: &dimStyle},
+		heldHint("merged"),
 		{key: "age", label: "last update; merged/closed age from landing", style: &dimStyle},
 	}}
 	return []legendGroup{
@@ -3271,6 +3292,12 @@ func (m Model) glyphPanes() []legendGroup {
 		}},
 		row,
 	}
+}
+
+// heldHint is the legend's held-row entry, keyed by an example tag the board
+// can actually show (issues close, they never merge).
+func heldHint(example string) keyHint {
+	return keyHint{key: example, label: "dim: gone from refresh; ctrl+r clears", style: &dimStyle}
 }
 
 // keyPanes is the right modal pane: what the operator can press, as against the

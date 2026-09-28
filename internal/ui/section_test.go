@@ -575,6 +575,19 @@ func TestPRSectionResolvesOnlyVisibleImmediateStackParent(t *testing.T) {
 			}
 		}
 	}
+
+	// A closed predecessor held on the board is no blocker either.
+	s.SetPRs([]gh.PR{
+		{Number: 100, State: "CLOSED", Stack: stack, StackPosition: 1},
+		{Number: 101, Stack: stack, StackPosition: 2},
+	})
+	for i := 0; i < s.Len(); i++ {
+		if s.prAt(i).Number == 101 {
+			if got := s.stackParentNumber(i); got != 0 {
+				t.Errorf("post-close visible root parent = #%d, want none", got)
+			}
+		}
+	}
 }
 
 func TestPRStackMissingCountUsesTitleTagBudget(t *testing.T) {

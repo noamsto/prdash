@@ -155,6 +155,9 @@ func (m *Model) applyHeldStates(states map[int]gh.ItemState) {
 		if _, held := m.held[n]; !held {
 			continue
 		}
+		if _, merged := m.sessionMerged[n]; merged {
+			continue // a lookup issued before the merge landed would revert it to OPEN
+		}
 		m.held[n] = st.State
 		if !isPR {
 			continue
@@ -182,6 +185,11 @@ func (m *Model) applyHeldStates(states map[int]gh.ItemState) {
 // Issue board: gh.Issue carries no State to compare against the board, so a
 // row is held purely by membership in m.held: "left filter" once the lookup
 // matches the board state, its lower-cased state otherwise, no tag pending.
+//
+// "left filter" is only claimed when the latest list came back short of its
+// limit: every held row is one that list omitted, and a full page may have
+// omitted a still-matching row just by pushing it past the limit. Such a row
+// stays dim and untagged.
 func (m *Model) heldTag(i int) (held bool, tag string) {
 	boardState := strings.ToUpper(m.state)
 	if ps, ok := m.section.(*PRSection); ok {
@@ -191,7 +199,7 @@ func (m *Model) heldTag(i int) (held bool, tag string) {
 		switch {
 		case (held || terminal) && p.State != boardState:
 			return true, strings.ToLower(p.State)
-		case held && st != "":
+		case held && st != "" && !m.heldPageFull:
 			return true, "left filter"
 		}
 		return held, ""
@@ -204,10 +212,10 @@ func (m *Model) heldTag(i int) (held bool, tag string) {
 	if !ok {
 		return false, ""
 	}
-	if st == "" {
+	switch {
+	case st == "", st == boardState && m.heldPageFull:
 		return true, ""
-	}
-	if st == boardState {
+	case st == boardState:
 		return true, "left filter"
 	}
 	return true, strings.ToLower(st)
@@ -240,6 +248,21 @@ func (m *Model) cursorAnchor() (num int, order []int) {
 		num = order[m.cursor]
 	}
 	return num, order
+}
+
+// paintAnchor is cursorAnchor for the four board paints, except while the
+// cursor must stay on the top row rather than follow the row it is on (it
+// returns no anchor, so restoreCursor keeps index 0): a launch or filter/tab
+// switch whose live replace hasn't landed, since the cached top row it would
+// follow down is not what the user asked to be on; and, on the sections
+// boards (homing), while the opening jump to Mine is unspent, since anchoring
+// would move the cursor off 0 and homeCursorOnMine would then spend the jump
+// without taking it. Once the user moves off row 0, anchoring applies.
+func (m *Model) paintAnchor(homing bool) (num int, order []int) {
+	if m.cursor == 0 && (m.cursorPinnedTop || homing && !m.cursorHomed) {
+		return 0, nil
+	}
+	return m.cursorAnchor()
 }
 
 // restoreCursor re-anchors the cursor after a repaint. num is the PR/issue

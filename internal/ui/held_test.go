@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -573,7 +574,7 @@ func (s *scriptedPRSource) FetchPRs(string, int) ([]gh.PR, []byte, error) {
 }
 
 // listFetchMsg runs cmd's tree and returns the first list-fetch result in it
-// (prsFetchedMsg or fetchFailedMsg). Tick-based leaves (spinner, status clear)
+// (prsFetchedMsg, sectionsFetchedMsg or fetchFailedMsg). Tick-based leaves (spinner, status clear)
 // get a short timeout and are skipped, as in invokeCmdTree.
 func listFetchMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
@@ -585,7 +586,7 @@ func listFetchMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
 	select {
 	case msg := <-done:
 		switch msg := msg.(type) {
-		case prsFetchedMsg, fetchFailedMsg:
+		case prsFetchedMsg, sectionsFetchedMsg, fetchFailedMsg:
 			return msg
 		case tea.BatchMsg:
 			for _, c := range msg {
@@ -1229,4 +1230,304 @@ func TestPollIgnoresHeldRows(t *testing.T) {
 			t.Error("an ordinary OPEN row's pending check must count")
 		}
 	})
+}
+
+// openListSource answers only the wide is:open half of the sections fetch;
+// the review halves come back empty.
+type openListSource struct{ open []gh.PR }
+
+func (s openListSource) FetchPRs(filter string, _ int) ([]gh.PR, []byte, error) {
+	if filter == "is:open" {
+		return s.open, nil, nil
+	}
+	return nil, nil, nil
+}
+
+// TestLaunchReconcileReplacesTheHydratedBoard: the rows Hydrate paints come
+// from a disk cache that may be days old, so the first live load is a
+// requested replace — a PR that closed since the last session is dropped, not
+// held.
+func TestLaunchReconcileReplacesTheHydratedBoard(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	stubBackends(&m)
+	m.SetPRSource(openListSource{open: []gh.PR{openPR(6, "bob")}})
+	m.setSections(nil, nil, []gh.PR{openPR(5, "bob"), openPR(6, "bob")}, "") // what Hydrate paints
+
+	var sawPR, sawIssue bool
+	for _, cmd := range m.launchFetchCmds() {
+		switch msg := cmd().(type) {
+		case sectionsFetchedMsg:
+			sawPR = true
+			if !msg.replace {
+				t.Error("launch sections fetch is not marked replace")
+			}
+			u, _ := m.Update(msg)
+			m = u.(Model)
+		case issueSectionsFetchedMsg:
+			sawIssue = true
+			if !msg.replace {
+				t.Error("launch issue sections fetch is not marked replace")
+			}
+		}
+	}
+	if !sawPR || !sawIssue {
+		t.Fatalf("launch fetches: sections = %v, issue sections = %v, want both", sawPR, sawIssue)
+	}
+	if got := shownNumbers(m); !slices.Equal(got, []int{6}) {
+		t.Errorf("shown = %v, want [6] — the cached #5 is gone after the launch load", got)
+	}
+	if len(m.held) != 0 {
+		t.Errorf("held = %v, want empty after the launch load", m.held)
+	}
+}
+
+// TestFilterSwitchKeepsTheCursorOnTop: a switch paints the new preset's cached
+// rows with the cursor on the top row; when its live result lands with newer
+// rows above that cached top, the cursor stays on the top row rather than
+// following the cached row down. Once the live result has landed, and when
+// the user moved before it landed, the cursor anchors as usual.
+func TestFilterSwitchKeepsTheCursorOnTop(t *testing.T) {
+	merged := func(n int) gh.PR {
+		p := mergedPR(n, "alice")
+		p.MergedAt = time.Now().Add(time.Duration(n) * time.Minute) // newer number, newer merge: sorts first
+		return p
+	}
+	switched := func(t *testing.T) Model {
+		t.Helper()
+		c := cache.Open(filepath.Join(t.TempDir(), "c.json"))
+		m := NewModel("/repo", "is:open", c)
+		m.SetRepo("owner/repo")
+		m.width, m.height = 100, 40
+		m.SetPRSource(stubSource{})
+		m.setPRs([]gh.PR{openPR(1, "alice")})
+		raw, err := json.Marshal([]gh.PR{merged(40), merged(39)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Set(prKey(m.repo, searchFor("pr", "merged", ""), defaultLimit), raw)
+		u, _ := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+		m = u.(Model)
+		if m.state != "merged" || m.section.Len() != 2 || m.cursor != 0 {
+			t.Fatalf("test setup: state = %q, rows = %d, cursor = %d, want the merged cache painted at the top", m.state, m.section.Len(), m.cursor)
+		}
+		return m
+	}
+
+	t.Run("live result lands", func(t *testing.T) {
+		m := switched(t)
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{merged(41), merged(40), merged(39)}, replace: true})
+		m = u.(Model)
+		ps := m.section.(*PRSection)
+		if m.cursor != 0 {
+			t.Errorf("cursor = %d on #%d after the switch landed, want 0 (#%d)", m.cursor, ps.prAt(m.cursor).Number, ps.prAt(0).Number)
+		}
+
+		u, _ = m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{merged(42), merged(41), merged(40), merged(39)}})
+		m = u.(Model)
+		ps = m.section.(*PRSection)
+		if got := ps.prAt(m.cursor).Number; got != 41 {
+			t.Errorf("cursor PR = #%d after a later refetch, want #41 — the cursor anchors once the switch landed", got)
+		}
+	})
+
+	t.Run("user moved first", func(t *testing.T) {
+		m := switched(t)
+		m.cursor = 1 // #39
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{merged(41), merged(40), merged(39)}, replace: true})
+		m = u.(Model)
+		if got := m.section.(*PRSection).prAt(m.cursor).Number; got != 39 {
+			t.Errorf("cursor PR = #%d, want #39 — a cursor the user moved anchors", got)
+		}
+	})
+}
+
+// TestMergeResultAfterStatusClearedStillMarksMerged: the status a merge put up
+// can be replaced and cleared (here by a refused rerun) before the merge
+// result lands; the result must still mark the PR merged and reconcile.
+func TestMergeResultAfterStatusClearedStillMarksMerged(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(stubSource{})
+	m.setPRs([]gh.PR{mergeablePR(11, "alice"), mergeablePR(9, "alice")})
+	m.SetMutationSource(&fakeMutationSource{})
+	m.cursor = shownIndex(m, 11)
+	cmd := m.runBulk(action.DefaultPRActions()["m"])
+
+	m.held[9] = ""
+	m.cursor = shownIndex(m, 9)
+	m.runAction(action.DefaultPRActions()["r"]) // refused: #9 is held
+	u, _ := m.Update(actionClearMsg{})
+	m = u.(Model)
+	if m.actionStatus != nil {
+		t.Fatalf("test setup: status = %+v, want it cleared before the merge lands", m.actionStatus)
+	}
+
+	u, cmd = m.Update(driveBulk(t, cmd))
+	m = u.(Model)
+	if _, ok := m.sessionMerged[11]; !ok {
+		t.Errorf("sessionMerged = %v, want #11 recorded", m.sessionMerged)
+	}
+	if p := findPR(t, m.section.(*PRSection), 11); p.State != "MERGED" {
+		t.Errorf("#11 state = %q, want MERGED", p.State)
+	}
+	if _, ok := listFetchMsg(t, cmd).(sectionsFetchedMsg); !ok {
+		t.Error("no list refetch after a merge that landed with the status cleared")
+	}
+}
+
+// TestLookupAfterSessionMergeKeepsTheRowMerged: a held-state lookup issued
+// before prdash merged the row must not revert it to OPEN when it lands.
+func TestLookupAfterSessionMergeKeepsTheRowMerged(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(stubSource{})
+	m.setPRs([]gh.PR{mergeablePR(7, "alice"), mergeablePR(8, "alice")})
+	m.setPRs([]gh.PR{mergeablePR(8, "alice")}) // #7 departs
+	gen := m.heldGen
+	u, _ := m.Update(heldStatesMsg{gen: gen, states: map[int]gh.ItemState{7: {State: "OPEN"}}})
+	m = u.(Model)
+
+	u, _ = m.Update(actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 7)}})
+	m = u.(Model)
+	u, _ = m.Update(heldStatesMsg{gen: gen, states: map[int]gh.ItemState{7: {State: "OPEN"}}})
+	m = u.(Model)
+
+	p := findPR(t, m.section.(*PRSection), 7)
+	if p.State != "MERGED" {
+		t.Errorf("#7 state = %q, want MERGED — a stale lookup reverted the session merge", p.State)
+	}
+	if m.mutable(p) == nil {
+		t.Error("#7 is mutable after a stale lookup, want it refused as merged")
+	}
+}
+
+// TestHeldRowOffAFullPageIsNotTaggedLeftFilter: a fetch that returned its
+// whole limit may have pushed a still-matching row off the page, so a held row
+// whose lookup matches the board is dimmed without claiming it left the
+// filter. A short page proves it no longer matches.
+func TestHeldRowOffAFullPageIsNotTaggedLeftFilter(t *testing.T) {
+	prs := func(lo, hi int) []gh.PR {
+		var out []gh.PR
+		for n := hi; n >= lo; n-- {
+			out = append(out, openPR(n, "alice"))
+		}
+		return out
+	}
+	lookup := func(t *testing.T, m Model, n int) string {
+		t.Helper()
+		u, _ := m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{n: {State: "OPEN"}}})
+		m = u.(Model)
+		m.renderList()
+		if _, held := m.held[n]; !held {
+			t.Fatalf("test setup: #%d not held, held = %v", n, m.held)
+		}
+		return rowTextFor(t, m, n)
+	}
+
+	t.Run("flat board, full page", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 60
+		m.setPRs(prs(1, defaultLimit+1))
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: prs(2, defaultLimit+1)})
+		if got := lookup(t, u.(Model), 1); strings.Contains(got, "left filter") {
+			t.Errorf("row #1 = %q, want no left filter tag off a full page", got)
+		}
+	})
+
+	t.Run("flat board, short page", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 60
+		m.setPRs(prs(1, defaultLimit))
+		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: prs(2, defaultLimit)})
+		if got := lookup(t, u.(Model), 1); !strings.Contains(got, "left filter") {
+			t.Errorf("row #1 = %q, want it tagged left filter off a short page", got)
+		}
+	})
+
+	t.Run("sections board, full open half", func(t *testing.T) {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 100, 200
+		m.setSections(nil, nil, prs(1, openListLimit+1), "")
+		u, _ := m.Update(sectionsFetchedMsg{state: "open", open: prs(2, openListLimit+1)})
+		if got := lookup(t, u.(Model), 1); strings.Contains(got, "left filter") {
+			t.Errorf("row #1 = %q, want no left filter tag off a full open half", got)
+		}
+	})
+
+	t.Run("issue board, full page", func(t *testing.T) {
+		issues := func(lo, hi int) []gh.Issue {
+			var out []gh.Issue
+			for n := hi; n >= lo; n-- {
+				out = append(out, gh.Issue{Number: n, Title: "issue"})
+			}
+			return out
+		}
+		m := NewModel("/repo", "is:open", nil)
+		m.mode = "issue"
+		m.section = NewIssueSection("is:open")
+		m.width, m.height = 100, 60
+		m.setIssues(issues(1, defaultLimit+1))
+		u, _ := m.Update(issuesFetchedMsg{filter: m.filter, issues: issues(2, defaultLimit+1)})
+		if got := lookup(t, u.(Model), 1); strings.Contains(got, "left filter") {
+			t.Errorf("issue #1 = %q, want no left filter tag off a full page", got)
+		}
+	})
+}
+
+// TestHeldTagLeavesTheRightColumnsInPlace: the held tag is drawn in the
+// title's room only, so a tagged row keeps the same ticket/author/diff/age
+// columns at the same cells as its untagged siblings (and the column header).
+func TestHeldTagLeavesTheRightColumnsInPlace(t *testing.T) {
+	title := strings.Repeat("T", 90)
+	// afterTitle is the row past its title and tag: the right-hand columns.
+	afterTitle := func(plain string) string {
+		i := strings.LastIndexAny(plain, "T…")
+		_, size := utf8.DecodeRuneInString(plain[i:])
+		rest := strings.TrimPrefix(plain[i+size:], " left filter")
+		return strings.TrimLeft(rest, " ")
+	}
+	for w := 40; w <= 140; w++ {
+		opts := RowOpts{Width: w, NumWidth: 4, DiffWidth: 7, TicketWidth: 7, AuthorWidth: 8}
+		render := func(o RowOpts) string {
+			return ansi.Strip(renderItemRow(o, accentStyle, "#123", title, "ENG-777", "alice", "3d", "+12 -4", "", "", ""))
+		}
+		plain := render(opts)
+		tagged := opts
+		tagged.Held, tagged.Tag = true, "left filter"
+		plainTagged := render(tagged)
+
+		if got := ansi.StringWidth(plainTagged); got != w {
+			t.Errorf("w=%d: tagged row width %d, want %d", w, got, w)
+		}
+		if a, b := afterTitle(plain), afterTitle(plainTagged); a != b {
+			t.Errorf("w=%d: right columns differ\nuntagged: %q\ntagged:   %q", w, plain, plainTagged)
+		}
+	}
+}
+
+// TestHeldMergedRowRefusesChecksRerun: the expanded Checks tab's r and R rerun
+// a check through their own paths, not nativeMutationFn; both refuse a held
+// row that looked up merged.
+func TestHeldMergedRowRefusesChecksRerun(t *testing.T) {
+	for _, key := range []string{"r", "R"} {
+		m := NewModel("/repo", "is:open", nil)
+		m.width, m.height = 120, 30
+		p := openPR(7, "alice")
+		p.StatusCheckRollup = []gh.Check{{State: "FAILURE", Name: "lint", DetailsUrl: "https://github.com/o/r/actions/runs/1/job/2"}}
+		m.setPRs([]gh.PR{p, openPR(8, "alice")})
+		m.setPRs([]gh.PR{openPR(8, "alice")})
+		u, _ := m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{7: {State: "MERGED"}}})
+		m = u.(Model)
+		m.cursor = shownIndex(m, 7)
+		m.expandedTab = tabChecks
+		m.enterExpanded()
+
+		u, _ = m.updateExpanded(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+		m = u.(Model)
+		if m.actionStatus == nil || m.actionStatus.err == nil || !strings.Contains(m.actionStatus.fail, "not open") {
+			t.Errorf("%s on a held merged row: status = %+v, want a not-open refusal", key, m.actionStatus)
+		}
+	}
 }

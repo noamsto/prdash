@@ -784,7 +784,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// very narrow widths the author drops out entirely, which is what the
 	// responsive ladder would do anyway.
 	//
-	// slack is the whole budget the title, author, diffstat and landed tag share:
+	// slack is the whole budget the title, author, diffstat and ⧉+N marker share:
 	// ageW = the age suffix, 2 = the title/right separators, 1 = a minimum title
 	// cell. Every optional column is carved out of this one number so the gap
 	// below never has to be floored — a floored gap is overflow, not slack.
@@ -793,12 +793,16 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// so the merged and closed views (which age from MergedAt/ClosedAt) reach 4
 	// and 5 cells, and a short reservation over-commits every gate below.
 	//
-	// Neither the diffstat, the ticket id, nor the tag is truncatable like the
+	// Neither the diffstat, the ticket id, nor a tag is truncatable like the
 	// author (there's no useful partial rendering of "+412 -18", a half "ENG-77…"
 	// is worse than absent, and " merged" clipped is a lie), so once even an
 	// empty author can't make room they drop out entirely rather than push the
 	// row past w — same responsive-ladder degradation the author gets above.
 	// diffExtra/tktExtra also reserve their own "  " separator.
+	//
+	// The held tag is not in slack at all: it comes out of the title's room
+	// after the columns are laid out, so a held row keeps the same columns at
+	// the same cells as its siblings and the column header.
 	//
 	// The ticket id is reserved after the diffstat: columnLadder sheds it at a
 	// wider column (ladderDropTicket) than the diffstat (ladderDropDiff), so on
@@ -809,15 +813,12 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	// authorStyle hashes the login for a stable per-person hue, so it must see
 	// the FULL login; only the rendered text is truncated or cut to initials.
 	ageW := 2 + max(3, lipgloss.Width(age)) // matches the age suffix rendered below
-	tag := ""
-	if o.Tag != "" {
-		tag += " " + o.Tag
-	}
+	missing := ""
 	if o.StackMissing != "" {
-		tag += " " + o.StackMissing
+		missing = " " + o.StackMissing
 	}
-	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, lipgloss.Width(tag))
-	tagW, diffExtra, tktExtra, authorCap := cols.tag, cols.diff, cols.ticket, cols.author
+	cols := reserveRightCols(w, leftW, ageW, o.DiffWidth, o.TicketWidth, o.AuthorWidth, lipgloss.Width(missing))
+	missingW, diffExtra, tktExtra, authorCap := cols.tag, cols.diff, cols.ticket, cols.author
 	right := ""
 	if tktExtra > 0 {
 		// Clamp before padding, exactly as the diffstat does below: TicketWidth is
@@ -850,7 +851,14 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	right += dimStyle.Render(fmt.Sprintf("  %3s", age))
 	rightW := lipgloss.Width(right)
 
-	titleRoom := w - leftW - rightW - 2 - tagW // -2: title/right separators
+	titleRoom := w - leftW - rightW - 2 - missingW // -2: title/right separators
+	tag := ""
+	if held := " " + o.Tag; o.Tag != "" && titleRoom-lipgloss.Width(held) >= 1 {
+		tag, titleRoom = held, titleRoom-lipgloss.Width(held)
+	}
+	if missingW > 0 {
+		tag += missing
+	}
 	if titleRoom < 1 {
 		titleRoom = 1
 	}
@@ -859,7 +867,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 		titleSt = titleSt.Bold(true) // the hovered row is always readable, even if draft
 	}
 	tags := ""
-	if tagW > 0 {
+	if tag != "" {
 		tags = dimStyle.Render(tag)
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
@@ -883,7 +891,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 // columnHeader is the sticky label row above the board. It lays out from the
 // same reserveRightCols widths the data rows use, so each label sits over its
 // column. ageW is fixed at the common 3-cell age; a row with a wider age or a
-// landed tag can drift by a cell, which muted labels tolerate. leftW mirrors
+// ⧉+N marker can drift by a cell, which muted labels tolerate. leftW mirrors
 // renderItemRow's left block: a 9-cell gutter, a 3-cell tree slot, the number
 // column, and one separating space.
 func columnHeader(w, numW, diffW, tktW, authorW int) string {
