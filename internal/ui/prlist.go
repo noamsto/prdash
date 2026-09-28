@@ -2243,13 +2243,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cascade = nil
 		}
 		cmds := []tea.Cmd{clearStatusCmd()}
-		if msg.err == nil {
+		// Not gated on msg.err: a partial batch still landed some merges, and
+		// those rows read merged before any refetch too.
+		if len(msg.merged) > 0 {
 			landed := time.Now()
-			for _, p := range m.actionStatus.merged {
+			ps, isPR := m.section.(*PRSection)
+			for _, p := range msg.merged {
+				m.sessionMerged[p.Number] = landed
+				if isPR {
+					ps.updatePR(p.Number, func(pr *gh.PR) {
+						pr.State, pr.MergedAt = "MERGED", landed
+					})
+				}
+				delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
+				// Transitional: mergedSticky is removed once isLanded goes (Step 10);
+				// kept here so the landed tag still renders until then.
 				p.State, p.MergedAt = "MERGED", landed
 				m.mergedSticky[p.Number] = p
-				delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
 			}
+			m.rowGen++
+			m.repaintActive()
+		}
+		if msg.err == nil {
 			m.applyOptimisticAction()
 		}
 		if msg.err == nil && m.actionStatus.refresh {
@@ -2283,12 +2298,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.backgroundRefresh())
 		}
-		if msg.err != nil && len(msg.partial) > 0 {
-			stamp := time.Now()
-			for _, n := range msg.partial {
-				m.ciRerun[n] = stamp
+		if msg.err != nil && len(msg.partial) > 0 && msg.rerunCI {
+			merged := make(map[int]bool, len(msg.merged))
+			for _, p := range msg.merged {
+				merged[p.Number] = true
 			}
-			cmds = append(cmds, delayedRefreshCmd())
+			stamp := time.Now()
+			var stamped bool
+			for _, n := range msg.partial {
+				if merged[n] {
+					continue // already landed as a merge above; not a CI re-trigger
+				}
+				m.ciRerun[n] = stamp
+				stamped = true
+			}
+			if stamped {
+				cmds = append(cmds, delayedRefreshCmd())
+			}
 		}
 		return m, tea.Batch(cmds...)
 	case cascadeUpdatedMsg:

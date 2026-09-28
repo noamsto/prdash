@@ -54,25 +54,32 @@ func findPR(t *testing.T, ps *PRSection, number int) gh.PR {
 	return gh.PR{}
 }
 
-// partialMergeSource is a MutationSource that fails MergePR for specific node
-// IDs while succeeding for the rest — fakeMutationSource (mutationsource_test.go)
-// only supports one shared err for every call, so it can't model a partial
-// batch failure.
+// partialMergeSource is a MutationSource that fails specific node IDs while
+// succeeding for the rest — fakeMutationSource (mutationsource_test.go) only
+// supports one shared err for every call, so it can't model a partial batch
+// failure. failFor covers merge, approve, and update-branch, the natives the
+// partial-batch tests exercise.
 type partialMergeSource struct {
-	mergeCalls []string
-	failFor    map[string]error
+	mergeCalls, approveCalls, updateBranchCalls []string
+	failFor                                     map[string]error
 }
 
 func (f *partialMergeSource) MergePR(prID string) error {
 	f.mergeCalls = append(f.mergeCalls, prID)
 	return f.failFor[prID]
 }
-func (f *partialMergeSource) EnableAutoMerge(string) error          { return nil }
-func (f *partialMergeSource) DisableAutoMerge(string) error         { return nil }
-func (f *partialMergeSource) MarkReady(string) error                { return nil }
-func (f *partialMergeSource) ConvertToDraft(string) error           { return nil }
-func (f *partialMergeSource) UpdateBranch(string) error             { return nil }
-func (f *partialMergeSource) ApprovePR(string) error                { return nil }
+func (f *partialMergeSource) EnableAutoMerge(string) error  { return nil }
+func (f *partialMergeSource) DisableAutoMerge(string) error { return nil }
+func (f *partialMergeSource) MarkReady(string) error        { return nil }
+func (f *partialMergeSource) ConvertToDraft(string) error   { return nil }
+func (f *partialMergeSource) UpdateBranch(prID string) error {
+	f.updateBranchCalls = append(f.updateBranchCalls, prID)
+	return f.failFor[prID]
+}
+func (f *partialMergeSource) ApprovePR(prID string) error {
+	f.approveCalls = append(f.approveCalls, prID)
+	return f.failFor[prID]
+}
 func (f *partialMergeSource) RequestReviews(string, []string) error { return nil }
 
 // invokeCmdTree drives cmd and, when it returns a tea.BatchMsg, recurses into
@@ -195,6 +202,98 @@ func TestPartialBatchMergeMarksTheSuccessesAndRefreshes(t *testing.T) {
 	invokeCmdTree(t, cmd)
 	if cs.calls.Load() < 1 {
 		t.Error("cmd tree from the partial batch settle never called FetchPRs — want a refresh for the successes")
+	}
+}
+
+// TestPartialBatchApproveDoesNotPaintChecksRunning pins the msg.rerunCI gate
+// on the ciRerun-stamping block: approve never re-triggers CI (rerunsCI only
+// says yes for update-branch/rerun-failed), so a partial approve failure must
+// leave m.ciRerun untouched even though it still has partial numbers.
+func TestPartialBatchApproveDoesNotPaintChecksRunning(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(stubSource{})
+	prs := []gh.PR{mergeablePR(11, "alice"), mergeablePR(12, "alice"), mergeablePR(13, "alice")}
+	m.setPRs(prs)
+	fs := &partialMergeSource{failFor: map[string]error{"pr12node": fmt.Errorf("approve blocked")}}
+	m.SetMutationSource(fs)
+
+	m.sel.toggle(0) // #13
+	m.sel.toggle(1) // #12
+	m.sel.toggle(2) // #11
+
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["L"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (one of three failed)", msg)
+	}
+	updated, _ := m.Update(done)
+	m = updated.(Model)
+
+	if len(m.ciRerun) != 0 {
+		t.Errorf("ciRerun = %v, want empty — approve never re-triggers CI", m.ciRerun)
+	}
+}
+
+// TestPartialBatchUpdateBranchStampsTheSuccesses mirrors the cascade's own
+// update-branch, but through a direct bulk press: the two successes must be
+// stamped in m.ciRerun (rerunsCI is true for update-branch) and the failed
+// one must not.
+func TestPartialBatchUpdateBranchStampsTheSuccesses(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(stubSource{})
+	prs := []gh.PR{mergeablePR(11, "alice"), mergeablePR(12, "alice"), mergeablePR(13, "alice")}
+	m.setPRs(prs)
+	fs := &partialMergeSource{failFor: map[string]error{"pr12node": fmt.Errorf("update blocked")}}
+	m.SetMutationSource(fs)
+
+	m.sel.toggle(0) // #13
+	m.sel.toggle(1) // #12
+	m.sel.toggle(2) // #11
+
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["u"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg (one of three failed)", msg)
+	}
+	updated, _ := m.Update(done)
+	m = updated.(Model)
+
+	for _, n := range []int{11, 13} {
+		if _, ok := m.ciRerun[n]; !ok {
+			t.Errorf("ciRerun[%d] missing, want it stamped — update-branch succeeded on this PR", n)
+		}
+	}
+	if _, ok := m.ciRerun[12]; ok {
+		t.Error("ciRerun[12] stamped, want it absent — update-branch failed on this PR")
+	}
+}
+
+// TestFailedMergeMarksNothing is acceptance A5's failed-merge counterpart to
+// TestBatchMergeShowsEveryMergedPRDespiteStaleSearch: a single merge that
+// fails must record nothing merged and leave the row OPEN.
+func TestFailedMergeMarksNothing(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 100, 40
+	m.SetPRSource(stubSource{})
+	m.setPRs([]gh.PR{mergeablePR(61, "alice")})
+	fs := &fakeMutationSource{err: fmt.Errorf("merge blocked")}
+	m.SetMutationSource(fs)
+
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
+	done, ok := msg.(actionDoneMsg)
+	if !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+	updated, _ := m.Update(done)
+	m = updated.(Model)
+
+	if len(m.sessionMerged) != 0 {
+		t.Errorf("sessionMerged = %v, want empty — the merge failed", m.sessionMerged)
+	}
+	if p := findPR(t, m.section.(*PRSection), 61); p.State != "OPEN" {
+		t.Errorf("#61 state = %q, want OPEN — a failed merge must not mark the row merged", p.State)
 	}
 }
 
