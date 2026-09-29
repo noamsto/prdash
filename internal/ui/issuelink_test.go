@@ -71,7 +71,7 @@ func TestOpenLinkedIssueResolvesLinearThenOpens(t *testing.T) {
 	rec := filepath.Join(dir, "opened.txt")
 	const url = "https://linear.app/factify/issue/ENG-7659/must-differ-guard"
 	write := func(name, body string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil { //nolint:gosec // G306: the stub must be executable for exec.Command to run it
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -84,12 +84,12 @@ func TestOpenLinkedIssueResolvesLinearThenOpens(t *testing.T) {
 		t.Fatalf("resolve+open failed: %v", err)
 	}
 	for range 200 {
-		if b, err := os.ReadFile(rec); err == nil && strings.TrimSpace(string(b)) == url { //nolint:gosec // G304: rec is a path under the test's own TempDir
+		if b, err := os.ReadFile(rec); err == nil && strings.TrimSpace(string(b)) == url {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	b, _ := os.ReadFile(rec) //nolint:gosec // G304: rec is a path under the test's own TempDir
+	b, _ := os.ReadFile(rec)
 	t.Fatalf("opener never got the resolved URL, got %q", b)
 }
 
@@ -97,7 +97,7 @@ func TestOpenLinkedIssueResolvesLinearThenOpens(t *testing.T) {
 // of the shipped bug: the argv was valid, the command exited non-zero.
 func TestOpenLinkedIssueSurfacesResolverFailure(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "linear"), //nolint:gosec // G306: the stub must be executable for exec.Command to run it
+	if err := os.WriteFile(filepath.Join(dir, "linear"),
 		[]byte("#!/bin/sh\necho 'workspace is not set' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestOpenLinkedIssueSurfacesResolverFailure(t *testing.T) {
 // An empty resolver stdout is not a URL, and must not reach the opener.
 func TestOpenLinkedIssueRejectsEmptyURL(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "linear"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec // G306: the stub must be executable for exec.Command to run it
+	if err := os.WriteFile(filepath.Join(dir, "linear"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)

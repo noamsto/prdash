@@ -553,7 +553,7 @@ func TestExitActionWithHandoffDoesNotQueueExec(t *testing.T) {
 	if len(m.PendingExec()) != 0 {
 		t.Fatalf("with a handoff sink present, exec must not be queued: %v", m.PendingExec())
 	}
-	b, err := os.ReadFile(p) //nolint:gosec // G304: p is the handoff file this test wrote into its TempDir
+	b, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("handoff file not written: %v", err)
 	}
