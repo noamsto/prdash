@@ -46,7 +46,11 @@ func TestParseJobLogGroupsByStep(t *testing.T) {
 
 func TestParseJobLogFullNotFailed(t *testing.T) {
 	raw := []byte("build\tSet up job\t2024-01-02T03:04:00.0Z ok\n")
-	if steps := parseJobLog(raw, false); steps[0].failed {
+	steps := parseJobLog(raw, false)
+	if len(steps) != 1 {
+		t.Fatalf("got %d steps, want 1", len(steps))
+	}
+	if steps[0].failed {
 		t.Fatal("full-log steps should not be marked failed")
 	}
 }

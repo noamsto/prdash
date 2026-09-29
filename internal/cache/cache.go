@@ -164,6 +164,9 @@ func (c *Cache) load() error {
 	if err := json.Unmarshal(b, &entries); err != nil {
 		return err
 	}
+	if entries == nil { // a JSON `null` document unmarshals to a nil map
+		entries = map[string]Entry{}
+	}
 	c.entries = entries
 	c.prune()
 	return nil
@@ -183,7 +186,7 @@ func (c *Cache) prune() {
 // debounce timer serializes flushes, so no cross-write locking is needed here.
 func (c *Cache) writeFile(b []byte) error {
 	dir := filepath.Dir(c.filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -192,16 +195,16 @@ func (c *Cache) writeFile(b []byte) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, c.filePath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

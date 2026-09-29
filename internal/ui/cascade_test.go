@@ -345,6 +345,8 @@ func (p *cascadePump) drive(t *testing.T) {
 			p.probed = append(p.probed, n)
 			r := p.nextReading(n)
 			step = p.run.onProbed(r.mergeable, r.mss, r.err)
+		case cascadeSettle:
+			// unreachable: the loop only runs while step != cascadeSettle
 		}
 		p.steps = append(p.steps, step)
 	}
@@ -819,7 +821,7 @@ func (f *sequencedDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, m
 // with a later step's general driveCascade pump.
 func driveCascadeProbes(t *testing.T, m *Model, budget int) tea.Cmd {
 	t.Helper()
-	for i := 0; i < budget; i++ {
+	for range budget {
 		next, fetch := m.Update(cascadeProbeMsg{})
 		*m = next.(Model)
 		if fetch == nil {
@@ -1028,7 +1030,7 @@ func TestCascadePanelClosingBorderSurvivesAShortTerminal(t *testing.T) {
 func driveCascade(t *testing.T, m Model, cmd tea.Cmd) (Model, actionDoneMsg) {
 	t.Helper()
 	awaitingFetch := false
-	for i := 0; i < 4*cascadeWaitProbes*10; i++ {
+	for range 4 * cascadeWaitProbes * 10 {
 		var msg tea.Msg
 		switch {
 		case awaitingFetch:

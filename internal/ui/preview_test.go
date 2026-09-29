@@ -104,7 +104,7 @@ func TestIdentityHeaderIssueCarriesLabels(t *testing.T) {
 // status label. Spacing between them varies with alignment padding, so it checks
 // co-occurrence on one line rather than an exact substring.
 func hasReviewer(roster, login, label string) bool {
-	for _, line := range strings.Split(roster, "\n") {
+	for line := range strings.SplitSeq(roster, "\n") {
 		if strings.Contains(line, login) && strings.Contains(line, label) {
 			return true
 		}
@@ -204,8 +204,8 @@ func TestReviewRosterShowsEveryState(t *testing.T) {
 		}
 	}
 	// most-actionable first: changes requested precedes pending precedes approved.
-	if idx := strings.Index; !(idx(got, "changes requested") < idx(got, "pending") &&
-		idx(got, "pending") < idx(got, "approved")) {
+	if idx := strings.Index; idx(got, "changes requested") >= idx(got, "pending") ||
+		idx(got, "pending") >= idx(got, "approved") {
 		t.Fatalf("roster order should rank by actionability: %q", got)
 	}
 }

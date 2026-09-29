@@ -83,7 +83,7 @@ func TestOpenLinkedIssueResolvesLinearThenOpens(t *testing.T) {
 	if err := openLinkedIssue(linkedIssueArgv(runtime.GOOS, "", "ENG-7659", "")); err != nil {
 		t.Fatalf("resolve+open failed: %v", err)
 	}
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if b, err := os.ReadFile(rec); err == nil && strings.TrimSpace(string(b)) == url {
 			return
 		}

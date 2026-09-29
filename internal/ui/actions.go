@@ -864,6 +864,9 @@ func (m *Model) buildCascadePlan(ps *PRSection) *cascadePlan {
 // seven sites in expanded.go/logview.go overwrite m.actionStatus directly,
 // bypassing runAction/startBulk, and entering those views mid-run is ordinary.
 func (m *Model) runCascade(a action.Action, p *cascadePlan) tea.Cmd {
+	if p == nil {
+		return nil
+	}
 	nums := make([]int, 0, p.count())
 	for _, c := range p.chains {
 		for _, l := range c {

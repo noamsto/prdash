@@ -58,7 +58,7 @@ func (m *Model) mergeHeldPRs(prev []gh.PR, prevCats map[int]string, fetched []gh
 			delete(m.held, p.Number)
 		}
 	}
-	out := append([]gh.PR(nil), fetched...)
+	out := append([]gh.PR{}, fetched...)
 	for _, p := range prev {
 		if have[p.Number] {
 			continue
@@ -87,7 +87,7 @@ func (m *Model) mergeHeldIssues(prev []gh.Issue, prevCats map[int]string, fetche
 		have[is.Number] = true
 		delete(m.held, is.Number)
 	}
-	out := append([]gh.Issue(nil), fetched...)
+	out := append([]gh.Issue{}, fetched...)
 	for _, is := range prev {
 		if have[is.Number] {
 			continue

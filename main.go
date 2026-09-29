@@ -24,7 +24,7 @@ func main() {
 		if !errors.Is(err, gh.ErrNoRepo) {
 			body = fmt.Sprintf("Could not resolve the GitHub repo.\n\n%s", err)
 		}
-		ui.RunNotice("prdash", body)
+		ui.RunNotice("prdash", body) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
 		os.Exit(1)
 	}
 
@@ -33,9 +33,9 @@ func main() {
 	tok, err := gh.Token()
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			ui.RunNotice("prdash", fmt.Sprintf("%s\n\nSet GH_TOKEN or GITHUB_TOKEN to bypass `gh auth token` entirely.", err))
+			ui.RunNotice("prdash", fmt.Sprintf("%s\n\nSet GH_TOKEN or GITHUB_TOKEN to bypass `gh auth token` entirely.", err)) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
 		} else {
-			ui.RunNotice("prdash", fmt.Sprintf("prdash: %s\n\nSet GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.", err))
+			ui.RunNotice("prdash", fmt.Sprintf("prdash: %s\n\nSet GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`.", err)) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
 		}
 		os.Exit(1)
 	}
@@ -88,7 +88,7 @@ func main() {
 // runExit runs one queued exits-TUI command with the terminal attached, so an
 // interactive tool (wt switch) can prompt and its tmux hook can navigate.
 func runExit(dir string, argv []string) error {
-	c := exec.Command(argv[0], argv[1:]...)
+	c := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: re-execs this process's own queued argv, not untrusted input
 	c.Dir = dir
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c.Run()

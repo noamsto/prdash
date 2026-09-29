@@ -229,8 +229,8 @@ func nativeLogToGHFormat(raw []byte, failedOnly bool) []byte {
 		if line == "" {
 			continue
 		}
-		if i := strings.Index(line, "##[group]"); i >= 0 {
-			step = strings.TrimSpace(line[i+len("##[group]"):])
+		if _, after, ok := strings.Cut(line, "##[group]"); ok {
+			step = strings.TrimSpace(after)
 		}
 		if strings.Contains(line, "##[error]") {
 			failed[step] = true

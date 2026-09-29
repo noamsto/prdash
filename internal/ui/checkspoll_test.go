@@ -114,6 +114,9 @@ func TestChecksFetchedUpdatesRowWithoutReordering(t *testing.T) {
 	// #1's checks fail — the actionability sort would hoist it if a beat re-sorted.
 	u, _ := m.Update(checksFetchedMsg{checks: map[int][]gh.Check{1: {{State: "FAILURE"}}}})
 	ps = u.(Model).section.(*PRSection)
+	if len(before) != ps.Len() {
+		t.Fatalf("row count changed: %d -> %d", len(before), ps.Len())
+	}
 	for i := 0; i < ps.Len(); i++ {
 		if ps.prAt(i).Number != before[i] {
 			t.Fatalf("row order changed: #%d at index %d, was #%d", ps.prAt(i).Number, i, before[i])

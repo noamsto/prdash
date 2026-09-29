@@ -72,7 +72,7 @@ func boxBody(content string, w, h int) string {
 	out := make([]string, 0, rows+1)
 	for i := range rows {
 		line, lineW := "", 0
-		if i < len(lines) {
+		if i < len(lines) && i < len(widths) {
 			line, lineW = lines[i], widths[i]
 		}
 		out = append(out, left+line+strings.Repeat(" ", innerW-lineW)+right)
@@ -183,7 +183,7 @@ func pensOpenAtEnd(s string) bool {
 			}
 			if rest[1+j] == 'm' {
 				p := rest[1 : 1+j]
-				style = !(p == "" || p == "0")
+				style = p != "" && p != "0"
 			}
 			s = rest[2+j:]
 		case ']': // OSC, up to ST or BEL
@@ -244,7 +244,7 @@ func joinBoard(stack []string, side string, gap int) string {
 	leftWidths := make([]int, 0, rows)
 	commonW := 0
 	for _, s := range stack {
-		for _, ln := range strings.Split(s, "\n") {
+		for ln := range strings.SplitSeq(s, "\n") {
 			w := ansi.StringWidth(ln)
 			leftLines = append(leftLines, ln)
 			leftWidths = append(leftWidths, w)
@@ -291,10 +291,7 @@ func joinBoardLipgloss(stack []string, side string, gap int) string {
 func boxTop(segment string, segW, w int) string {
 	rb := lipgloss.RoundedBorder()
 	rule := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
-	rest := w - 3 - segW
-	if rest < 0 {
-		rest = 0
-	}
+	rest := max(w-3-segW, 0)
 	return rule.Render(rb.TopLeft+rb.Top) + segment +
 		rule.Render(strings.Repeat(rb.Top, rest)+rb.TopRight)
 }
@@ -348,6 +345,9 @@ func tabSegment(tabs []string, active, maxW int) string {
 	tick := sepStyle.Render(lipgloss.RoundedBorder().Top)
 	tickW := lipgloss.Width(tick)
 	n := len(tabs)
+	if n == 0 {
+		return ""
+	}
 	cells := make([]string, n)
 	widths := make([]int, n)
 	for i, t := range tabs {
@@ -420,7 +420,7 @@ func tabSegment(tabs []string, active, maxW int) string {
 	if seg = cells[active]; lipgloss.Width(seg) <= maxW {
 		return seg
 	}
-	if padW := lipgloss.Width(tabActiveStyle.Render("")); maxW > padW {
+	if padW := lipgloss.Width(tabActiveStyle.Render("")); maxW > padW && active < len(tabs) {
 		return tabActiveStyle.Render(truncate(tabs[active], maxW-padW))
 	}
 	return ""

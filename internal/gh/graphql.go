@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -12,6 +13,12 @@ import (
 )
 
 const githubGraphQLURL = "https://api.github.com/graphql"
+
+// gqlInt narrows an int to githubv4's int32 without wrapping. Page sizes and
+// issue numbers are small, so the clamp only guards a pathological caller.
+func gqlInt(n int) githubv4.Int {
+	return githubv4.Int(min(max(n, 0), math.MaxInt32)) //nolint:gosec // G115: clamped to int32 range on the line above
+}
 
 // graphTimeout bounds every githubv4 request so a stalled network call surfaces
 // as a fetch error instead of hanging the UI on "Loading…".
@@ -157,7 +164,7 @@ func (s GraphSource) query(ctx context.Context, filter string, limit int) ([]PR,
 	// search API needs both qualifiers spelled out.
 	vars := map[string]any{
 		"q":     githubv4.String(fmt.Sprintf("repo:%s is:pr %s", s.repo, filter)),
-		"limit": githubv4.Int(limit),
+		"limit": gqlInt(limit),
 	}
 	if err := s.client.Query(ctx, &q, vars); err != nil {
 		return nil, err
@@ -227,7 +234,7 @@ func mapPR(g qlPR) PR {
 // name/conclusion/workflowName, StatusContexts a context/state — the two halves
 // Check.Result and Check.Label already switch on.
 func mapRollup(g qlPR) []Check {
-	var checks []Check
+	checks := []Check{}
 	for _, cn := range g.Commits.Nodes {
 		rollup := cn.Commit.StatusCheckRollup
 		if rollup == nil {

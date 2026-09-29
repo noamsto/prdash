@@ -36,11 +36,11 @@ func RepoFromGit(dir string) (string, error) {
 // https://github.com/owner/repo.git (optionally with credentials).
 func parseGitHubRemote(remote string) (string, bool) {
 	s := strings.TrimSuffix(strings.TrimSpace(remote), ".git")
-	i := strings.Index(s, "github.com")
-	if i < 0 {
+	_, after, found := strings.Cut(s, "github.com")
+	if !found {
 		return "", false
 	}
-	rest := strings.TrimLeft(s[i+len("github.com"):], ":/")
+	rest := strings.TrimLeft(after, ":/")
 	owner, name, ok := strings.Cut(rest, "/")
 	if !ok || owner == "" || name == "" {
 		return "", false

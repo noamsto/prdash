@@ -426,6 +426,9 @@ func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
 		Number:            13,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pending" {
 		t.Errorf("CIState = %q, want pending", got[0].CIState())
 	}
@@ -439,6 +442,9 @@ func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
 		Number:            99,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pass" {
 		t.Errorf("CIState = %q, want pass — PR 99 was never stamped", got[0].CIState())
 	}
@@ -482,6 +488,9 @@ func TestApplyCIRerunKeepsPreExistingPending(t *testing.T) {
 	if _, still := m.ciRerun[13]; !still {
 		t.Error("ciRerun[13] cleared on a check that started before the stamp")
 	}
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pending" {
 		t.Errorf("CIState = %q, want pending — the override should still apply", got[0].CIState())
 	}
@@ -497,6 +506,9 @@ func TestApplyCIRerunExpires(t *testing.T) {
 		Number:            13,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pass" {
 		t.Errorf("CIState = %q, want pass — the override expired", got[0].CIState())
 	}

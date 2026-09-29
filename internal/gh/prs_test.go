@@ -57,6 +57,9 @@ func TestLabelColorParses(t *testing.T) {
 	if err := json.Unmarshal([]byte(`[{"number":1,"labels":[{"name":"bug","color":"d73a4a"}]}]`), &prs); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	if len(prs) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(prs))
+	}
 	if got := prs[0].Labels[0].Color; got != "d73a4a" {
 		t.Errorf("label color = %q, want d73a4a", got)
 	}
@@ -99,6 +102,9 @@ func TestPRReadsMergeAndCloseTimes(t *testing.T) {
 	var prs []PR
 	if err := json.Unmarshal(raw, &prs); err != nil {
 		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("got %d PRs, want 2", len(prs))
 	}
 	if prs[0].MergedAt.IsZero() {
 		t.Errorf("PR #1 MergedAt should be parsed, got zero")
@@ -144,6 +150,9 @@ func TestPRReadsAutoMergeRequest(t *testing.T) {
 		{"number":8,"title":"not armed","state":"OPEN","autoMergeRequest":null}
 	]`), &prs); err != nil {
 		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("got %d PRs, want 2", len(prs))
 	}
 	if !prs[0].AutoMergeEnabled() {
 		t.Errorf("PR 7 should have auto-merge enabled: %+v", prs[0])

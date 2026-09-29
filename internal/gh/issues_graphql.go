@@ -54,7 +54,7 @@ func (s GraphSource) queryIssues(ctx context.Context, filter string, limit int) 
 	// raw search API needs both qualifiers spelled out.
 	vars := map[string]any{
 		"q":     githubv4.String(fmt.Sprintf("repo:%s is:issue %s", s.repo, filter)),
-		"limit": githubv4.Int(limit),
+		"limit": gqlInt(limit),
 	}
 	if err := s.client.Query(ctx, &q, vars); err != nil {
 		return nil, err
@@ -106,7 +106,7 @@ func (s GraphSource) FetchIssueDetail(number int) (IssueDetail, []byte, error) {
 	vars := map[string]any{
 		"owner":  githubv4.String(owner),
 		"name":   githubv4.String(name),
-		"number": githubv4.Int(number),
+		"number": gqlInt(number),
 	}
 	if err := s.client.Query(context.Background(), &q, vars); err != nil {
 		return IssueDetail{}, nil, err

@@ -143,7 +143,7 @@ func authorStyle(login string) lipgloss.Style {
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(login))
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Author[h.Sum32()%uint32(len(theme.Author))]))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Author[h.Sum32()%uint32(len(theme.Author))])) //nolint:gosec // G115: len of the small author palette, far below uint32 range
 }
 
 func isBot(login string) bool {

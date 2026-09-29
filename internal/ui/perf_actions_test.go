@@ -253,7 +253,7 @@ func TestBulkWorktreeWarnsOverFour(t *testing.T) {
 		prs[i] = gh.PR{Number: i + 1, HeadRefName: fmt.Sprintf("b%d", i)}
 	}
 	m.setPRs(prs)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		m.sel.toggle(i)
 	}
 

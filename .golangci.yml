@@ -1,0 +1,26 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - exhaustive
+    - errorlint
+    - nilerr
+    - bodyclose
+    - gosec
+    - modernize
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    rules:
+      # gosec's path/permission/subprocess findings are noise in test fixtures
+      # (temp dirs, executable stubs); it stays on for production code.
+      - path: _test\.go
+        linters:
+          - gosec

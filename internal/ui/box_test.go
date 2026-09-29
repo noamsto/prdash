@@ -124,7 +124,7 @@ func TestTabbedBoxTopLineNeverExceedsWidth(t *testing.T) {
 
 func TestOverlayAnchorsPanelToFixedTop(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < 11; i++ {
+	for range 11 {
 		b.WriteString(strings.Repeat("x", 40) + "\n")
 	}
 	base := strings.TrimRight(b.String(), "\n")

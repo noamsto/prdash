@@ -53,7 +53,7 @@ func TestPreflightSwitchFixtureCollisionAndRebase(t *testing.T) {
 	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	path := filepath.Join(root, "feature")
-	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	runWorktreeList = func(string) ([]byte, error) {
@@ -168,7 +168,7 @@ func TestPreflightSwitchDetectsDetachedRebaseEvenWhenWtListBranchMatches(t *test
 	t.Cleanup(func() { runWorktreeList, gitOutput = oldList, oldGit })
 	root := filepath.Join(t.TempDir(), ".worktrees", "owner", "repo")
 	path := filepath.Join(root, "feature")
-	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(path, ".git", "rebase-merge"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	runWorktreeList = func(string) ([]byte, error) {
@@ -404,7 +404,7 @@ func TestRemoveWorktreeRefusesDirtyTree(t *testing.T) {
 	dir := initRepo(t)
 	wt := filepath.Join(t.TempDir(), "feat-x")
 	git(t, dir, "worktree", "add", "-b", "feat/x", wt)
-	if err := os.WriteFile(filepath.Join(wt, "scratch.txt"), []byte("work in progress"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wt, "scratch.txt"), []byte("work in progress"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git(t, wt, "add", "scratch.txt")

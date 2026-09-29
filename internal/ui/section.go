@@ -79,6 +79,9 @@ func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} 
 func (s *PRSection) Kind() string           { return "pr" }
 func (s *PRSection) Filter() string         { return s.filter }
 func (s *PRSection) SetPRs(p []gh.PR) {
+	if p == nil {
+		p = []gh.PR{}
+	}
 	s.cats, s.catOrder = nil, nil // flat/author grouping; SetCategorized opts into category grouping
 	sortPRs(p, s.state)
 	s.prs = p
@@ -88,6 +91,9 @@ func (s *PRSection) SetPRs(p []gh.PR) {
 // SetCategorized paints PRs grouped under category headers (order) instead of by
 // author — used by the mine view (Mine / Review requested).
 func (s *PRSection) SetCategorized(p []gh.PR, cats map[int]string, order []string) {
+	if p == nil {
+		p = []gh.PR{}
+	}
 	sortPRs(p, s.state)
 	s.prs = p
 	s.cats = cats
@@ -490,69 +496,12 @@ func (s *PRSection) setShownStacks(shown []int) {
 	}
 }
 
-// groupByCategory reorders idx so rows cluster under their category in header
-// order, and clusters by author within each category. Composing the two keeps
-// one ordering concept rather than adding a third.
-func groupByCategory(prs []gh.PR, idx []int, cats map[int]string, order []string, state string) []int {
-	out := make([]int, 0, len(idx))
-	for _, cat := range order {
-		members := make([]int, 0, len(idx))
-		for _, i := range idx {
-			if cats[prs[i].Number] == cat {
-				members = append(members, i)
-			}
-		}
-		out = append(out, groupByAuthor(prs, members, state)...)
-	}
-	return out
-}
-
 func distinctAuthors(prs []gh.PR, idx []int) int {
 	seen := map[string]struct{}{}
 	for _, i := range idx {
 		seen[prs[i].Author.Login] = struct{}{}
 	}
 	return len(seen)
-}
-
-// groupByAuthor reorders idx so each author's rows are contiguous; within a group
-// the incoming order is preserved. Group order depends on state: the open board
-// leads with each author's highest PR number, ties by login. On terminal boards
-// (merged/closed) a highest-number lead would fight the chronology, so groups
-// keep first-appearance order — and since idx arrives newest-event-first, that
-// leads with whichever author has the newest merge/close, extending newest-first
-// across groups.
-func groupByAuthor(prs []gh.PR, idx []int, state string) []int {
-	groups := map[string][]int{}
-	authors := make([]string, 0) // first-appearance order
-	for _, i := range idx {
-		a := prs[i].Author.Login
-		if _, ok := groups[a]; !ok {
-			authors = append(authors, a)
-		}
-		groups[a] = append(groups[a], i)
-	}
-	if state != "merged" && state != "closed" {
-		// A cluster leads with its newest PR, so cluster position is fixed by
-		// numbers that never change — the whole point of #62.
-		best := map[string]int{}
-		for a, g := range groups {
-			for _, i := range g {
-				best[a] = max(best[a], prs[i].Number)
-			}
-		}
-		slices.SortStableFunc(authors, func(x, y string) int {
-			if best[x] != best[y] {
-				return best[y] - best[x] // descending
-			}
-			return strings.Compare(x, y)
-		})
-	}
-	out := make([]int, 0, len(idx))
-	for _, a := range authors {
-		out = append(out, groups[a]...)
-	}
-	return out
 }
 
 // --- Issue section ---
@@ -581,6 +530,9 @@ func sortIssues(is []gh.Issue) {
 }
 
 func (s *IssueSection) SetIssues(is []gh.Issue) {
+	if is == nil {
+		is = []gh.Issue{}
+	}
 	s.cats, s.catOrder = nil, nil // flat; SetCategorized opts into category grouping
 	sortIssues(is)
 	s.issues = is
@@ -590,6 +542,9 @@ func (s *IssueSection) SetIssues(is []gh.Issue) {
 // SetCategorized paints issues grouped under category headers (order) — used by
 // the open issue board (Mine / Others).
 func (s *IssueSection) SetCategorized(is []gh.Issue, cats map[int]string, order []string) {
+	if is == nil {
+		is = []gh.Issue{}
+	}
 	sortIssues(is)
 	s.issues = is
 	s.cats = cats
@@ -739,10 +694,7 @@ func reserveRightCols(w, leftW, ageW, diffW, tktW, authorW, missingW int) rightC
 }
 
 func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, author, age, diff, ci, review, auto string) string {
-	w := o.Width
-	if w < 24 {
-		w = 24 // floor keeps truncation sane before the first WindowSizeMsg
-	}
+	w := max(o.Width, 24) // floor keeps truncation sane before the first WindowSizeMsg
 	// One cell, two states that want it: selection wins, because it is what an
 	// action fires against. Focus still reads via the row background and the bold
 	// title further down.
@@ -872,10 +824,7 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	}
 	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
 
-	gap := w - leftW - lipgloss.Width(titleTxt) - rightW
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(w-leftW-lipgloss.Width(titleTxt)-rightW, 1)
 	line := left + titleTxt + strings.Repeat(" ", gap) + right
 	switch {
 	case o.Focused:

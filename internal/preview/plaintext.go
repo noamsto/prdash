@@ -22,7 +22,7 @@ var (
 // comment whose first line is only a severity badge distills to "" and must fall
 // through rather than yielding a blank row. Returns "" when no line survives.
 func PlainTitle(body string) string {
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		// Skip markdown fence markers like ```suggestion or ```go; they distill to
 		// "suggestion" or "go" once backticks are stripped, which is misleading.
 		// Fall through to the content inside the fence instead.

@@ -115,7 +115,7 @@ func TestCleanupBranchKeepsBranchWhenWorktreeRemovalFails(t *testing.T) {
 	dir := cleanupRepo(t)
 	wt := filepath.Join(t.TempDir(), "feat-x")
 	gitIn(t, dir, "worktree", "add", "-b", "feat/x", wt)
-	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("work in progress"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("work in progress"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitIn(t, wt, "add", "wip.txt")

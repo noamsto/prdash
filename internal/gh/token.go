@@ -38,7 +38,7 @@ const waitGrace = 500 * time.Millisecond
 // otherwise Output()/Run()/CombinedOutput() can block on that pipe long after
 // the kill.
 func newBoundedCmd(ctx context.Context, name string, arg ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, arg...)
+	cmd := exec.CommandContext(ctx, name, arg...) //nolint:gosec // G204: name/arg are the fixed `gh auth token` invocation, not untrusted input
 	cmd.WaitDelay = waitGrace
 	return cmd
 }
