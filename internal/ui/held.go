@@ -215,27 +215,8 @@ type numbered interface {
 	numberAt(i int) int
 }
 
-func (s *PRSection) numberAt(i int) int {
-	if i < 0 || i >= len(s.shown) {
-		return 0
-	}
-	j := s.shown[i]
-	if j < 0 || j >= len(s.prs) {
-		return 0
-	}
-	return s.prs[j].Number
-}
-
-func (s *IssueSection) numberAt(i int) int {
-	if i < 0 || i >= len(s.shown) {
-		return 0
-	}
-	j := s.shown[i]
-	if j < 0 || j >= len(s.issues) {
-		return 0
-	}
-	return s.issues[j].Number
-}
+func (s *PRSection) numberAt(i int) int    { return s.prs[s.shown[i]].Number }
+func (s *IssueSection) numberAt(i int) int { return s.issues[s.shown[i]].Number }
 
 // cursorAnchor captures the cursor's number (0 on an empty board) and the
 // shown order, for restoreCursor.
