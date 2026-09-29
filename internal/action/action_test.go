@@ -17,7 +17,7 @@ func TestExpandArgv(t *testing.T) {
 func TestExpandUsesBranch(t *testing.T) {
 	a := Action{Command: Command{Argv: []string{"wt", "switch", "-c", "{{.Branch}}"}}}
 	got, _ := a.ExpandArgv(Vars{Branch: "feat/213-x"})
-	if got[3] != "feat/213-x" {
+	if len(got) != 4 || got[3] != "feat/213-x" {
 		t.Fatalf("got %v", got)
 	}
 }

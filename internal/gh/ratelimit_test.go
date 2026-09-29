@@ -276,9 +276,17 @@ func TestRateTransportSetsMergeInfoAcceptHeaderOnGraphQL(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
 	})
 	rt := &rateTransport{next: stub, store: newRateStore()}
-	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
-	if _, err := rt.RoundTrip(req); err != nil {
+	req, err := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if captured == nil {
+		t.Fatal("stub did not capture the request")
 	}
 	if got := captured.Header.Get("Accept"); got != "application/vnd.github.merge-info-preview+json" {
 		t.Errorf("Accept = %q, want merge-info-preview", got)
@@ -292,10 +300,18 @@ func TestRateTransportPreservesExistingAcceptHeader(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
 	})
 	rt := &rateTransport{next: stub, store: newRateStore()}
-	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
-	req.Header.Set("Accept", "application/vnd.github.something-else+json")
-	if _, err := rt.RoundTrip(req); err != nil {
+	req, err := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.something-else+json")
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if captured == nil {
+		t.Fatal("stub did not capture the request")
 	}
 	if got := captured.Header.Get("Accept"); got != "application/vnd.github.something-else+json" {
 		t.Errorf("Accept = %q, want untouched, got overwritten", got)

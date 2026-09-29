@@ -39,6 +39,20 @@ func TestPersistsAcrossLoad(t *testing.T) {
 	}
 }
 
+// A cache file holding a JSON `null` (a truncated or hand-edited write)
+// unmarshals to a nil map; the next Set must not panic on a nil-map write.
+func TestOpenNullFileStaysWritable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results-cache.json")
+	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := Open(path)
+	c.Set("k", json.RawMessage(`[]`))
+	if _, ok := c.Get("k"); !ok {
+		t.Fatal("Set after loading a null cache did not store the entry")
+	}
+}
+
 // TestSetCoalescesWrites: a burst of Sets writes at most once until Flush, and
 // Flush persists the final state.
 func TestSetCoalescesWrites(t *testing.T) {

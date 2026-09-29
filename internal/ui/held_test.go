@@ -1154,7 +1154,7 @@ func TestHeldRowsKeepReadOnlyActions(t *testing.T) {
 	t.Run("open-web", func(t *testing.T) {
 		dir := t.TempDir()
 		stub := filepath.Join(dir, browserArgv(runtime.GOOS, "")[0])
-		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec // G306: the stub must be executable for exec.Command to run it
 			t.Fatal(err)
 		}
 		t.Setenv("PATH", dir)

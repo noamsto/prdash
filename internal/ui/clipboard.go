@@ -44,7 +44,7 @@ func clipboardArgvFor(goos, wayland, display string, lookPath func(string) strin
 
 // writeClipboard runs a native clipboard writer, feeding text on stdin.
 func writeClipboard(argv []string, text string) error {
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: argv is the platform clipboard writer, not untrusted input
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
 }

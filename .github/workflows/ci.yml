@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      # The gate lives in checks.<system>.* (golangci-lint, nilaway, go test
+      # -race), so `nix flake check` runs it too. CI builds the three checks
+      # directly: the pre-existing pre-commit check evaluates the whole hook
+      # closure, which the Go gate does not need.
+      - run: nix build .#checks.x86_64-linux.golangci-lint .#checks.x86_64-linux.nilaway .#checks.x86_64-linux.go-test-race

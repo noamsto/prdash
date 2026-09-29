@@ -782,7 +782,7 @@ func (m *Model) renderList() {
 	}
 	var b strings.Builder
 	line, prevGroup := 0, ""
-	for i := 0; i < n; i++ {
+	for i := range n {
 		headerLine := -1 // this row's group header line, when it opens a new group
 		if grouped {
 			if lbl := g.groupLabelAt(i); lbl != prevGroup {
@@ -864,10 +864,7 @@ func (m *Model) renderList() {
 // scrollToCursor nudges the viewport offset only when the cursor row (at its
 // display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
-	rows := m.cursorRows
-	if rows < 1 {
-		rows = 1
-	}
+	rows := max(m.cursorRows, 1)
 	top := m.cursorTop // reveal the group header above the row, when it has one
 	bottom := m.cursorLine + rows - 1
 	off := m.vp.YOffset()
@@ -907,10 +904,7 @@ func (m *Model) previewScrollBy(delta int) {
 	if head != "" {
 		visible -= lipgloss.Height(head) + 1 // the head and the blank row under it
 	}
-	over := lipgloss.Height(body) - visible
-	if over < 0 {
-		over = 0 // content fits the pane; nothing to scroll
-	}
+	over := max(lipgloss.Height(body)-visible, 0) // content fits the pane; nothing to scroll
 	m.previewOffset += delta
 	if m.previewOffset > over {
 		m.previewOffset = over
@@ -1011,6 +1005,9 @@ func (m Model) omniSuggestions() []gh.User {
 	}
 	out := []gh.User{}
 	for _, mt := range fuzzy.Find(partial, logins) {
+		if mt.Index < 0 || mt.Index >= len(m.members) {
+			continue
+		}
 		out = append(out, m.members[mt.Index])
 	}
 	return out
@@ -1085,12 +1082,15 @@ func prKey(repo, filter string, limit int) string {
 func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
 	e, ok := m.cache.Get(prKey(m.repo, filter, limit))
 	if !ok {
-		return nil, false
+		return []gh.PR{}, false
 	}
 	var prs []gh.PR
 	if err := json.Unmarshal(e.Rows, &prs); err != nil {
 		slog.Debug("cache unmarshal failed", "err", err)
-		return nil, false
+		return []gh.PR{}, false
+	}
+	if prs == nil { // a cached `null` unmarshals to a nil slice
+		prs = []gh.PR{}
 	}
 	return prs, true
 }
@@ -1133,12 +1133,15 @@ func issueKey(repo, filter string, limit int) string {
 func (m *Model) cachedIssues(filter string, limit int) ([]gh.Issue, bool) {
 	e, ok := m.cache.Get(issueKey(m.repo, filter, limit))
 	if !ok {
-		return nil, false
+		return []gh.Issue{}, false
 	}
 	var is []gh.Issue
 	if err := json.Unmarshal(e.Rows, &is); err != nil {
 		slog.Debug("issue cache unmarshal failed", "err", err)
-		return nil, false
+		return []gh.Issue{}, false
+	}
+	if is == nil { // a cached `null` unmarshals to a nil slice
+		is = []gh.Issue{}
 	}
 	return is, true
 }
@@ -3000,6 +3003,9 @@ func (m Model) confirmQuestion() string {
 		return fmt.Sprintf("Update branch for %d PRs in stack?", m.pendingCascade.count())
 	}
 	a := m.pending
+	if a == nil {
+		return ""
+	}
 	if a.Scope != "per-selected" {
 		n, branch := 0, ""
 		if v, ok := m.cursorVars(); ok {
@@ -3033,10 +3039,7 @@ func (m Model) confirmPanel() string {
 	hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
 		accentStyle.Render("n") + statusBarStyle.Render(" cancel")
 	body := titleStyle.Render(q) + "\n\n" + hint
-	w := lipgloss.Width(q) + 6
-	if w < 34 {
-		w = 34
-	}
+	w := max(lipgloss.Width(q)+6, 34)
 	return titledBox(body, w, 5, "Confirm")
 }
 

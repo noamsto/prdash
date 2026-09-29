@@ -25,7 +25,7 @@ func cleanupRepo(t *testing.T) string {
 		{"config", "user.name", "Test"},
 		{"commit", "--allow-empty", "-m", "init"},
 	} {
-		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil { //nolint:gosec // G204: test fixture runs fixed git subcommands in a temp repo
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
@@ -36,7 +36,7 @@ func p61() gh.PR { return gh.PR{Number: 61, State: "MERGED", HeadRefName: "feat/
 
 func gitIn(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil { //nolint:gosec // G204: test helper runs fixed git subcommands in a temp repo
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
@@ -115,7 +115,7 @@ func TestCleanupBranchKeepsBranchWhenWorktreeRemovalFails(t *testing.T) {
 	dir := cleanupRepo(t)
 	wt := filepath.Join(t.TempDir(), "feat-x")
 	gitIn(t, dir, "worktree", "add", "-b", "feat/x", wt)
-	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("work in progress"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("work in progress"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitIn(t, wt, "add", "wip.txt")

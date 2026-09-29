@@ -53,7 +53,7 @@ var omniQualifiers = map[string]bool{
 // with @name rewritten to involves:name) and the remaining bare free-text (fuzzy).
 func parseOmni(input string) (serverQuery, bareText string) {
 	var server, bare []string
-	for _, tok := range strings.Fields(input) {
+	for tok := range strings.FieldsSeq(input) {
 		switch {
 		case strings.HasPrefix(tok, "@") && len(tok) > 1:
 			server = append(server, "involves:"+tok[1:])

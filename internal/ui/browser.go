@@ -23,7 +23,7 @@ func browserArgv(goos, browser string) []string {
 // a goroutine so a short-lived opener doesn't linger as a zombie in this
 // long-running TUI, and so the UI never blocks on process startup.
 func spawnDetached(argv []string) error {
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: argv is the resolved opener command, not untrusted input
 	if err := cmd.Start(); err != nil {
 		return err
 	}

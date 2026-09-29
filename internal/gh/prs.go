@@ -138,7 +138,7 @@ func (p PR) Checks() []Check {
 		l := c.Label()
 		if l != "" {
 			if i, ok := idx[l]; ok {
-				if c.StartedAt > out[i].StartedAt {
+				if i < len(out) && c.StartedAt > out[i].StartedAt {
 					out[i] = c
 				}
 				continue

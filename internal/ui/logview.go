@@ -26,7 +26,7 @@ type logStep struct {
 func parseJobLog(raw []byte, failedOnly bool) []logStep {
 	var steps []logStep
 	idx := map[string]int{}
-	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(raw), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -45,7 +45,9 @@ func parseJobLog(raw []byte, failedOnly bool) []logStep {
 			idx[step] = i
 			steps = append(steps, logStep{name: step, failed: failedOnly})
 		}
-		steps[i].lines = append(steps[i].lines, content)
+		if i < len(steps) {
+			steps[i].lines = append(steps[i].lines, content)
+		}
 	}
 	return steps
 }
@@ -279,7 +281,7 @@ func (m *Model) renderLogBody(w int) string {
 func styleLogLine(ln logLine, steps []logStep, w int) string {
 	text := truncate(ln.text, w-2)
 	if ln.header {
-		if steps[ln.step].failed {
+		if ln.step >= 0 && ln.step < len(steps) && steps[ln.step].failed {
 			return failStyle.Bold(true).Render(text)
 		}
 		return dimStyle.Render(text)

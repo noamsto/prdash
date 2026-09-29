@@ -176,7 +176,7 @@ func writeState(t *testing.T, body string) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 	if body != "" {
-		if err := os.WriteFile(filepath.Join(dir, "theme-state.json"), []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "theme-state.json"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

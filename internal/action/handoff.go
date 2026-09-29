@@ -12,11 +12,14 @@ func AppendHandoff(path, key string, argv []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: path is the handoff sink the caller chose, not untrusted input
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.WriteString(key + "\t" + string(j) + "\n")
-	return err
+	_, werr := f.WriteString(key + "\t" + string(j) + "\n")
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }

@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,6 +120,9 @@ type rateTransport struct {
 // set, so detail_graphql.go's own explicit header (set directly on a raw
 // http.Request built from s.http, not through this typed client) is untouched.
 func (t *rateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, errors.New("rateTransport: nil request")
+	}
 	if req.URL.Path == "/graphql" && req.Header.Get("Accept") == "" {
 		r2 := *req
 		r2.Header = req.Header.Clone()

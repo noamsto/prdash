@@ -117,7 +117,7 @@ func inspectOccupant(path, branch string) (collision bool, occupant string, warn
 	}
 	var hasConflict, hasDirty, hasUntracked bool
 	head := ""
-	for _, line := range strings.Split(status, "\n") {
+	for line := range strings.SplitSeq(status, "\n") {
 		switch {
 		case strings.HasPrefix(line, "# branch.head "):
 			head = strings.TrimPrefix(line, "# branch.head ")

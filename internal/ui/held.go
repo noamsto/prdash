@@ -58,7 +58,7 @@ func (m *Model) mergeHeldPRs(prev []gh.PR, prevCats map[int]string, fetched []gh
 			delete(m.held, p.Number)
 		}
 	}
-	out := append([]gh.PR(nil), fetched...)
+	out := append([]gh.PR{}, fetched...)
 	for _, p := range prev {
 		if have[p.Number] {
 			continue
@@ -87,7 +87,7 @@ func (m *Model) mergeHeldIssues(prev []gh.Issue, prevCats map[int]string, fetche
 		have[is.Number] = true
 		delete(m.held, is.Number)
 	}
-	out := append([]gh.Issue(nil), fetched...)
+	out := append([]gh.Issue{}, fetched...)
 	for _, is := range prev {
 		if have[is.Number] {
 			continue
@@ -215,8 +215,27 @@ type numbered interface {
 	numberAt(i int) int
 }
 
-func (s *PRSection) numberAt(i int) int    { return s.prs[s.shown[i]].Number }
-func (s *IssueSection) numberAt(i int) int { return s.issues[s.shown[i]].Number }
+func (s *PRSection) numberAt(i int) int {
+	if i < 0 || i >= len(s.shown) {
+		return 0
+	}
+	j := s.shown[i]
+	if j < 0 || j >= len(s.prs) {
+		return 0
+	}
+	return s.prs[j].Number
+}
+
+func (s *IssueSection) numberAt(i int) int {
+	if i < 0 || i >= len(s.shown) {
+		return 0
+	}
+	j := s.shown[i]
+	if j < 0 || j >= len(s.issues) {
+		return 0
+	}
+	return s.issues[j].Number
+}
 
 // cursorAnchor captures the cursor's number (0 on an empty board) and the
 // shown order, for restoreCursor.

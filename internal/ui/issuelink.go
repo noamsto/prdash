@@ -36,10 +36,13 @@ func linkedIssueArgv(goos, browser, ticket, prURL string) []string {
 // opened, and its exit status is the only place a bad ticket or an unset
 // workspace shows up.
 func openLinkedIssue(argv []string) error {
+	if len(argv) == 0 {
+		return errors.New("no opener command")
+	}
 	if argv[0] != linearCLI[0] {
 		return spawnDetached(argv)
 	}
-	out, err := exec.Command(argv[0], argv[1:]...).Output()
+	out, err := exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // G204: argv is the resolved opener command, not untrusted input
 	if err != nil {
 		return fmt.Errorf("%s: %w", strings.Join(linearCLI, " "), err)
 	}

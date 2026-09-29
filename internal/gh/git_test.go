@@ -10,7 +10,7 @@ import (
 )
 
 func TestParseGitHubRemote(t *testing.T) {
-	ok := map[string]string{
+	ok := map[string]string{ //nolint:gosec // G101: remote-URL forms with a placeholder token, not a real credential
 		"git@github.com:noamsto/prdash.git":                          "noamsto/prdash",
 		"git@github.com:noamsto/prdash":                              "noamsto/prdash",
 		"https://github.com/noamsto/prdash.git":                      "noamsto/prdash",
@@ -45,7 +45,7 @@ func fakeBinOnPath(t *testing.T, name, script string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil { //nolint:gosec // G306: the fixture must be executable for exec.Command to run it
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

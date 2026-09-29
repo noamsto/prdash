@@ -15,7 +15,7 @@ func TestAppendHandoff(t *testing.T) {
 	if err := AppendHandoff(p, "enter", []string{"wt", "switch", "pr:9"}); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(p)
+	b, _ := os.ReadFile(p) //nolint:gosec // G304: p is a path under the test's own TempDir
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("want 2 lines, got %d: %q", len(lines), b)

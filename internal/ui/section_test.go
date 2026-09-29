@@ -505,7 +505,7 @@ func TestPRStacksStayTogetherAcrossCategoriesAndDraftFilter(t *testing.T) {
 			t.Errorf("stack row %d = %q, want tree %q", i, row, want)
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if got := s.groupLabel(i); got != "Review requested" {
 			t.Errorf("stack member %d category = %q, want root category", i, got)
 		}
@@ -857,11 +857,11 @@ func TestRowColumnsAlignAcrossStates(t *testing.T) {
 func TestGutterSurvivesZeroWidthMarker(t *testing.T) {
 	numCol := func(row string) int {
 		line := strings.Split(ansi.Strip(row), "\n")[0]
-		b := strings.Index(line, "#7")
-		if b < 0 {
+		before, _, ok := strings.Cut(line, "#7")
+		if !ok {
 			t.Fatalf("#7 not found in %q", line)
 		}
-		return lipgloss.Width(line[:b])
+		return lipgloss.Width(before)
 	}
 	base := renderItemRow(RowOpts{Width: 80, NumWidth: 3}, accentStyle, "#7", "t", "", "", "2d", "",
 		ciGlyph("pass"), reviewDot(""), "")
@@ -914,11 +914,11 @@ func TestSelectedBarWinsOverFocusBar(t *testing.T) {
 func TestSelectionDoesNotShiftColumnGrid(t *testing.T) {
 	numCol := func(row string) int {
 		line := strings.Split(ansi.Strip(row), "\n")[0]
-		b := strings.Index(line, "#7")
-		if b < 0 {
+		before, _, ok := strings.Cut(line, "#7")
+		if !ok {
 			t.Fatalf("#7 not found in %q", line)
 		}
-		return lipgloss.Width(line[:b])
+		return lipgloss.Width(before)
 	}
 	row := func(o RowOpts) string {
 		return renderItemRow(o, accentStyle, "#7", "t", "", "", "2d", "",

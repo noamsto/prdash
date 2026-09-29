@@ -253,7 +253,7 @@ func TestBulkWorktreeWarnsOverFour(t *testing.T) {
 		prs[i] = gh.PR{Number: i + 1, HeadRefName: fmt.Sprintf("b%d", i)}
 	}
 	m.setPRs(prs)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		m.sel.toggle(i)
 	}
 
@@ -553,7 +553,7 @@ func TestExitActionWithHandoffDoesNotQueueExec(t *testing.T) {
 	if len(m.PendingExec()) != 0 {
 		t.Fatalf("with a handoff sink present, exec must not be queued: %v", m.PendingExec())
 	}
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(p) //nolint:gosec // G304: p is the handoff file this test wrote into its TempDir
 	if err != nil {
 		t.Fatalf("handoff file not written: %v", err)
 	}

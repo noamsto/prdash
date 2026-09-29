@@ -191,10 +191,7 @@ func computeExpandedLayout(w, h int, isPR bool) ExpandedLayout {
 	if footer {
 		footRows = 1
 	}
-	body := h - (1 + footRows + metaRows) // head (+ footer) (+ narrow-PR meta)
-	if body < 3 {
-		body = 3
-	}
+	body := max(h-(1+footRows+metaRows), 3) // head (+ footer) (+ narrow-PR meta)
 
 	l := ExpandedLayout{TwoCol: twoCol, ShowFooter: footer}
 	if twoCol {
@@ -204,10 +201,7 @@ func computeExpandedLayout(w, h int, isPR bool) ExpandedLayout {
 	} else {
 		l.ContentW = min(w, expandedContentCap)
 	}
-	l.VPHeight = body - 2 // tabbedBox top tab/border line + bottom border row
-	if l.VPHeight < 1 {
-		l.VPHeight = 1
-	}
+	l.VPHeight = max(body-2, 1) // tabbedBox top tab/border line + bottom border row
 	if l.ContentW < 1 {
 		l.ContentW = 1
 	}

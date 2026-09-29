@@ -381,7 +381,7 @@ func TestSwitchNoticeClipsToScreen(t *testing.T) {
 		"Safety warnings:\n• rebase-merge in progress\n• unresolved conflicts\n• detached HEAD\n• diverges from PR head (ahead 3, behind 12)"
 
 	out := m.renderInner()
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if w := lipgloss.Width(line); w > m.width {
 			t.Fatalf("rendered line width = %d, want <= model width %d: %q", w, m.width, line)
 		}
@@ -416,7 +416,7 @@ func TestSwitchNoticeClipsChromeAtSmallSizes(t *testing.T) {
 		m.switchNotice = notice
 
 		out := m.renderInner()
-		for _, line := range strings.Split(out, "\n") {
+		for line := range strings.SplitSeq(out, "\n") {
 			if w := lipgloss.Width(line); w > m.width {
 				t.Fatalf("size %dx%d: rendered line width = %d, want <= %d: %q", size.w, size.h, w, m.width, line)
 			}
@@ -1883,7 +1883,7 @@ func TestOmniDropdownCursorClampedToWindow(t *testing.T) {
 	if len(m.omniSuggestions()) <= omniSuggestDropdownRows {
 		t.Fatalf("need > %d matches to exercise the clamp", omniSuggestDropdownRows)
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		u, _ := m.Update(keyMsg("down"))
 		m = u.(Model)
 	}

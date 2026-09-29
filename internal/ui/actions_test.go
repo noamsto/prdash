@@ -216,7 +216,7 @@ func TestBulkWritesPerItem(t *testing.T) {
 	if quit == nil {
 		t.Fatal("bulk exits-tui must quit")
 	}
-	b, _ := os.ReadFile(p)
+	b, _ := os.ReadFile(p) //nolint:gosec // G304: p is the handoff file written by this test into its TempDir
 	if n := strings.Count(string(b), "\n"); n != 2 {
 		t.Fatalf("want 2 handoff lines, got %d: %q", n, b)
 	}
@@ -426,6 +426,9 @@ func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
 		Number:            13,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pending" {
 		t.Errorf("CIState = %q, want pending", got[0].CIState())
 	}
@@ -439,6 +442,9 @@ func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
 		Number:            99,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pass" {
 		t.Errorf("CIState = %q, want pass — PR 99 was never stamped", got[0].CIState())
 	}
@@ -482,6 +488,9 @@ func TestApplyCIRerunKeepsPreExistingPending(t *testing.T) {
 	if _, still := m.ciRerun[13]; !still {
 		t.Error("ciRerun[13] cleared on a check that started before the stamp")
 	}
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pending" {
 		t.Errorf("CIState = %q, want pending — the override should still apply", got[0].CIState())
 	}
@@ -497,6 +506,9 @@ func TestApplyCIRerunExpires(t *testing.T) {
 		Number:            13,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
+	if len(got) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(got))
+	}
 	if got[0].CIState() != "pass" {
 		t.Errorf("CIState = %q, want pass — the override expired", got[0].CIState())
 	}
@@ -840,7 +852,7 @@ func TestOpenIssueMixedSelectionReportsSkipped(t *testing.T) {
 	// ENOEXEC and the failure path passes for the wrong reason.
 	dir := t.TempDir()
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS, "")[0])
-	if err := os.WriteFile(stub, nil, 0o755); err != nil {
+	if err := os.WriteFile(stub, nil, 0o755); err != nil { //nolint:gosec // G306: the stub must be executable for exec.Command to run it
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -881,7 +893,7 @@ func TestOpenIssueMissingOpenerSurvivesPartialSuccess(t *testing.T) {
 	stub := filepath.Join(dir, browserArgv(runtime.GOOS, "")[0])
 	// This stub must really run: the branch under test is the one where every
 	// spawn succeeded, and an empty file execs ENOEXEC into the failure path.
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec // G306: the stub must be executable for exec.Command to run it
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)   // stub opener present, no linear
