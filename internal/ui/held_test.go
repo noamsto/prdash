@@ -1665,17 +1665,18 @@ func TestSelectionKeepsAnAlreadyHeldRow(t *testing.T) {
 	}
 }
 
-// TestReplaceClearsTheSelection: a requested replace (ctrl+r) always clears
-// the selection, whether or not any row departed.
-func TestReplaceClearsTheSelection(t *testing.T) {
+// TestReplaceKeepsTheSelectionOnShownRows: a requested replace (ctrl+r) keeps
+// a mark on a row it still shows, and drops the mark on a held row it clears.
+func TestReplaceKeepsTheSelectionOnShownRows(t *testing.T) {
 	m := heldBoard(t, stubSource{})
+	m.sel.toggle(shownIndex(m, 29))
 	m.sel.toggle(shownIndex(m, 28))
 
 	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}, replace: true})
 	m = u.(Model)
 
-	if got := m.sel.count(); got != 0 {
-		t.Errorf("sel.count() = %d, want 0 after a replace", got)
+	if got := selectedNumbers(m); !slices.Equal(got, []int{28}) {
+		t.Errorf("selected = %v, want [28] — #29 left with the held rows", got)
 	}
 }
 
