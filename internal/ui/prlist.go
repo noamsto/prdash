@@ -400,7 +400,7 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 // paintPRs repaints the flat PR board. replace is a requested replace
 // (ctrl+r, filter/tab switch): held rows go. Otherwise every previously shown
 // row the fetch dropped is carried forward and held. Either way the cursor
-// stays on the PR it was on.
+// stays on the PR it was on, and marks stay on every PR still shown.
 func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 	num, order := m.paintAnchor(false)
 	selNums, wasHeld := m.selectedRows()
@@ -411,7 +411,6 @@ func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
-			selNums, wasHeld = nil, nil
 		} else {
 			prev = s.prs
 		}
@@ -436,7 +435,6 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
-			selNums, wasHeld = nil, nil
 		} else {
 			prev = s.issues
 		}
@@ -497,7 +495,6 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
-			selNums, wasHeld = nil, nil
 		} else {
 			prev, prevCats = s.prs, s.cats
 		}
@@ -558,7 +555,6 @@ func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer s
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
-			selNums, wasHeld = nil, nil
 		} else {
 			prev, prevCats = s.issues, s.cats
 		}
@@ -1975,7 +1971,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.paintPRs(msg.prs, msg.replace) // the paint carries the selection over by number (a replace clears it)
+		m.paintPRs(msg.prs, msg.replace) // the paint carries the selection over by number
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
