@@ -31,6 +31,20 @@ func TestCIState(t *testing.T) {
 		{"all pass", []Check{{State: "SUCCESS"}, {State: "SUCCESS"}}, "pass"},
 		{"one fail", []Check{{State: "SUCCESS"}, {State: "FAILURE"}}, "fail"},
 		{"pending", []Check{{State: "SUCCESS"}, {State: "PENDING"}}, "pending"},
+		// CIState reads the deduped Checks view, so a superseded run is ignored.
+		{"superseded cancel is ignored", []Check{
+			{Name: "build", State: "CANCELLED", StartedAt: "2026-06-24T12:00:00Z"},
+			{Name: "build", State: "SUCCESS", StartedAt: "2026-06-24T12:54:09Z"},
+		}, "pass"},
+		{"newest cancel still fails", []Check{
+			{Name: "build", State: "SUCCESS", StartedAt: "2026-06-24T12:00:00Z"},
+			{Name: "build", State: "CANCELLED", StartedAt: "2026-06-24T12:54:09Z"},
+		}, "fail"},
+		// Unnamed StatusContext entries are never deduped, so each one counts.
+		{"unnamed status contexts unaffected", []Check{
+			{Context: "ci/external", State: "SUCCESS"},
+			{Context: "ci/other", State: "FAILURE"},
+		}, "fail"},
 	}
 	for _, c := range cases {
 		if got := (PR{StatusCheckRollup: c.rollup}).CIState(); got != c.want {

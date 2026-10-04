@@ -151,11 +151,12 @@ func (p PR) Checks() []Check {
 }
 
 func (p PR) CIState() string {
-	if len(p.StatusCheckRollup) == 0 {
+	checks := p.Checks()
+	if len(checks) == 0 {
 		return "none"
 	}
 	pending, failed := false, false
-	for _, c := range p.StatusCheckRollup {
+	for _, c := range checks {
 		switch c.Result() {
 		case "fail":
 			failed = true
