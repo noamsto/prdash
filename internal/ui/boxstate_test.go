@@ -156,6 +156,7 @@ func matrixBoxCases(m Model) []boxCase {
 // or a CR. The side box is not required to fast-path anywhere — its
 // pinned, known-overflowing case is TestBoxStateSideFallsBackOnKnownOverflow.
 func TestBoxStateMatrix(t *testing.T) {
+	skipExhaustiveInShort(t)
 	t.Cleanup(func() { applyTheme(Mocha()) })
 
 	points, mismatches := 0, 0

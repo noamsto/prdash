@@ -19,6 +19,7 @@ import (
 // nothing swept width alongside login length, nor checked that hue survives
 // truncation.
 func TestRenderItemRowInvariantsAcrossLoginWidthTreeFocus(t *testing.T) {
+	skipExhaustiveInShort(t)
 	// Login lengths: 0 (no author), a short human login, GitHub's realistic
 	// "octocat-bot" and "github-actions[bot]" fixtures (both trip isBot, so
 	// authorStyle takes the dimStyle path rather than the hash path — still
@@ -245,4 +246,15 @@ func loginOfLength(n int) string {
 		b.WriteString(charset)
 	}
 	return b.String()[:n]
+}
+
+// skipExhaustiveInShort skips a sweep across a large render matrix under
+// -short. The sweeps are single-goroutine, so the CI gate runs them once
+// without -race and skips them in its `-race -short` pass, where they would
+// only multiply its runtime.
+func skipExhaustiveInShort(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("exhaustive render matrix; runs in the non-short pass")
+	}
 }
