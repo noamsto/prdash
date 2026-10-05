@@ -70,6 +70,7 @@ func frameThemes() []struct {
 // unchanged whenever the float chrome isn't active, and nothing before this
 // file diffed it as a composed whole.
 func TestRenderInnerMatchesLipglossAcrossMatrix(t *testing.T) {
+	skipExhaustiveInShort(t)
 	t.Cleanup(func() { applyTheme(Mocha()) })
 
 	cases := 0
@@ -102,6 +103,7 @@ func TestRenderInnerMatchesLipglossAcrossMatrix(t *testing.T) {
 // statusBar concatenated raggedly, none of it padded to a common width, which
 // is a shape nothing else in the box/join differentials produces.
 func TestRenderOuterFrameMatchesLipglossAcrossMatrix(t *testing.T) {
+	skipExhaustiveInShort(t)
 	t.Cleanup(func() { applyTheme(Mocha()) })
 
 	cases := 0
@@ -159,6 +161,7 @@ func armOverlay(m Model, kind string) Model {
 // frame on and an overlay active: the outer box's content is then an
 // overlayAt canvas render laid over the board, not styled text.
 func TestRenderOuterFrameOverlaysMatchLipgloss(t *testing.T) {
+	skipExhaustiveInShort(t)
 	t.Cleanup(func() { applyTheme(Mocha()) })
 
 	cases := 0

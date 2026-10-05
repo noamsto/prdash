@@ -51,6 +51,7 @@ func joinMatrixModel(t *testing.T, mode string) Model {
 // copy of the lipgloss triple, so the two paths can't independently drift from
 // what production calls.
 func TestJoinBoardMatchesLipglossAcrossMatrix(t *testing.T) {
+	skipExhaustiveInShort(t)
 	t.Cleanup(func() { applyTheme(Mocha()) })
 
 	widths := []int{10, 40, footerMinWidth - 1, footerMinWidth, footerMinWidth + 1, 250}

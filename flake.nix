@@ -28,40 +28,6 @@
         # GOPATH/GOMODCACHE to a fetched, read-only module cache, so the
         # static-analysis checks run offline in the Nix sandbox.
         vendorHash = "sha256-Ptb8rKj4GWBAwSYTLFCB9Z6rN9lLo9H7Mljj9WgmykU=";
-
-        # One static-analysis gate as a checks.<system>.* derivation: it reuses
-        # packages.prdash's module cache (same src + vendorHash) and runs the
-        # gate in checkPhase, so `nix flake check` enforces it locally and in
-        # CI. -race needs cgo; the stdenv provides the C toolchain.
-        gate = {
-          name,
-          check,
-          cgo ? false,
-          extraCheckInputs ? [],
-        }:
-          pkgs.buildGoModule {
-            pname = "prdash-gate-${name}";
-            version = "0.0.0";
-            src = ./.;
-            inherit vendorHash;
-            # git: the localgit/cleanup tests shell out to it (and skip without).
-            nativeCheckInputs = [pkgs.git] ++ extraCheckInputs;
-            env.CGO_ENABLED =
-              if cgo
-              then "1"
-              else "0";
-            checkPhase = ''
-              runHook preCheck
-              export HOME="$TMPDIR"
-              export GOCACHE="$TMPDIR/go-cache"
-              # buildGoModule's -trimpath breaks tests that read on-disk assets;
-              # drop it for the same reason its own checkPhase does.
-              export GOFLAGS=''${GOFLAGS//-trimpath/}
-              ${check}
-              runHook postCheck
-            '';
-            meta.description = "prdash ${name} gate";
-          };
       in {
         packages.prdash = pkgs.buildGoModule {
           pname = "prdash";
@@ -76,22 +42,38 @@
         };
         packages.default = config.packages.prdash;
 
-        checks = {
-          golangci-lint = gate {
-            name = "golangci-lint";
-            extraCheckInputs = [pkgs.golangci-lint];
-            check = "golangci-lint run ./...";
-          };
-          nilaway = gate {
-            name = "nilaway";
-            extraCheckInputs = [pkgs.nilaway];
-            check = "nilaway -include-pkgs=github.com/noamsto/prdash ./...";
-          };
-          go-test-race = gate {
-            name = "go-test-race";
-            cgo = true;
-            check = "go test -race ./...";
-          };
+        # The whole Go gate in one derivation, so its steps share one GOCACHE
+        # instead of each compiling every dependency from scratch. It reuses
+        # packages.prdash's module cache (same src + vendorHash) and runs in
+        # checkPhase, so `nix flake check` enforces it locally and in CI.
+        checks.go-gate = pkgs.buildGoModule {
+          pname = "prdash-go-gate";
+          version = "0.0.0";
+          src = ./.;
+          inherit vendorHash;
+          # git: the localgit/cleanup tests shell out to it (and skip without).
+          nativeCheckInputs = [pkgs.git pkgs.golangci-lint pkgs.nilaway];
+          # -race needs cgo; the stdenv provides the C toolchain. Every step
+          # builds with it so they all hit the same cache entries.
+          env.CGO_ENABLED = "1";
+          buildPhase = "true";
+          checkPhase = ''
+            runHook preCheck
+            export HOME="$TMPDIR"
+            export GOCACHE="$TMPDIR/go-cache"
+            # buildGoModule's -trimpath breaks tests that read on-disk assets;
+            # drop it for the same reason its own checkPhase does.
+            export GOFLAGS=''${GOFLAGS//-trimpath/}
+            golangci-lint run ./...
+            nilaway -include-pkgs=github.com/noamsto/prdash ./...
+            go test ./...
+            # The exhaustive render matrices skip under -short: they are
+            # single-goroutine, so -race only multiplies their runtime ~8x.
+            go test -race -short ./...
+            runHook postCheck
+          '';
+          installPhase = "touch $out";
+          meta.description = "prdash Go gate: golangci-lint, nilaway, go test, go test -race";
         };
 
         treefmt = {
