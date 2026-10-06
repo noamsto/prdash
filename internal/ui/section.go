@@ -67,6 +67,7 @@ type PRSection struct {
 
 	cats     map[int]string // PR number → category label; non-nil switches grouping from author to category
 	catOrder []string       // category header order (e.g. Mine, Review requested)
+	byAuthor bool           // regroup a categorized board by author; cats stay stored for held rows
 
 	// Stack rendering is derived from the current shown set: an open board can
 	// be missing merged links, so the lowest visible position is its root.
@@ -107,7 +108,7 @@ func (s *PRSection) groupLabel(i int) string {
 	if root, ok := s.stackRoots[p.Number]; ok {
 		p = s.prByNumber(root)
 	}
-	if len(s.catOrder) > 0 {
+	if s.categorized() {
 		return s.cats[p.Number]
 	}
 	return p.Author.Login
@@ -296,6 +297,10 @@ func sortPRs(prs []gh.PR, state string) {
 func (s *PRSection) SetHideDrafts(v bool) { s.hideDrafts = v }
 func (s *PRSection) SetForceGroup(v bool) { s.forceGroup = v }
 func (s *PRSection) SetForceFlat(v bool)  { s.forceFlat = v }
+func (s *PRSection) SetByAuthor(v bool)   { s.byAuthor = v }
+
+// categorized reports whether rows group under category headers rather than by author.
+func (s *PRSection) categorized() bool { return len(s.catOrder) > 0 && !s.byAuthor }
 
 // SetState records the view state so the next SetPRs/SetCategorized sorts by the
 // right key (merge/close time for terminal states, number descending for open).
@@ -314,12 +319,12 @@ func (s *PRSection) setShownOrdered(idx []int) {
 		s.setShownStacks(flattenUnits(units))
 		return
 	}
-	if len(s.catOrder) > 0 {
+	if s.categorized() {
 		s.grouped = true
 		s.setShownStacks(groupStackUnits(s.prs, units, s.cats, s.catOrder, s.state))
 		return
 	}
-	if s.forceGroup || distinctAuthors(s.prs, idx) >= 2 {
+	if s.forceGroup || s.byAuthor || distinctAuthors(s.prs, idx) >= 2 {
 		s.grouped = true
 		s.setShownStacks(groupStackUnits(s.prs, units, nil, nil, s.state))
 		return

@@ -49,6 +49,7 @@ go build -o prdash . && ./prdash
 | `F` | filter by author (PR only) |
 | `R` | assign reviewers (PR only) |
 | `D` | toggle drafts (PR only) |
+| `g` | group the default board by author instead of Review requested / Mine / Others (PR only) |
 | `/` | fuzzy find · `space` select · `V` select cluster → category → all → none |
 | `a` | actions menu · `?` legend · `q` quit · `ctrl+c` quits from anywhere, prompts and overlays included |
 
