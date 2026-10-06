@@ -14,6 +14,9 @@ func TestBuildChecksQueryAliasesEachNumber(t *testing.T) {
 	}
 	// The whole point of this query is what it does NOT ask for: one point covers
 	// the batch only while it stays a rollup fetch.
+	if !strings.Contains(q, "completedAt") {
+		t.Errorf("query must select completedAt:\n%s", q)
+	}
 	for _, unwanted := range []string{"labels(", "assignees(", "files(", "comments("} {
 		if strings.Contains(q, unwanted) {
 			t.Errorf("checks query must not select %q:\n%s", unwanted, q)
@@ -25,7 +28,7 @@ func TestParseChecksMapsBothContextKinds(t *testing.T) {
 	body := `{"data":{"repository":{
 		"pr1":{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
 			{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","detailsUrl":"d",
-			 "startedAt":"2026-07-30T09:00:00Z","checkSuite":{"workflowRun":{"workflow":{"name":"CI"}}}},
+			 "startedAt":"2026-07-30T09:00:00Z","completedAt":"2026-07-30T09:01:20Z","checkSuite":{"workflowRun":{"workflow":{"name":"CI"}}}},
 			{"__typename":"StatusContext","context":"legacy","state":"PENDING","targetUrl":"t"}
 		]}}}}]}}
 	}}}`
@@ -42,6 +45,9 @@ func TestParseChecksMapsBothContextKinds(t *testing.T) {
 	}
 	if checks[0].StartedAt != "2026-07-30T09:00:00Z" {
 		t.Errorf("StartedAt: got %q", checks[0].StartedAt)
+	}
+	if checks[0].CompletedAt != "2026-07-30T09:01:20Z" {
+		t.Errorf("CompletedAt: got %q", checks[0].CompletedAt)
 	}
 	if checks[1].Context != "legacy" || checks[1].State != "PENDING" {
 		t.Errorf("StatusContext mapped wrong: %+v", checks[1])

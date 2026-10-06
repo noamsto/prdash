@@ -14,7 +14,7 @@ import (
 // commit's rollup, nothing else. It deliberately omits every list field the
 // board renders — a poll reuses the rows it already has.
 const checksFields = "commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename" +
-	" ... on CheckRun{name conclusion detailsUrl startedAt checkSuite{workflowRun{workflow{name}}}}" +
+	" ... on CheckRun{name conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}}" +
 	" ... on StatusContext{context state targetUrl}}}}}}}"
 
 // FetchChecks fetches just the status-check rollup for every number in one
@@ -73,12 +73,13 @@ func buildChecksQuery(numbers []int) string {
 // StatusContext share no field names, so both fragments flatten into one struct
 // and __typename says which half is populated.
 type qlCheckContext struct {
-	Typename   string     `json:"__typename"`
-	Name       string     `json:"name"`
-	Conclusion string     `json:"conclusion"`
-	DetailsURL string     `json:"detailsUrl"`
-	StartedAt  *time.Time `json:"startedAt"`
-	CheckSuite struct {
+	Typename    string     `json:"__typename"`
+	Name        string     `json:"name"`
+	Conclusion  string     `json:"conclusion"`
+	DetailsURL  string     `json:"detailsUrl"`
+	StartedAt   *time.Time `json:"startedAt"`
+	CompletedAt *time.Time `json:"completedAt"`
+	CheckSuite  struct {
 		WorkflowRun *struct {
 			Workflow struct{ Name string } `json:"workflow"`
 		} `json:"workflowRun"`
@@ -148,6 +149,9 @@ func mapChecks(q qlChecks) []Check {
 				}
 				if n.StartedAt != nil {
 					c.StartedAt = n.StartedAt.Format(time.RFC3339)
+				}
+				if n.CompletedAt != nil {
+					c.CompletedAt = n.CompletedAt.Format(time.RFC3339)
 				}
 				if wr := n.CheckSuite.WorkflowRun; wr != nil {
 					c.WorkflowName = wr.Workflow.Name

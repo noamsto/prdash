@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/noamsto/prdash/internal/triage"
 )
@@ -22,7 +23,7 @@ func cardGlyph(k triage.Kind) string {
 
 // renderCard renders the triage card: glyph + headline, any detail lines, and
 // the suggested action. Empty headline (fallback) renders nothing.
-func renderCard(c triage.Card, width int) string {
+func renderCard(c triage.Card, width int, now time.Time) string {
 	if c.Headline == "" {
 		return ""
 	}
@@ -32,7 +33,8 @@ func renderCard(c triage.Card, width int) string {
 		b.WriteString("  " + failStyle.Render("✗ "+truncate(l, width-4)) + "\n")
 	}
 	for _, l := range c.Running {
-		b.WriteString("  " + pendStyle.Render(ciRunningGlyph+" "+truncate(l, width-4)) + "\n")
+		label, timing := timedLabel(l.Label, elapsedSince(l.StartedAt, now), width-4)
+		b.WriteString("  " + pendStyle.Render(ciRunningGlyph+" "+label) + timing + "\n")
 	}
 	if c.ActionKey != "" {
 		b.WriteString(dimStyle.Render(c.ActionLabel+" → ") + accentStyle.Render(c.ActionKey) + "\n")

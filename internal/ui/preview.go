@@ -358,7 +358,7 @@ func (m Model) renderOverview(w int) string {
 		if cached {
 			tc = triage.Compute(pr, d, m.viewerLogin, parentNumber)
 		}
-		if card := renderCard(tc, bw); card != "" {
+		if card := renderCard(tc, bw, m.liveClock(pr)); card != "" {
 			blocks = append(blocks, section(blockerGlyph, "blocker", card))
 		}
 		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {

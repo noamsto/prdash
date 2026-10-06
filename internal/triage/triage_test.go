@@ -153,12 +153,12 @@ func TestChecksFailingOnlyHeadlineUnchanged(t *testing.T) {
 }
 
 func TestChecksRunningCardPopulatesRunning(t *testing.T) {
-	c := Compute(pr(gh.Check{State: "PENDING", Name: "build"}), gh.PRDetail{MergeStateStatus: "UNSTABLE"}, "", 0)
+	c := Compute(pr(gh.Check{State: "PENDING", Name: "build", StartedAt: "2026-07-30T09:00:00Z"}), gh.PRDetail{MergeStateStatus: "UNSTABLE"}, "", 0)
 	if c.Kind != KindChecksRunning {
 		t.Fatalf("Kind = %v, want KindChecksRunning", c.Kind)
 	}
-	if got := c.Running; len(got) != 1 || got[0] != "build" {
-		t.Fatalf("Running = %v, want [build]", got)
+	if got := c.Running; len(got) != 1 || got[0].Label != "build" || got[0].StartedAt != "2026-07-30T09:00:00Z" {
+		t.Fatalf("Running = %v, want build with its start time", got)
 	}
 }
 

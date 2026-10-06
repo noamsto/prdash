@@ -14,6 +14,7 @@ type Check struct {
 	DetailsUrl   string `json:"detailsUrl"`   // CheckRun: …/actions/runs/<run>/job/<job>
 	TargetUrl    string `json:"targetUrl"`    // StatusContext: external CI's page (CheckRuns leave this empty)
 	StartedAt    string `json:"startedAt"`    // CheckRun start time (RFC3339); newest run wins on dedup
+	CompletedAt  string `json:"completedAt"`  // CheckRun finish time (RFC3339); empty while in flight
 }
 
 // URL is the check's web page: a CheckRun's detailsUrl, or an external

@@ -123,6 +123,7 @@ type Model struct {
 	spinning          bool                 // the refresh spinner tick loop is running
 	spinnerFrame      int                  // advancing index into spinnerFrames
 	polling           bool                 // the live-checks poll tick loop is running
+	now               func() time.Time     // clock for check elapsed times; nil means time.Now
 	pollQuietBeats    int                  // poll beats since a key was handled; pauses the fetch at pollIdleBeats
 	actionStatus      *actionStat          // transient inline-action progress shown by the header
 	cascade           *cascadeRun          // live cascade run; nil when none
@@ -168,6 +169,14 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		refreshing:      true,
 		cursorPinnedTop: true,
 	}
+}
+
+// clock is the time check ages are measured against.
+func (m Model) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 // SetPRSource installs the PR-list backend (githubv4).
@@ -1588,6 +1597,12 @@ func themeWatchTick(lastMod time.Time) tea.Cmd {
 	})
 }
 
+// frozenRow reports whether pr's rollup is frozen: held, merged or closed.
+func frozenRow(pr gh.PR, held map[int]string) bool {
+	_, ok := held[pr.Number]
+	return ok || pr.State == "MERGED" || pr.State == "CLOSED"
+}
+
 // runningCheckRows returns the shown indexes whose PR has an in-flight check.
 // It scans individual checks rather than PR.CIState(), which collapses to
 // "fail" when any check failed and would hide checks still running behind it.
@@ -1597,7 +1612,7 @@ func runningCheckRows(ps *PRSection, held map[int]string) []int {
 	var out []int
 	for i := 0; i < ps.Len(); i++ {
 		p := ps.prAt(i)
-		if _, ok := held[p.Number]; ok || p.State == "MERGED" || p.State == "CLOSED" {
+		if frozenRow(p, held) {
 			continue
 		}
 		for _, c := range p.Checks() {
@@ -1608,6 +1623,16 @@ func runningCheckRows(ps *PRSection, held map[int]string) []int {
 		}
 	}
 	return out
+}
+
+// focusedHasTimedPending reports whether the focused PR shows an elapsed time.
+func (m Model) focusedHasTimedPending() bool {
+	ps, ok := m.section.(*PRSection)
+	if !ok || ps.Len() == 0 {
+		return false
+	}
+	pr := ps.prAt(m.cursor)
+	return !m.liveClock(pr).IsZero() && hasTimedPending(pr)
 }
 
 // anyChecksRunning reports whether any shown PR row has an in-flight check.
@@ -2235,6 +2260,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if s, ok := m.rateSource.RateLimit(); ok {
 				m.rate = s
 			}
+		}
+		// The expanded body is stored viewport content, so a running check's
+		// elapsed time only advances if this beat re-renders it. The side preview
+		// is rebuilt every View and needs nothing.
+		if m.expanded && !m.logView && (m.expandedTab == tabOverview || m.expandedTab == tabChecks) && m.focusedHasTimedPending() {
+			m.reflowExpanded()
 		}
 		mod, err := themestate.ModTime(themestate.Path())
 		if err != nil || mod.Equal(msg.lastMod) {

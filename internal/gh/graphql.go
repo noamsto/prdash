@@ -135,11 +135,12 @@ type qlRollup struct {
 type qlCheckNode struct {
 	Typename string `graphql:"__typename"`
 	CheckRun struct {
-		Name       string
-		Conclusion string
-		DetailsURL string `graphql:"detailsUrl"`
-		StartedAt  *githubv4.DateTime
-		CheckSuite struct {
+		Name        string
+		Conclusion  string
+		DetailsURL  string `graphql:"detailsUrl"`
+		StartedAt   *githubv4.DateTime
+		CompletedAt *githubv4.DateTime
+		CheckSuite  struct {
 			WorkflowRun *struct {
 				Workflow struct{ Name string }
 			}
@@ -250,6 +251,9 @@ func mapRollup(g qlPR) []Check {
 				}
 				if n.CheckRun.StartedAt != nil {
 					c.StartedAt = n.CheckRun.StartedAt.Format(time.RFC3339)
+				}
+				if n.CheckRun.CompletedAt != nil {
+					c.CompletedAt = n.CheckRun.CompletedAt.Format(time.RFC3339)
 				}
 				if wr := n.CheckRun.CheckSuite.WorkflowRun; wr != nil {
 					c.WorkflowName = wr.Workflow.Name

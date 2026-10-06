@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/prdash/internal/triage"
 )
@@ -10,7 +11,7 @@ import (
 func TestRenderCardShowsHeadlineAndAction(t *testing.T) {
 	c := triage.Card{Kind: triage.KindChecksFailing, Headline: "2 checks failing",
 		Failing: []string{"lint", "e2e"}, ActionKey: "r", ActionLabel: "rerun checks"}
-	out := renderCard(c, 40)
+	out := renderCard(c, 40, time.Now())
 	if !strings.Contains(out, "2 checks failing") {
 		t.Fatalf("headline missing: %q", out)
 	}
@@ -24,9 +25,9 @@ func TestRenderCardShowsHeadlineAndAction(t *testing.T) {
 
 func TestRenderCardShowsFailingAndRunningGlyphs(t *testing.T) {
 	c := triage.Card{Kind: triage.KindChecksFailing, Headline: "1 failing · 1 running",
-		Failing: []string{"lint"}, Running: []string{"build"},
+		Failing: []string{"lint"}, Running: []triage.RunningCheck{{Label: "build"}},
 		ActionKey: "r", ActionLabel: "rerun checks"}
-	out := renderCard(c, 40)
+	out := renderCard(c, 40, time.Now())
 	if !strings.Contains(out, "✗ lint") {
 		t.Fatalf("failing glyph/label missing: %q", out)
 	}
@@ -37,8 +38,8 @@ func TestRenderCardShowsFailingAndRunningGlyphs(t *testing.T) {
 
 func TestRenderCardRunningOnlyHasNoFailGlyph(t *testing.T) {
 	c := triage.Card{Kind: triage.KindChecksRunning, Headline: "Checks running…",
-		Running: []string{"build"}}
-	out := renderCard(c, 40)
+		Running: []triage.RunningCheck{{Label: "build"}}}
+	out := renderCard(c, 40, time.Now())
 	if !strings.Contains(out, ciRunningGlyph+" build") {
 		t.Fatalf("running glyph/label missing: %q", out)
 	}
@@ -49,7 +50,7 @@ func TestRenderCardRunningOnlyHasNoFailGlyph(t *testing.T) {
 
 func TestRenderCardReadyNoAction(t *testing.T) {
 	out := renderCard(triage.Card{Kind: triage.KindReady, Headline: "Ready to merge",
-		ActionKey: "m", ActionLabel: "merge (squash)"}, 40)
+		ActionKey: "m", ActionLabel: "merge (squash)"}, 40, time.Now())
 	if !strings.Contains(out, "Ready to merge") {
 		t.Fatalf("headline missing: %q", out)
 	}
@@ -58,7 +59,7 @@ func TestRenderCardReadyNoAction(t *testing.T) {
 func TestRenderCardShowsAutoMergeLine(t *testing.T) {
 	c := triage.Card{Kind: triage.KindReady, Headline: "Ready to merge",
 		ActionKey: "m", ActionLabel: "merge (squash)", AutoMerge: true}
-	out := renderCard(c, 40)
+	out := renderCard(c, 40, time.Now())
 	if !strings.Contains(out, "auto-merge armed") {
 		t.Fatalf("auto-merge line missing: %q", out)
 	}
@@ -67,7 +68,7 @@ func TestRenderCardShowsAutoMergeLine(t *testing.T) {
 func TestRenderCardOmitsAutoMergeLineWhenNotArmed(t *testing.T) {
 	c := triage.Card{Kind: triage.KindReady, Headline: "Ready to merge",
 		ActionKey: "m", ActionLabel: "merge (squash)"}
-	out := renderCard(c, 40)
+	out := renderCard(c, 40, time.Now())
 	if strings.Contains(out, "auto-merge armed") {
 		t.Fatalf("auto-merge line should not appear: %q", out)
 	}
