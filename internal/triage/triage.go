@@ -23,13 +23,20 @@ const (
 	KindPending
 )
 
+// RunningCheck is an in-progress check; StartedAt (RFC3339, CheckRuns only) is
+// empty when GitHub reports none.
+type RunningCheck struct {
+	Label     string
+	StartedAt string
+}
+
 // Card is the triage summary for one PR: the top blocker and its one-key fix.
 type Card struct {
 	Kind        Kind
 	Headline    string
-	Failing     []string // failing check labels
-	Running     []string // in-progress check labels
-	ActionKey   string   // key the user presses to act ("" if none)
+	Failing     []string       // failing check labels
+	Running     []RunningCheck // in-progress checks
+	ActionKey   string         // key the user presses to act ("" if none)
 	ActionLabel string
 	AutoMerge   bool // GitHub auto-merge is armed on this PR (display-only)
 }
@@ -42,7 +49,7 @@ type Card struct {
 func Compute(pr gh.PR, d gh.PRDetail, viewer string, parentNumber int) Card {
 	mss := d.MergeStateStatus
 	failing := checksByState(pr, "fail")
-	pending := checksByState(pr, "pending")
+	pending := runningChecks(pr)
 
 	c := computeCard(pr, d, mss, failing, pending, viewer, parentNumber)
 	c.AutoMerge = pr.AutoMergeEnabled()
@@ -51,7 +58,7 @@ func Compute(pr gh.PR, d gh.PRDetail, viewer string, parentNumber int) Card {
 
 // computeCard is Compute's original branch logic, unchanged, extracted so
 // Compute can stamp AutoMerge onto whichever branch fires.
-func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing, pending []string, viewer string, parentNumber int) Card {
+func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing []string, pending []RunningCheck, viewer string, parentNumber int) Card {
 	switch {
 	case parentNumber != 0:
 		return Card{Kind: KindBlocked, Headline: fmt.Sprintf("Blocked on #%d", parentNumber)}
@@ -100,7 +107,7 @@ func Preliminary(pr gh.PR, viewer string, parentNumber int) Card {
 
 func preliminaryCard(pr gh.PR, viewer string, parentNumber int) Card {
 	failing := checksByState(pr, "fail")
-	pending := checksByState(pr, "pending")
+	pending := runningChecks(pr)
 	switch {
 	case parentNumber != 0:
 		return Card{Kind: KindBlocked, Headline: fmt.Sprintf("Blocked on #%d", parentNumber)}
@@ -124,7 +131,7 @@ func preliminaryCard(pr gh.PR, viewer string, parentNumber int) Card {
 
 // checksFailingCard builds the failing-checks card, folding any still-running
 // checks in as a second group so the summary shows both at once.
-func checksFailingCard(failing, pending []string) Card {
+func checksFailingCard(failing []string, pending []RunningCheck) Card {
 	headline := ChecksFailingHeadline(len(failing))
 	if len(pending) > 0 {
 		headline = fmt.Sprintf("%d failing · %d running", len(failing), len(pending))
@@ -147,6 +154,16 @@ func checksByState(pr gh.PR, want string) []string {
 	for _, c := range pr.Checks() {
 		if checkState(c) == want {
 			out = append(out, c.Label())
+		}
+	}
+	return out
+}
+
+func runningChecks(pr gh.PR) []RunningCheck {
+	var out []RunningCheck
+	for _, c := range pr.Checks() {
+		if checkState(c) == "pending" {
+			out = append(out, RunningCheck{Label: c.Label(), StartedAt: c.StartedAt})
 		}
 	}
 	return out

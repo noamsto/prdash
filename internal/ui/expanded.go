@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -68,7 +69,7 @@ func renderDiscussionColumn(viewportWidth int, render func(int) string) string {
 	return indentLines(render(contentWidth), gutter)
 }
 
-func renderChecks(pr gh.PR, w, cursor int) string {
+func renderChecks(pr gh.PR, w, cursor int, now time.Time) string {
 	checks := pr.Checks()
 	if len(checks) == 0 {
 		return dimStyle.Render("  No checks.")
@@ -81,7 +82,8 @@ func renderChecks(pr gh.PR, w, cursor int) string {
 			gutter = focusBarStyle.Render(focusBarGlyph) + " "
 			st = st.Bold(true)
 		}
-		b.WriteString(gutter + ciGlyph(c.Result()) + " " + st.Render(truncate(c.Label(), w-4)) + "\n")
+		label, timing := timedLabel(c.Label(), checkTiming(c, now), w-4)
+		b.WriteString(gutter + ciGlyph(c.Result()) + " " + st.Render(label) + timing + "\n")
 	}
 	return b.String()
 }
@@ -161,7 +163,7 @@ func (m Model) expandedBody(w int) string {
 		})
 	case tabChecks:
 		if ps, ok := m.section.(*PRSection); ok {
-			return renderChecks(ps.prAt(m.cursor), w, m.checkCursor)
+			return renderChecks(ps.prAt(m.cursor), w, m.checkCursor, m.liveClock(ps.prAt(m.cursor)))
 		}
 		return ""
 	case tabDiff:

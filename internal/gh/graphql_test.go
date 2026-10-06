@@ -54,6 +54,8 @@ func TestMapRollupUnion(t *testing.T) {
 	run.CheckRun.Name = "unit-tests"
 	run.CheckRun.Conclusion = "FAILURE"
 	run.CheckRun.DetailsURL = "https://example/job/9"
+	done := githubv4.DateTime{Time: time.Date(2026, 7, 30, 9, 1, 20, 0, time.UTC)}
+	run.CheckRun.CompletedAt = &done
 
 	ext := qlCheckNode{Typename: "StatusContext"}
 	ext.StatusContext.Context = "ci/external"
@@ -77,6 +79,9 @@ func TestMapRollupUnion(t *testing.T) {
 	}
 	if c := p.StatusCheckRollup[0]; c.Name != "unit-tests" || c.Result() != "fail" {
 		t.Errorf("checkrun = %+v, want name=unit-tests result=fail", c)
+	}
+	if c := p.StatusCheckRollup[0]; c.CompletedAt != "2026-07-30T09:01:20Z" || c.StartedAt != "" {
+		t.Errorf("CompletedAt/StartedAt = %q/%q", c.CompletedAt, c.StartedAt)
 	}
 	if c := p.StatusCheckRollup[1]; c.Context != "ci/external" || c.Result() != "pass" {
 		t.Errorf("statuscontext = %+v, want context=ci/external result=pass", c)

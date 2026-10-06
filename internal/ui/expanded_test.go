@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -44,7 +45,7 @@ func TestRenderChecksListsByName(t *testing.T) {
 		{State: "FAILURE", Name: "lint"},
 		{State: "SUCCESS", Name: "build"},
 	}}
-	out := renderChecks(pr, 60, 0)
+	out := renderChecks(pr, 60, 0, time.Now())
 	if !strings.Contains(out, "lint") || !strings.Contains(out, "build") {
 		t.Fatalf("checks not listed by name: %q", out)
 	}
@@ -55,7 +56,7 @@ func TestRenderChecksMarksCursor(t *testing.T) {
 		{State: "FAILURE", Name: "lint"},
 		{State: "SUCCESS", Name: "build"},
 	}}
-	lines := strings.Split(strings.TrimRight(renderChecks(pr, 60, 1), "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(renderChecks(pr, 60, 1, time.Now()), "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("want 2 check lines, got %d: %q", len(lines), lines)
 	}
