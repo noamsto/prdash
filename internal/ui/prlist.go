@@ -131,6 +131,7 @@ type Model struct {
 	cascadeReport     []string             // settled cascade's per-PR report; nil when none
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
+	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
@@ -508,6 +509,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 			prev, prevCats = s.prs, s.cats
 		}
 		s.SetState(m.state)
+		s.SetByAuthor(m.byAuthor)
 		s.SetCategorized(m.mergeHeldPRs(prev, prevCats, all, cats), cats, []string{"Review requested", "Mine", "Others"})
 	}
 	m.applyFilter()
@@ -1779,6 +1781,7 @@ func (m *Model) toggleMode() tea.Cmd {
 		m.actions = action.DefaultPRActions()
 		if ps, ok := m.section.(*PRSection); ok {
 			ps.SetHideDrafts(m.hideDrafts)
+			ps.SetByAuthor(m.byAuthor)
 		}
 	}
 
@@ -2649,6 +2652,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sel.clear() // the shown set changes; stale indexes would point elsewhere
 			m.applyFilter()
 			return m, nil
+		case "g":
+			if m.mode != "pr" {
+				return m.prOnly("Grouping", "g")
+			}
+			if !m.sectionsDefault() {
+				return m.statusHint("Already grouped by author in this view")
+			}
+			m.byAuthor = !m.byAuthor
+			if ps, ok := m.section.(*PRSection); ok {
+				num, order := m.cursorAnchor() // anchor even a pinned row 0: the user chose this repaint
+				selNums, wasHeld := m.selectedRows()
+				ps.SetByAuthor(m.byAuthor)
+				m.applyFilter()
+				m.restoreCursor(num, order)
+				m.restoreSelection(selNums, wasHeld)
+				m.repaintActive() // applyFilter rendered before the cursor and marks moved
+				if ps.forceFlat {
+					return m.statusHint("Grouping applies once the search is cleared")
+				}
+			}
+			return m, nil
 		case "R":
 			if m.mode != "pr" {
 				return m.prOnly("Assigning reviewers", "R")
@@ -2763,10 +2787,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // prOnly surfaces a PR-only key pressed on the issue board as a transient
 // status instead of a silent no-op. An in-flight action keeps its badge.
 func (m Model) prOnly(label, key string) (tea.Model, tea.Cmd) {
+	return m.statusHint(fmt.Sprintf("%s is PR-only (%s)", label, key))
+}
+
+// statusHint shows msg as a transient status. An in-flight action keeps its badge.
+func (m Model) statusHint(msg string) (tea.Model, tea.Cmd) {
 	if m.actionRunning() {
 		return m, nil
 	}
-	msg := fmt.Sprintf("%s is PR-only (%s)", label, key)
 	m.actionStatus = &actionStat{err: errors.New(msg), fail: msg, settled: true}
 	return m, clearStatusCmd()
 }
@@ -3354,7 +3382,7 @@ func (m Model) keyPanes() []legendGroup {
 
 	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}, {"s", "state", nil}}
 	if m.mode == "pr" {
-		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil})
+		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil}, keyHint{"g", "group by author", nil})
 	}
 	groups = append(groups, legendGroup{"filters", filters})
 
