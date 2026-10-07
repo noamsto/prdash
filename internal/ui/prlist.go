@@ -1696,6 +1696,18 @@ func (m *Model) backgroundRefresh() tea.Cmd {
 	return m.refreshCmd(false)
 }
 
+// listFetchCmd returns the right fetch cmd for the current PR-mode board:
+// sections fetch when sectionsDefault() is true, flat fetch otherwise.
+// Issue mode has its own dispatch in refreshCmd — this helper exists so
+// assignReviewersCmd in actions.go stays in sync with refreshCmd.
+func (m Model) listFetchCmd(replace bool) tea.Cmd {
+	fetch := m.fetchCmd(m.filter, replace)
+	if m.sectionsDefault() {
+		fetch = m.sectionsFetchCmd(replace)
+	}
+	return fetch
+}
+
 // refreshCmd reconciles the current view: replace true is a requested replace
 // (ctrl+r), replace false an unrequested background reconcile (post-action,
 // CI poll, delayedRefreshMsg) that must not drop held rows.
@@ -1708,11 +1720,7 @@ func (m *Model) refreshCmd(replace bool) tea.Cmd {
 		}
 		return tea.Batch(fetch, m.startSpinner())
 	}
-	fetch := m.fetchCmd(m.filter, replace)
-	if m.sectionsDefault() {
-		fetch = m.sectionsFetchCmd(replace)
-	}
-	return tea.Batch(fetch, m.startSpinner())
+	return tea.Batch(m.listFetchCmd(replace), m.startSpinner())
 }
 
 // switchToFilter repoints the model at m.filter: it paints cached rows instantly

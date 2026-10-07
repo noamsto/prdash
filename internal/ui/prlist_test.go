@@ -2790,3 +2790,62 @@ func TestBoardHomesOnMineOnlyOnce(t *testing.T) {
 		t.Fatalf("a later refetch must not yank the cursor back to Mine, cursor = %d", m.cursor)
 	}
 }
+
+func TestAssignReviewersOnSectionedBoardKeepsSections(t *testing.T) {
+	// Default open PR board: the sections (Review requested / Mine / Others) are
+	// live. Assigning a reviewer used to trigger a flat fetch through
+	// fetchCmd(m.filter), which lost the section headers and showed author-grouped
+	// rows instead, until the next normal refresh.
+	m := NewModel("/tmp", "is:open", nil)
+	m.viewerLogin = "me"
+	m.SetPRSource(stubSource{})
+	m.SetMutationSource(&fakeMutationSource{})
+
+	// Seed the board with sections data so catOrder is set.
+	m.setSections(
+		[]gh.PR{{Number: 1, Author: author("someone")}},
+		nil,
+		[]gh.PR{{Number: 1, Author: author("someone")}, {Number: 2, Author: author("me")}},
+		"me",
+	)
+
+	ps := m.section.(*PRSection)
+	if len(ps.catOrder) == 0 {
+		t.Fatal("test setup: board must be in sections-categorized mode")
+	}
+
+	picked := map[string]bool{"alice": true}
+	add, remove := reviewerDiff(nil, picked)
+	cmd := m.assignReviewersCmd(1, "pr1node", add, remove, picked)
+	if cmd == nil {
+		t.Fatal("assignReviewersCmd with changes must return a command")
+	}
+
+	// The closure: request reviews, then fetch. The fetch result from the
+	// sections-default board must be sectionsFetchedMsg, not prsFetchedMsg.
+	// On the old code it was always prsFetchedMsg, which drops the categories.
+	msg := cmd()
+	fm, isSections := msg.(sectionsFetchedMsg)
+	if !isSections {
+		_, isFlat := msg.(prsFetchedMsg)
+		if isFlat {
+			t.Fatal("assignReviewersCmd on sections board must return sectionsFetchedMsg, " +
+			       "not prsFetchedMsg — the board loses its section headers")
+		}
+		t.Fatalf("expected sectionsFetchedMsg, got %+v", msg)
+	}
+
+	// Process the sections fetch through the normal Update path to confirm the
+	// board stays categorized after the fetch is consumed.
+	u, _ := m.Update(fm)
+	m = u.(Model)
+	ps = m.section.(*PRSection)
+	if len(ps.catOrder) == 0 {
+		t.Fatal("processing the sections fetch result must preserve category headers " +
+		       "(catOrder) on the board")
+	}
+	if !ps.isGrouped() {
+		t.Fatal("after assign-reviewers + sections fetch the board must still be " +
+		       "grouped by categories")
+	}
+}
