@@ -2367,6 +2367,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.batchDetailCmd(m.actionStatus.nums))
 		}
+		if msg.err != nil && m.actionStatus.native == "merge-stack" {
+			// A poll that ran out of budget may still land server-side; the list
+			// refresh is what shows the layers merged once it does.
+			cmds = append(cmds, m.backgroundRefresh())
+		}
 		if msg.err == nil && m.actionStatus.rerunCI {
 			stamp := time.Now()
 			for _, n := range m.actionStatus.nums {
