@@ -55,8 +55,8 @@ func stackNeedsDetail(members []gh.StackMember, board map[int]stackBoardRow) []i
 	return need
 }
 
-// checkStackLayers applies merge-squash's client-side checks to every layer,
-// bottom first, refusing with the first offender. fresh readings override the
+// checkStackLayers applies merge-squash's client-side checks, plus a draft
+// check, to every layer, bottom first, refusing with the first offender. fresh readings override the
 // board's (the merge-squash refetch rule); a layer with no reading at all is
 // unresolved, never clean.
 func checkStackLayers(members []gh.StackMember, board map[int]stackBoardRow, fresh map[int]gh.PRDetail) ([]gh.PR, error) {
