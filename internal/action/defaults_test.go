@@ -16,6 +16,16 @@ func TestDefaultsHaveEnterAndExits(t *testing.T) {
 	}
 }
 
+func TestDefaultsHaveStackMerge(t *testing.T) {
+	s := DefaultPRActions()["S"]
+	if s.Command.Native != "merge-stack" || s.Scope != "single" || s.ExitsTUI {
+		t.Fatalf("S must be the single-scope inline merge-stack native: %+v", s)
+	}
+	if s.Confirm {
+		t.Fatal("S prompts itself once the stack is loaded; the generic Confirm must stay off")
+	}
+}
+
 func TestDefaultsHaveBulkW(t *testing.T) {
 	if w := DefaultPRActions()["W"]; w.Scope != "per-selected" || !w.ExitsTUI {
 		t.Fatalf("PR W must be per-selected + exits-tui: %+v", w)
@@ -40,7 +50,7 @@ func TestCopyActionsRebound(t *testing.T) {
 
 func TestMutatingActionsMarkedRefresh(t *testing.T) {
 	a := DefaultPRActions()
-	for _, k := range []string{"m", "u", "M", "r"} {
+	for _, k := range []string{"m", "S", "u", "M", "r"} {
 		if !a[k].Refresh {
 			t.Errorf("action %q should be Refresh:true", k)
 		}
@@ -98,7 +108,7 @@ func TestDefaultsConfirmOthers(t *testing.T) {
 	if !d["M"].ConfirmOthers {
 		t.Error("mark ready (M) must confirm on others' PRs")
 	}
-	for _, k := range []string{"m", "u", "r", "o", "enter", "W"} {
+	for _, k := range []string{"m", "S", "u", "r", "o", "enter", "W"} {
 		if d[k].ConfirmOthers {
 			t.Errorf("action %q should not set ConfirmOthers", k)
 		}

@@ -125,10 +125,17 @@ type Model struct {
 	polling           bool                 // the live-checks poll tick loop is running
 	now               func() time.Time     // clock for check elapsed times; nil means time.Now
 	pollQuietBeats    int                  // poll beats since a key was handled; pauses the fetch at pollIdleBeats
+	keyPresses        int                  // bumped per handled key; a stack load drops its prompt if any key arrived since S
 	actionStatus      *actionStat          // transient inline-action progress shown by the header
 	cascade           *cascadeRun          // live cascade run; nil when none
 	pendingCascade    *cascadePlan         // plan awaiting the y/n prompt
 	cascadeReport     []string             // settled cascade's per-PR report; nil when none
+	stackSource       gh.StackSource       // stack-membership + merge-queue lookup backend
+	stackLoadSeq      int                  // bumped per stack-merge load; a stackPlanLoadedMsg from another load is dropped
+	stackLoad         *actionStat          // the in-flight stack load's badge; nil when no load is in flight
+	pendingStackMerge *stackMergePlan      // loaded stack plan awaiting the y/n prompt
+	stackMerge        *stackMergeRun       // live stack-merge run; nil when none
+	stackRunID        int                  // bumped per stack-merge run; beat msgs carry it
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
 	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
@@ -186,6 +193,10 @@ func (m *Model) SetPRSource(s gh.PRSource) { m.prSource = s }
 // SetDetailSource installs the batched per-PR detail backend: the
 // refresh/prefetch path fetches the whole visible window in one request.
 func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
+
+// SetStackSource installs the stack-membership backend the stack merge loads
+// its plan from.
+func (m *Model) SetStackSource(s gh.StackSource) { m.stackSource = s }
 
 // SetChecksSource installs the rollup-only backend the live-checks poll uses
 // instead of refetching the whole list.
@@ -2314,6 +2325,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Before the status guard: a merge that landed after its status was
 		// replaced and cleared still merged, and still needs reconciling.
 		m.markSessionMerged(msg.merged)
+		if msg.stackMerge {
+			// Before the status guard too: a settle landing on a nil status must
+			// still free the run, or every later S press is silently ignored.
+			m.stackMerge = nil
+		}
 		// Scope the error to the status line rather than m.err, which blanks the board.
 		if m.actionStatus == nil {
 			if len(msg.merged) > 0 || len(msg.partial) > 0 {
@@ -2346,11 +2362,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.backgroundRefresh())
 		}
-		if msg.err != nil && m.actionStatus.native == "merge-squash" {
+		if msg.err != nil && (m.actionStatus.native == "merge-squash" || m.actionStatus.native == "merge-stack") {
 			for _, n := range m.actionStatus.nums {
 				delete(m.fresh, n)
 			}
 			cmds = append(cmds, m.batchDetailCmd(m.actionStatus.nums))
+		}
+		if msg.err != nil && m.actionStatus.native == "merge-stack" {
+			// A poll that ran out of budget may still land server-side; the list
+			// refresh is what shows the layers merged once it does.
+			cmds = append(cmds, m.backgroundRefresh())
 		}
 		if msg.err == nil && m.actionStatus.rerunCI {
 			stamp := time.Now()
@@ -2423,6 +2444,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.cascadeDispatch(r.onProbed(mergeable, mss, msg.err))
+	case stackPlanLoadedMsg:
+		if msg.seq != m.stackLoadSeq {
+			return m, nil
+		}
+		load := m.stackLoad
+		m.stackLoad = nil
+		if msg.err != nil {
+			return m, m.settleStackLoad(load, msg.err.Error())
+		}
+		// A plan landing over another surface or a live cascade is dropped rather
+		// than stacking a second prompt on it, or opening one away from the board
+		// it was asked on. So is one landing after any later key: the prompt would
+		// open under the user's typing, and a stray y would confirm it unread.
+		if m.pending != nil || m.cascade != nil || msg.keys != m.keyPresses || m.showPicker || m.showActions || m.showLegend || m.logView || m.expanded || m.filtering || m.mode != "pr" {
+			return m, m.settleStackLoad(load, fmt.Sprintf("Stack merge cancelled — press %s again", msg.a.Key))
+		}
+		if m.actionStatus == load {
+			m.actionStatus = nil
+		}
+		a := msg.a
+		m.pending = &a
+		m.pendingTargets = nil
+		m.pendingCascade = nil
+		m.pendingStackMerge = msg.plan
+		return m, nil
+	case stackMergeSubmittedMsg:
+		if m.stackMerge == nil || msg.id != m.stackMerge.id {
+			return m, nil // a beat from a run that already settled
+		}
+		return m, m.stackMergeDispatch(m.stackMerge.onSubmitted(msg.res, msg.err))
+	case stackMergeProbeMsg:
+		if m.stackMerge == nil || msg.id != m.stackMerge.id {
+			return m, nil
+		}
+		return m, m.stackMergeProbeCmd()
+	case stackMergePolledMsg:
+		if m.stackMerge == nil || msg.id != m.stackMerge.id {
+			return m, nil
+		}
+		return m, m.stackMergeDispatch(m.stackMerge.onPolled(msg.res, msg.err))
 	case actionClearMsg:
 		if m.actionStatus != nil && m.actionStatus.settled {
 			m.actionStatus = nil
@@ -2442,6 +2503,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
+		m.keyPresses++
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit // hard quit, ahead of every overlay that would read it as input
 		}
@@ -2575,6 +2637,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if a.Confirm {
 						m.pending = &a
 						m.pendingCascade = nil // this path never builds a cascade plan
+						m.pendingStackMerge = nil
 						return m, nil
 					}
 					return m, m.runAction(a)
@@ -2778,6 +2841,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.Confirm {
 					m.pending = &a
 					m.pendingCascade = nil // this path never builds a cascade plan
+					m.pendingStackMerge = nil
 					return m, nil
 				}
 				return m, m.runAction(a)
@@ -2800,11 +2864,17 @@ func (m Model) prOnly(label, key string) (tea.Model, tea.Cmd) {
 
 // statusHint shows msg as a transient status. An in-flight action keeps its badge.
 func (m Model) statusHint(msg string) (tea.Model, tea.Cmd) {
+	cmd := m.hint(msg)
+	return m, cmd
+}
+
+// hint is statusHint for a caller already holding *Model.
+func (m *Model) hint(msg string) tea.Cmd {
 	if m.actionRunning() {
-		return m, nil
+		return nil
 	}
 	m.actionStatus = &actionStat{err: errors.New(msg), fail: msg, settled: true}
-	return m, clearStatusCmd()
+	return clearStatusCmd()
 }
 
 func (m Model) View() tea.View {
@@ -3062,6 +3132,9 @@ func (m Model) board() string {
 // the viewer didn't author names its author (so an accidental keystroke on
 // someone else's PR is obvious); a bulk fan-out shows the count.
 func (m Model) confirmQuestion() string {
+	if m.pendingStackMerge != nil {
+		return m.pendingStackMerge.question()
+	}
 	if m.pendingCascade.cascades() {
 		return fmt.Sprintf("Update branch for %d PRs in stack?", m.pendingCascade.count())
 	}
@@ -3101,9 +3174,11 @@ func (m Model) confirmPanel() string {
 	q := m.confirmQuestion()
 	hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
 		accentStyle.Render("n") + statusBarStyle.Render(" cancel")
-	body := titleStyle.Render(q) + "\n\n" + hint
-	w := max(lipgloss.Width(q)+6, 34)
-	return titledBox(body, w, 5, "Confirm")
+	// A stack merge names every layer, so the question can outgrow the
+	// terminal: the box is capped to it and the question wraps inside.
+	w := min(max(lipgloss.Width(q)+6, 34), max(4, m.width))
+	body := titleStyle.Render(ansi.Wrap(q, max(1, w-4), "")) + "\n\n" + ansi.Truncate(hint, max(1, w-2), "")
+	return titledBox(body, w, lipgloss.Height(body)+2, "Confirm")
 }
 
 // actionsPanel is the floating action menu.
@@ -3408,7 +3483,7 @@ func (m Model) keyPanes() []legendGroup {
 		{"↵", "worktree", nil}, {"W", "bulk", nil}, {"y", "#", nil}, {"Y", "url", nil}, {"b", "branch", nil}, {"o", "open", nil},
 	}
 	if m.mode == "pr" {
-		actions = append(actions, keyHint{"O", "issue", nil}, keyHint{"m", "merge", nil}, keyHint{"r", "rerun", nil},
+		actions = append(actions, keyHint{"O", "issue", nil}, keyHint{"m", "merge", nil}, keyHint{"S", "stack merge", nil}, keyHint{"r", "rerun", nil},
 			keyHint{"u", "update", nil}, keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil},
 			keyHint{"X", "cleanup branch", nil})
 	}
@@ -3562,7 +3637,7 @@ func renderLegendPanes(title string, left, right []legendGroup, example string, 
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o", "O", "X"}
+var actionOrder = []string{"enter", "m", "S", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o", "O", "X"}
 
 type keyHint struct {
 	key, label string

@@ -197,6 +197,9 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		// would break the sequencing guarantee the whole feature exists for.
 		return nil
 	}
+	if a.Command.Native == "merge-stack" {
+		return m.startStackMerge(a)
+	}
 	a = m.resolvePRAction(a)
 	v, ok := m.cursorVars()
 	if !ok {
@@ -562,8 +565,13 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 	m.pendingCascade = nil // the field's whole lifetime: written by startBulk, consumed or cleared here
 	targets := m.pendingTargets
 	m.pendingTargets = nil
+	stack := m.pendingStackMerge
+	m.pendingStackMerge = nil
 	if !yes || a == nil {
 		return nil
+	}
+	if stack != nil {
+		return m.runStackMerge(*a, stack)
 	}
 	if p.cascades() {
 		return m.runCascade(*a, p)
@@ -609,6 +617,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
 		m.pending = &a
 		m.pendingTargets = m.targetNumbers()
+		m.pendingStackMerge = nil
 		return nil
 	}
 	return m.runBulk(a)

@@ -59,7 +59,7 @@ Actions on the focused PR (or the whole selection):
 |-----|--------|
 | `enter` | open a git worktree |
 | `W` | open a worktree per selected item (prompts first past four) |
-| `m` merge (squash) · `r` rerun checks · `u` update branch · `M` mark ready | PR only |
+| `m` merge (squash) · `S` merge stack up to here · `r` rerun checks · `u` update branch · `M` mark ready | PR only |
 | `y` copy # · `Y` copy URL · `b` copy branch · `o` open in browser | |
 
 ### Expanded PR view (`→` / `l`)

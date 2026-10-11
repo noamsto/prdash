@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,6 +44,18 @@ func (s GraphSource) restRequest(method, path string) (*http.Request, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
+	return req, nil
+}
+
+// restRequestJSON is restRequest with a JSON body and Content-Type.
+func (s GraphSource) restRequestJSON(method, path string, payload []byte) (*http.Request, error) {
+	req, err := http.NewRequest(method, s.restBase()+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
+	req.Header.Set("Content-Type", "application/json")
 	return req, nil
 }
 

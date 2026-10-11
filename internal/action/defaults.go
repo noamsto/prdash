@@ -13,6 +13,11 @@ func DefaultPRActions() map[string]Action {
 			Command: Command{Native: "merge-squash"},
 			Confirm: true, Scope: "per-selected", Refresh: true,
 			Progress: "Merging", Past: "Merged", Fail: "Merge failed"},
+		// Not Confirm: the prompt must name every layer, known only once the
+		// stack is loaded, so the stack-merge flow prompts itself.
+		"S": {Key: "S", Label: "Merge stack (squash)",
+			Command: Command{Native: "merge-stack"}, Scope: "single", Refresh: true,
+			Progress: "Merging stack", Past: "Stack merged", Fail: "Stack merge failed"},
 		"A": AutoMergeAction(false),
 		"r": {Key: "r", Label: "Rerun checks",
 			Command: Command{Builtin: "rerun-failed"}, Scope: "single", Refresh: true,

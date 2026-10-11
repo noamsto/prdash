@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/noamsto/prdash/internal/gh"
+import (
+	"github.com/noamsto/prdash/internal/action"
+	"github.com/noamsto/prdash/internal/gh"
+)
 
 // issueDetailMsg carries a fetched issue body, cached to disk so the preview
 // paints instantly next launch (mirrors prDetailMsg).
@@ -120,12 +123,13 @@ type fetchSkippedMsg struct{}
 // its status badge. The running wording is already held on m.actionStatus; ok
 // and fail optionally override the settled text (used by bulk aggregate counts).
 type actionDoneMsg struct {
-	err      error
-	ok, fail string
-	cascade  bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
-	partial  []int   // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
-	merged   []gh.PR // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
-	rerunCI  bool    // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
+	err        error
+	ok, fail   string
+	cascade    bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+	partial    []int   // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
+	merged     []gh.PR // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
+	stackMerge bool    // this settle is the stack merge's own, distinguishing it from any other action reachable mid-run
+	rerunCI    bool    // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
 }
 
 // cascadeUpdatedMsg carries one link's UpdateBranch result back to the run.
@@ -144,6 +148,34 @@ type cascadeProbedMsg struct {
 	raw    []byte
 	err    error
 	ok     bool
+}
+
+// stackPlanLoadedMsg carries the S press's async stack load. seq matches it to
+// the live load; a carries the triggering action so a remapped key keeps its
+// labels into the prompt and the run. keys is Model.keyPresses at the press.
+type stackPlanLoadedMsg struct {
+	seq  int
+	keys int
+	a    action.Action
+	plan *stackMergePlan
+	err  error
+}
+
+// stackMergeSubmittedMsg carries the MergeStack answer for run id.
+type stackMergeSubmittedMsg struct {
+	id  int
+	res gh.StackMergeResult
+	err error
+}
+
+// stackMergeProbeMsg fires one stack-merge poll beat for run id.
+type stackMergeProbeMsg struct{ id int }
+
+// stackMergePolledMsg carries one StackMergeStatus answer for run id.
+type stackMergePolledMsg struct {
+	id  int
+	res gh.StackMergeResult
+	err error
 }
 
 // actionClearMsg wipes a settled action status after its dwell time.

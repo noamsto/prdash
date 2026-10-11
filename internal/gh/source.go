@@ -69,7 +69,9 @@ type MembersSource interface {
 // method takes the PR's GraphQL node ID (gh.PR.ID), not its number — mutation
 // inputs require it. RequestReviews takes the full desired reviewer login set
 // and always replaces (union:false); an empty set is the valid "remove all
-// reviewers" encoding and callers must still fire it, not skip it.
+// reviewers" encoding and callers must still fire it, not skip it. MergeStack
+// and StackMergeStatus are the exception: they are REST calls and take the PR
+// number.
 type MutationSource interface {
 	MergePR(prID string) error
 	EnableAutoMerge(prID string) error
@@ -79,6 +81,15 @@ type MutationSource interface {
 	UpdateBranch(prID string) error
 	ApprovePR(prID string) error
 	RequestReviews(prID string, logins []string) error
+	MergeStack(prNumber int, mergeQueue bool) (StackMergeResult, error)
+	StackMergeStatus(prNumber int, uuid string) (StackMergeResult, error)
+}
+
+// StackSource looks up a PR's stacked-PR chain and whether its base branch
+// is merge-queue protected, the inputs to a stack merge.
+type StackSource interface {
+	FetchStackForPR(prNumber int) (Stack, bool, error)
+	BaseUsesMergeQueue(baseRef string) (bool, error)
 }
 
 // WorkflowRun is one run entry from ActionsSource.ListRunsForBranch, mirroring
