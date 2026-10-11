@@ -29,8 +29,8 @@ const graphTimeout = 20 * time.Second
 // DetailSource (batched per-PR detail), IssueSource (list),
 // IssueDetailSource (per-issue detail), ViewerSource (authenticated login),
 // MembersSource (assignable users), MutationSource (PR mutations),
-// ActionsSource (Actions rerun/job-log REST calls), and RateSource (rate-limit
-// budgets). repo is owner/name.
+// ActionsSource (Actions rerun/job-log REST calls), StackSource (stack lookup),
+// and RateSource (rate-limit budgets). repo is owner/name.
 type GraphSource struct {
 	repo    string
 	http    *http.Client     // for raw aliased detail queries and REST calls

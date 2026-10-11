@@ -20,6 +20,23 @@ type fakeMutationSource struct {
 	mergeCalls, autoMergeCalls, disableAutoMergeCalls, markReadyCalls, convertToDraftCalls, updateBranchCalls, approveCalls []string
 	reviewCalls                                                                                                             []reviewCall
 	err                                                                                                                     error // returned by every call, to test failure propagation
+
+	stackMergeCalls  []stackMergeCall
+	stackMergeResult gh.StackMergeResult
+	stackMergeErr    error
+	stackPollCalls   []stackPollCall
+	stackPollResults []gh.StackMergeResult // consumed in order, one per StackMergeStatus call
+	stackPollErr     error
+}
+
+type stackMergeCall struct {
+	number     int
+	mergeQueue bool
+}
+
+type stackPollCall struct {
+	number int
+	uuid   string
 }
 
 type reviewCall struct {
@@ -63,6 +80,24 @@ func (f *fakeMutationSource) ApprovePR(prID string) error {
 func (f *fakeMutationSource) RequestReviews(prID string, logins []string) error {
 	f.reviewCalls = append(f.reviewCalls, reviewCall{prID: prID, logins: append([]string(nil), logins...)})
 	return f.err
+}
+
+func (f *fakeMutationSource) MergeStack(prNumber int, mergeQueue bool) (gh.StackMergeResult, error) {
+	f.stackMergeCalls = append(f.stackMergeCalls, stackMergeCall{number: prNumber, mergeQueue: mergeQueue})
+	return f.stackMergeResult, f.stackMergeErr
+}
+
+func (f *fakeMutationSource) StackMergeStatus(prNumber int, uuid string) (gh.StackMergeResult, error) {
+	f.stackPollCalls = append(f.stackPollCalls, stackPollCall{number: prNumber, uuid: uuid})
+	if f.stackPollErr != nil {
+		return gh.StackMergeResult{}, f.stackPollErr
+	}
+	if len(f.stackPollResults) == 0 {
+		return gh.StackMergeResult{}, nil
+	}
+	res := f.stackPollResults[0]
+	f.stackPollResults = f.stackPollResults[1:]
+	return res, nil
 }
 
 // driveBulk fires the tea.BatchMsg cmd returns and drives every sub-command,

@@ -83,6 +83,12 @@ func (f *partialMergeSource) ApprovePR(prID string) error {
 	return f.failFor[prID]
 }
 func (f *partialMergeSource) RequestReviews(string, []string) error { return nil }
+func (f *partialMergeSource) MergeStack(int, bool) (gh.StackMergeResult, error) {
+	return gh.StackMergeResult{}, nil
+}
+func (f *partialMergeSource) StackMergeStatus(int, string) (gh.StackMergeResult, error) {
+	return gh.StackMergeResult{}, nil
+}
 
 // invokeCmdTree drives cmd and, when it returns a tea.BatchMsg, recurses into
 // every sub-command — mirroring driveBulk's one-level unwrap but going as
