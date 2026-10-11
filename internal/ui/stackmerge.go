@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -179,7 +182,7 @@ type stackMergeRun struct {
 
 	// stat is the run's own badge state; see cascadeRun.stat for why it is not
 	// read back from m.actionStatus.
-	stat *actionStat   //nolint:unused // set and read where the Model starts and settles the run
+	stat *actionStat
 	done actionDoneMsg // the settle, valid once the step is stackMergeSettle
 }
 
@@ -203,7 +206,7 @@ func (r *stackMergeRun) onPolled(res gh.StackMergeResult, err error) stackMergeS
 	if err != nil {
 		return r.fail(fmt.Errorf("%s (last check: %w)", stackMergeRunningText, err))
 	}
-	return r.fail(errors.New(stackMergeRunningText)) //nolint:staticcheck // ST1005: the error text is the settle badge, shown as written
+	return r.failText(stackMergeRunningText)
 }
 
 // resolve maps one submit or probe answer to the next step. An unknown status
@@ -221,7 +224,7 @@ func (r *stackMergeRun) resolve(res gh.StackMergeResult) stackMergeStep {
 		return r.fail(fmt.Errorf("%s: %s — nothing merged", stackMergeFailedText, res.Message))
 	case gh.StackMergePending:
 		if res.UUID == "" {
-			return r.fail(errors.New(stackMergeNoStartText)) //nolint:staticcheck // ST1005: the error text is the settle badge, shown as written
+			return r.failText(stackMergeNoStartText)
 		}
 		r.uuid = res.UUID
 	}
@@ -231,4 +234,107 @@ func (r *stackMergeRun) resolve(res gh.StackMergeResult) stackMergeStep {
 func (r *stackMergeRun) fail(err error) stackMergeStep {
 	r.done = actionDoneMsg{stackMerge: true, err: err, fail: err.Error()}
 	return stackMergeSettle
+}
+
+// failText settles on a badge text shown as written.
+func (r *stackMergeRun) failText(text string) stackMergeStep {
+	r.done = actionDoneMsg{stackMerge: true, err: errors.New(text), fail: text}
+	return stackMergeSettle
+}
+
+// startStackMerge is the S press: a refusal settles at once, otherwise the plan
+// loads off the Update goroutine and opens the prompt when it lands.
+func (m *Model) startStackMerge(a action.Action) tea.Cmd {
+	// Silent, like the live-cascade guard: any status written here would steal
+	// the live load's or run's badge.
+	if m.stackLoad != nil || m.pendingStackMerge != nil || m.stackMerge != nil {
+		return nil
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok || ps.Len() == 0 {
+		return nil
+	}
+	t := ps.prAt(m.cursor)
+	if t.Stack == nil {
+		return m.hint(fmt.Sprintf("PR #%d is not in a stack", t.Number))
+	}
+	if err := m.mutable(t); err != nil {
+		m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
+		return clearStatusCmd()
+	}
+	if m.stackSource == nil {
+		return m.hint("Stack merge unavailable")
+	}
+
+	board := make(map[int]stackBoardRow, ps.Len())
+	for i := range ps.Len() {
+		p := ps.prAt(i)
+		d, hasDetail := m.detail[p.Number]
+		mergeable, mss := mergeState(p, d, hasDetail)
+		board[p.Number] = stackBoardRow{pr: p, mergeable: mergeable, mss: mss, mutableErr: m.mutable(p)}
+	}
+	m.stackLoadSeq++
+	m.stackLoad = &actionStat{run: "Loading stack"}
+	m.actionStatus = m.stackLoad
+	seq, stacks, details := m.stackLoadSeq, m.stackSource, m.detailSource
+	return tea.Batch(func() tea.Msg {
+		plan, err := loadStackPlan(t, board, stacks, details)
+		return stackPlanLoadedMsg{seq: seq, a: a, plan: plan, err: err}
+	}, m.startSpinner())
+}
+
+// settleStackLoad replaces the loading badge directly, since statusHint is a
+// no-op while it runs, and only while it is still the one showing.
+func (m *Model) settleStackLoad(load *actionStat, text string) tea.Cmd {
+	if m.actionStatus != load {
+		return nil
+	}
+	m.actionStatus = &actionStat{err: errors.New(text), fail: text, settled: true}
+	return clearStatusCmd()
+}
+
+// runStackMerge submits a confirmed plan. The run owns its stat for the reason
+// cascadeRun.stat gives; nums and refresh cover every layer.
+func (m *Model) runStackMerge(a action.Action, plan *stackMergePlan) tea.Cmd {
+	nums := plan.numbers()
+	stat := statForBulk(a, len(plan.layers))
+	stat.refresh = true
+	stat.nums = nums
+	m.stackRunID++
+	m.stackMerge = &stackMergeRun{id: m.stackRunID, plan: plan, stat: stat}
+	m.actionStatus = stat
+	m.invalidateLaunchCache(nums...)
+	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
+	id, src, target, queue := m.stackRunID, m.mutationSource, plan.target, plan.mergeQueue
+	return tea.Batch(func() tea.Msg {
+		res, err := src.MergeStack(target, queue)
+		return stackMergeSubmittedMsg{id: id, res: res, err: err}
+	}, m.startSpinner())
+}
+
+// stackMergeDispatch carries the run's decision forward: the next poll beat,
+// or the settle. The settle re-asserts the run's stat for the reason
+// cascadeSettleCmd does.
+func (m *Model) stackMergeDispatch(step stackMergeStep) tea.Cmd {
+	r := m.stackMerge
+	switch step {
+	case stackMergePoll:
+		r.stat.run = fmt.Sprintf("Merging stack ×%d · %d/%d", len(r.plan.layers), r.beats+1, stackMergePollBeats)
+		id := r.id
+		return tea.Tick(stackMergePollEvery, func(time.Time) tea.Msg { return stackMergeProbeMsg{id: id} })
+	default: // stackMergeSettle
+		m.actionStatus = r.stat
+		done := r.done
+		return func() tea.Msg { return done }
+	}
+}
+
+// stackMergeProbeCmd fires the beat's single StackMergeStatus call.
+func (m *Model) stackMergeProbeCmd() tea.Cmd {
+	r := m.stackMerge
+	id, src, target, uuid := r.id, m.mutationSource, r.plan.target, r.uuid
+	return func() tea.Msg {
+		res, err := src.StackMergeStatus(target, uuid)
+		return stackMergePolledMsg{id: id, res: res, err: err}
+	}
 }

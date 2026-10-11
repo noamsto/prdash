@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/noamsto/prdash/internal/gh"
+import (
+	"github.com/noamsto/prdash/internal/action"
+	"github.com/noamsto/prdash/internal/gh"
+)
 
 // issueDetailMsg carries a fetched issue body, cached to disk so the preview
 // paints instantly next launch (mirrors prDetailMsg).
@@ -145,6 +148,33 @@ type cascadeProbedMsg struct {
 	raw    []byte
 	err    error
 	ok     bool
+}
+
+// stackPlanLoadedMsg carries the S press's async stack load. seq matches it to
+// the live load; a carries the triggering action so a remapped key keeps its
+// labels into the prompt and the run.
+type stackPlanLoadedMsg struct {
+	seq  int
+	a    action.Action
+	plan *stackMergePlan
+	err  error
+}
+
+// stackMergeSubmittedMsg carries the MergeStack answer for run id.
+type stackMergeSubmittedMsg struct {
+	id  int
+	res gh.StackMergeResult
+	err error
+}
+
+// stackMergeProbeMsg fires one stack-merge poll beat for run id.
+type stackMergeProbeMsg struct{ id int }
+
+// stackMergePolledMsg carries one StackMergeStatus answer for run id.
+type stackMergePolledMsg struct {
+	id  int
+	res gh.StackMergeResult
+	err error
 }
 
 // actionClearMsg wipes a settled action status after its dwell time.

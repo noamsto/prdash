@@ -177,9 +177,13 @@ type fakeStackSource struct {
 	queue    bool
 	queueErr error
 	baseRef  string
+	calls    int // FetchStackForPR calls
 }
 
-func (f *fakeStackSource) FetchStackForPR(int) (gh.Stack, bool, error) { return f.st, f.found, f.err }
+func (f *fakeStackSource) FetchStackForPR(int) (gh.Stack, bool, error) {
+	f.calls++
+	return f.st, f.found, f.err
+}
 
 func (f *fakeStackSource) BaseUsesMergeQueue(ref string) (bool, error) {
 	f.baseRef = ref
