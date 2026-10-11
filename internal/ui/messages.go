@@ -120,12 +120,13 @@ type fetchSkippedMsg struct{}
 // its status badge. The running wording is already held on m.actionStatus; ok
 // and fail optionally override the settled text (used by bulk aggregate counts).
 type actionDoneMsg struct {
-	err      error
-	ok, fail string
-	cascade  bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
-	partial  []int   // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
-	merged   []gh.PR // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
-	rerunCI  bool    // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
+	err        error
+	ok, fail   string
+	cascade    bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+	partial    []int   // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
+	merged     []gh.PR // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
+	stackMerge bool    // this settle is the stack merge's own, distinguishing it from any other action reachable mid-run
+	rerunCI    bool    // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
 }
 
 // cascadeUpdatedMsg carries one link's UpdateBranch result back to the run.
