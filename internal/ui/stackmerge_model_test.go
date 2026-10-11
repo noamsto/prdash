@@ -1,11 +1,16 @@
 package ui
 
 import (
+	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
+	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 )
 
@@ -282,10 +287,147 @@ func TestStackMergeSecondPressWhileLiveIsIgnored(t *testing.T) {
 
 	m, cmd = update(m, keyMsg("S"))
 
-	if cmd != nil || stacks.calls != 1 {
+	if cmd != nil || stacks.calls != 2 { // the load, then the submit's membership re-check
 		t.Errorf("S during a run must not load again: cmd=%v FetchStackForPR calls=%d", cmd, stacks.calls)
 	}
 	if m.actionStatus != badge || badge.run != run || badge.settled {
 		t.Errorf("the run's badge must be untouched: %+v", m.actionStatus)
+	}
+}
+
+// confirmAndSettle presses y on the open prompt, lands the submit and the
+// settle it produces.
+func confirmAndSettle(t *testing.T, m Model) Model {
+	t.Helper()
+	m, cmd := update(m, keyMsg("y"))
+	if m.stackMerge == nil {
+		t.Fatal("y should start the run")
+	}
+	m, cmd = update(m, head(t, cmd))
+	done, ok := cmd().(actionDoneMsg)
+	if !ok {
+		t.Fatal("the submit should settle")
+	}
+	m, _ = update(m, done)
+	return m
+}
+
+func TestStackMergeSubmitRefusesChangedMembership(t *testing.T) {
+	m, fs, stacks, _ := promptedStackMerge(t)
+	fs.stackMergeResult = gh.StackMergeResult{Status: gh.StackMergeMerged}
+	stacks.st.Members = openMembers(139, 140, 141, 142, 143) // a layer landed below while the prompt sat open
+
+	m = confirmAndSettle(t, m)
+
+	if stacks.calls != 2 {
+		t.Errorf("FetchStackForPR calls = %d, want the load and the submit's re-check", stacks.calls)
+	}
+	if len(fs.stackMergeCalls) != 0 {
+		t.Errorf("MergeStack calls = %+v, want none", fs.stackMergeCalls)
+	}
+	if len(m.sessionMerged) != 0 {
+		t.Errorf("sessionMerged = %v, want nothing merged", m.sessionMerged)
+	}
+	if m.actionStatus == nil || m.actionStatus.fail != "Stack changed since the prompt — press S again" {
+		t.Errorf("status = %+v, want the stack-changed settle", m.actionStatus)
+	}
+}
+
+func TestStackMergeSubmitRefusesWhenNoLongerStacked(t *testing.T) {
+	m, fs, stacks, _ := promptedStackMerge(t)
+	stacks.found = false
+
+	m = confirmAndSettle(t, m)
+
+	if len(fs.stackMergeCalls) != 0 {
+		t.Errorf("MergeStack calls = %+v, want none", fs.stackMergeCalls)
+	}
+	if m.actionStatus == nil || m.actionStatus.fail != "Stack changed since the prompt — press S again" {
+		t.Errorf("status = %+v, want the stack-changed settle", m.actionStatus)
+	}
+}
+
+func TestStackMergeSubmitLookupErrorMergesNothing(t *testing.T) {
+	m, fs, stacks, _ := promptedStackMerge(t)
+	stacks.err = errors.New("502 bad gateway")
+
+	m = confirmAndSettle(t, m)
+
+	if len(fs.stackMergeCalls) != 0 {
+		t.Errorf("MergeStack calls = %+v, want none", fs.stackMergeCalls)
+	}
+	if m.actionStatus == nil || m.actionStatus.fail != "Stack merge failed: 502 bad gateway" {
+		t.Errorf("status = %+v, want the lookup failure", m.actionStatus)
+	}
+}
+
+func TestStackMergeLoadDroppedDuringCascade(t *testing.T) {
+	m, _, _, _ := stackMergeModel(t)
+	m, load := pressS(t, m)
+	m.cascade = &cascadeRun{}
+
+	m, _ = update(m, load)
+
+	if m.pending != nil || m.pendingStackMerge != nil {
+		t.Fatalf("a load landing during a live cascade must not prompt: pending=%v", m.pending)
+	}
+	if m.actionStatus == nil || m.actionStatus.fail != "Stack merge cancelled — press S again" {
+		t.Errorf("status = %+v, want the cancel hint", m.actionStatus)
+	}
+}
+
+func TestStackMergeLoadDroppedAfterLaterKey(t *testing.T) {
+	tests := []struct {
+		key, status string
+	}{
+		{"j", "Stack merge cancelled — press S again"},
+		// y on the board is copy, whose badge must not be stolen by the hint.
+		{"y", "Copied PR number"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			m, fs, _, _ := stackMergeModel(t)
+			m, load := pressS(t, m)
+			m, _ = update(m, keyMsg(tt.key)) // typed ahead of the prompt, meant for something else
+
+			m, _ = update(m, load)
+
+			if m.pending != nil || m.pendingStackMerge != nil {
+				t.Fatalf("a load landing after a later key must not prompt: pending=%v", m.pending)
+			}
+			if m.actionStatus == nil || (m.actionStatus.fail != tt.status && m.actionStatus.ok != tt.status) {
+				t.Errorf("status = %+v, want %q", m.actionStatus, tt.status)
+			}
+			m, _ = update(m, keyMsg("y"))
+			if len(fs.stackMergeCalls) != 0 || m.stackMerge != nil {
+				t.Errorf("MergeStack calls = %+v run = %v, want none", fs.stackMergeCalls, m.stackMerge)
+			}
+		})
+	}
+}
+
+func TestConfirmPanelFitsLongStackQuestion(t *testing.T) {
+	layers := make([]gh.PR, 0, 8)
+	for n := 12341; n <= 12348; n++ {
+		layers = append(layers, gh.PR{Number: n})
+	}
+	for _, width := range []int{50, 80} {
+		m := NewModel("/repo", "is:open", nil)
+		m.width = width
+		a := action.Action{Key: "S", Label: "Stack merge"}
+		m.pending = &a
+		m.pendingStackMerge = &stackMergePlan{target: 12348, layers: layers}
+
+		out := ansi.Strip(m.confirmPanel())
+		for i, line := range strings.Split(out, "\n") {
+			if w := ansi.StringWidth(line); w > width {
+				t.Errorf("width %d: line %d is %d cells: %q", width, i, w, line)
+			}
+		}
+		for _, l := range layers {
+			if num := fmt.Sprintf("#%d", l.Number); !strings.Contains(out, num) {
+				t.Errorf("width %d: %s missing from the panel:\n%s", width, num, out)
+			}
+		}
 	}
 }

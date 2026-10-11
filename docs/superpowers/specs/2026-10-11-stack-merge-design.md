@@ -39,7 +39,8 @@ Source: `github.com/github/gh-stack` at tag `v0.2.1`, commit
   sends **`merge_queue` with no `merge_method`** ("The queue picks the merge
   method from its own configuration", `:148-155`) or **`direct_merge` with the
   method**. A failed detection falls back to the direct flow (`:458-469`).
-  prdash mirrors this exactly (S7); the doc comment at `merge_async.go:160-165`
+  prdash mirrors the routing (S7) but refuses on a failed detection, since a
+  direct merge could bypass a real queue; the doc comment at `merge_async.go:160-165`
   claiming "always sends merge_action default" is stale against `cmd/merge.go`.
 - **Poll** — `merge_async.go:247-254` (`GetAsyncMergeResult`):
   `GET /repos/{owner}/{repo}/pulls/{number}/merge-async/{uuid}`, always 200 on
@@ -133,10 +134,12 @@ calling the merge API:
 
 A layer **not on the loaded board** is therefore never assumed fine: its
 state/draft come from the REST membership and its mergeability from the
-FetchDetails refetch. A FetchDetails error, or a layer the refetch omits, is
-the "still pending" refusal for that layer (unknown is never clean).
+FetchDetails refetch. A layer the refetch omits is the "still pending"
+refusal for that layer (unknown is never clean); a FetchDetails error refuses
+the plan with `Stack merge failed: fetch layer state: <err>`.
 `FetchStackForPR` failing (404 included) → `Stack merge failed: <err>`,
-nothing merged. (`BaseUsesMergeQueue` failing is not a refusal; see S7.)
+nothing merged. `BaseUsesMergeQueue` failing → `Stack merge failed: couldn't
+check the base branch's merge queue: <err>` (S7).
 
 ### S4 — the prompt
 
@@ -151,11 +154,15 @@ other key cancels and drops the plan.
 
 The plan is a snapshot of values: a background refresh landing during the
 prompt cannot change what the prompt promised or what prdash reports merged.
-(The server merges its *current* stack up to *t*; a layer added below *t*
-between the load and `y` is a server-side race prdash cannot close, the same
-as gh-stack's.) If the load lands while another modal
-(confirm, picker, actions menu, legend, expanded/log view) is open, the plan is
-dropped with a hint rather than stacking a second prompt.
+(The server merges its *current* stack up to *t*, so `y` re-reads the
+membership first (S5): numbers that differ from the plan, or *t* no longer in
+the stack, settle `Stack changed since the prompt — press S again` with
+nothing merged. Only a change between that re-read and the merge call remains
+a server-side race, the same as gh-stack's.) If the load lands while another
+modal (confirm, picker, actions menu, legend, expanded/log view) is open or a
+cascade is running, or after any key pressed since `S` (a typed-ahead `y` must
+not confirm a prompt it never saw), the plan is dropped with a hint rather
+than opening a prompt.
 
 ### S5 — the run, its badge and its lifetime
 
@@ -183,8 +190,10 @@ a run that only lived in the shared slot would lose its badge or its
 - The load message (`stackPlanLoadedMsg`) carries a sequence number and is
   dropped unless it matches the live load.
 
-`y` → `MutationSource.MergeStack(t.Number, plan.mergeQueue)` (S7) off the Update
-goroutine. Badge `Merging stack ×N` with the spinner. `invalidateLaunchCache`
+`y` → off the Update goroutine, `FetchStackForPR(t.Number)` again; if the
+in-range numbers still equal the plan's, `MutationSource.MergeStack(t.Number,
+plan.mergeQueue)` (S7), otherwise the S4 stack-changed settle (a lookup error
+settles `Stack merge failed: <err>`) and no merge call. Badge `Merging stack ×N` with the spinner. `invalidateLaunchCache`
 covers every plan number before the call; the stat's `nums` is every plan
 number and `refresh` is set.
 
@@ -238,9 +247,9 @@ refresh shows the result.
 - New `StackSource` (reads, not mutations), wired in `main.go` next to
   `SetDetailSource`: `FetchStackForPR(prNumber int) (Stack, bool, error)`
   (false ⇒ in no stack) and `BaseUsesMergeQueue(baseRef string) (bool,
-  error)` — the GraphQL detection above. A detection error falls back to
-  `mergeQueue=false`, as gh-stack does; if the base really has a queue the
-  server rejects `direct_merge` and that error is the settle.
+  error)` — the GraphQL detection above. A detection error refuses the plan
+  (S3) rather than falling back to `mergeQueue=false` as gh-stack does: a
+  direct merge could bypass a queue the detection failed to see.
 
 Request bodies are sent with `Content-Type: application/json`. Tests use the
 existing `httptest` + `testSource` pattern (`actions_rest_test.go`) — no real

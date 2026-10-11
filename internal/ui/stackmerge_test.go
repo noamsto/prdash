@@ -20,14 +20,6 @@ func openMembers(nums ...int) []gh.StackMember {
 	return out
 }
 
-func memberNums(ms []gh.StackMember) []int {
-	out := make([]int, len(ms))
-	for i, m := range ms {
-		out[i] = m.Number
-	}
-	return out
-}
-
 func cleanRow(n int) stackBoardRow {
 	return stackBoardRow{pr: gh.PR{Number: n, State: "OPEN"}, mergeable: "MERGEABLE", mss: "CLEAN"}
 }
@@ -66,8 +58,8 @@ func TestStackRange(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(memberNums(got), tt.want) {
-				t.Errorf("range = %v, want %v", memberNums(got), tt.want)
+			if !slices.Equal(memberNumbers(got), tt.want) {
+				t.Errorf("range = %v, want %v", memberNumbers(got), tt.want)
 			}
 		})
 	}
@@ -251,14 +243,17 @@ func TestLoadStackPlanUnknownReadingIsPending(t *testing.T) {
 	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1, 2)}}
 	const pending = "PR #1 merge state is still pending — try again shortly"
 
-	_, err := loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, &fakeStackDetails{err: errors.New("boom")})
-	wantErr(t, err, pending)
-
-	_, err = loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, &fakeStackDetails{})
+	_, err := loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, &fakeStackDetails{})
 	wantErr(t, err, pending)
 
 	_, err = loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, nil)
 	wantErr(t, err, pending)
+}
+
+func TestLoadStackPlanDetailFetchErrorRefuses(t *testing.T) {
+	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1, 2)}}
+	_, err := loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, &fakeStackDetails{err: errors.New("boom")})
+	wantErr(t, err, "Stack merge failed: fetch layer state: boom")
 }
 
 func TestLoadStackPlanRefusals(t *testing.T) {
@@ -274,20 +269,27 @@ func TestLoadStackPlanRefusals(t *testing.T) {
 	wantErr(t, err, "PR #1 is no longer in this stack — ctrl+r to refresh")
 }
 
+func TestLoadStackPlanMergeQueueDetectionErrorRefuses(t *testing.T) {
+	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1)}, queueErr: errors.New("graphql down")}
+	plan, err := loadStackPlan(gh.PR{Number: 1}, boardOf(cleanRow(1)), stacks, nil)
+	wantErr(t, err, "Stack merge failed: couldn't check the base branch's merge queue: graphql down")
+	if plan != nil {
+		t.Errorf("plan = %+v, want none", plan)
+	}
+}
+
 func TestLoadStackPlanMergeQueueDetection(t *testing.T) {
 	tests := []struct {
 		name  string
 		queue bool
-		err   error
 		want  bool
 	}{
-		{"queue", true, nil, true},
-		{"no queue", false, nil, false},
-		{"detection error falls back to direct", true, errors.New("graphql down"), false},
+		{"queue", true, true},
+		{"no queue", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1)}, queue: tt.queue, queueErr: tt.err}
+			stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1)}, queue: tt.queue}
 			plan, err := loadStackPlan(gh.PR{Number: 1}, boardOf(cleanRow(1)), stacks, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -397,12 +399,16 @@ func TestStackMergeRunPolledFailed(t *testing.T) {
 
 func TestStackMergeRunUnknownStatusKeepsPolling(t *testing.T) {
 	r := newStackRun(1)
-	if step := r.onSubmitted(gh.StackMergeResult{Status: "queued_up"}, nil); step != stackMergePoll {
-		t.Errorf("submit unknown: step = %v, want poll", step)
+	if step := r.onSubmitted(gh.StackMergeResult{Status: "queued_up", UUID: "u-1"}, nil); step != stackMergePoll || r.uuid != "u-1" {
+		t.Errorf("submit unknown with uuid: step = %v uuid = %q, want poll u-1", step, r.uuid)
 	}
-	if step := r.onPolled(gh.StackMergeResult{Status: "queued_up"}, nil); step != stackMergePoll {
-		t.Errorf("poll unknown: step = %v, want poll", step)
+	if step := r.onPolled(gh.StackMergeResult{Status: "queued_up"}, nil); step != stackMergePoll || r.uuid != "u-1" {
+		t.Errorf("poll unknown without uuid: step = %v uuid = %q, want poll keeping u-1", step, r.uuid)
 	}
+
+	r = newStackRun(1)
+	step := r.onSubmitted(gh.StackMergeResult{Status: "queued_up"}, nil)
+	wantFailSettle(t, r, step, "Stack merge did not start")
 }
 
 func TestStackMergeRunProbeErrorsKeepPollingThenNameLastError(t *testing.T) {

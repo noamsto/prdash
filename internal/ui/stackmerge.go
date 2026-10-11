@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -103,6 +104,14 @@ type stackMergePlan struct {
 	mergeQueue bool
 }
 
+func memberNumbers(members []gh.StackMember) []int {
+	nums := make([]int, len(members))
+	for i, mem := range members {
+		nums[i] = mem.Number
+	}
+	return nums
+}
+
 func (p *stackMergePlan) numbers() []int {
 	nums := make([]int, len(p.layers))
 	for i, l := range p.layers {
@@ -121,7 +130,7 @@ func (p *stackMergePlan) question() string {
 
 // loadStackPlan is the off-goroutine body of the S press: it reads only its
 // arguments. details may be nil; layers needing a reading then fall to "still
-// pending", as they do when the refetch fails.
+// pending", as does a layer the refetch answers without.
 func loadStackPlan(t gh.PR, board map[int]stackBoardRow, stacks gh.StackSource, details gh.DetailSource) (*stackMergePlan, error) {
 	st, ok, err := stacks.FetchStackForPR(t.Number)
 	if err != nil {
@@ -137,18 +146,22 @@ func loadStackPlan(t gh.PR, board map[int]stackBoardRow, stacks gh.StackSource, 
 
 	var fresh map[int]gh.PRDetail
 	if need := stackNeedsDetail(members, board); len(need) > 0 && details != nil {
-		// An error leaves fresh empty: unknown is never clean.
-		fresh, _, _ = details.FetchDetails(need)
+		if fresh, _, err = details.FetchDetails(need); err != nil {
+			return nil, fmt.Errorf("%s: fetch layer state: %w", stackMergeFailedText, err)
+		}
 	}
 	layers, err := checkStackLayers(members, board, fresh)
 	if err != nil {
 		return nil, err
 	}
 
-	// Detection failure falls back to a direct merge, as gh-stack does; a base
-	// that really has a queue makes the server reject it and that is the settle.
+	// Detection failure refuses rather than guessing: a direct merge onto a base
+	// that really has a queue would bypass it.
 	queue, err := stacks.BaseUsesMergeQueue(st.BaseRefName)
-	return &stackMergePlan{target: t.Number, layers: layers, mergeQueue: queue && err == nil}, nil
+	if err != nil {
+		return nil, fmt.Errorf("%s: couldn't check the base branch's merge queue: %w", stackMergeFailedText, err)
+	}
+	return &stackMergePlan{target: t.Number, layers: layers, mergeQueue: queue}, nil
 }
 
 const (
@@ -187,6 +200,10 @@ type stackMergeRun struct {
 }
 
 func (r *stackMergeRun) onSubmitted(res gh.StackMergeResult, err error) stackMergeStep {
+	var changed stackChangedError
+	if errors.As(err, &changed) {
+		return r.failText(changed.Error())
+	}
 	if err != nil {
 		return r.fail(fmt.Errorf("%s: %w", stackMergeFailedText, err))
 	}
@@ -209,8 +226,9 @@ func (r *stackMergeRun) onPolled(res gh.StackMergeResult, err error) stackMergeS
 	return r.failText(stackMergeRunningText)
 }
 
-// resolve maps one submit or probe answer to the next step. An unknown status
-// keeps polling: unknown is not done.
+// resolve maps one submit or probe answer to the next step. Any non-terminal
+// status, pending or unrecognised, polls on the uuid it carries or the one
+// already held; with neither there is nothing to poll, so it never started.
 func (r *stackMergeRun) resolve(res gh.StackMergeResult) stackMergeStep {
 	n := len(r.plan.layers)
 	switch res.Status {
@@ -222,11 +240,12 @@ func (r *stackMergeRun) resolve(res gh.StackMergeResult) stackMergeStep {
 		return stackMergeSettle
 	case gh.StackMergeFailed:
 		return r.fail(fmt.Errorf("%s: %s — nothing merged", stackMergeFailedText, res.Message))
-	case gh.StackMergePending:
-		if res.UUID == "" {
-			return r.failText(stackMergeNoStartText)
-		}
+	}
+	if res.UUID != "" {
 		r.uuid = res.UUID
+	}
+	if r.uuid == "" {
+		return r.failText(stackMergeNoStartText)
 	}
 	return stackMergePoll
 }
@@ -240,6 +259,14 @@ func (r *stackMergeRun) fail(err error) stackMergeStep {
 func (r *stackMergeRun) failText(text string) stackMergeStep {
 	r.done = actionDoneMsg{stackMerge: true, err: errors.New(text), fail: text}
 	return stackMergeSettle
+}
+
+// stackChangedError is the submit refusing a plan whose stack membership moved
+// since the prompt; it settles as written, not as a failed merge.
+type stackChangedError struct{ key string }
+
+func (e stackChangedError) Error() string {
+	return fmt.Sprintf("Stack changed since the prompt — press %s again", e.key)
 }
 
 // startStackMerge is the S press: a refusal settles at once, otherwise the plan
@@ -276,10 +303,10 @@ func (m *Model) startStackMerge(a action.Action) tea.Cmd {
 	m.stackLoadSeq++
 	m.stackLoad = &actionStat{run: "Loading stack"}
 	m.actionStatus = m.stackLoad
-	seq, stacks, details := m.stackLoadSeq, m.stackSource, m.detailSource
+	seq, keys, stacks, details := m.stackLoadSeq, m.keyPresses, m.stackSource, m.detailSource
 	return tea.Batch(func() tea.Msg {
 		plan, err := loadStackPlan(t, board, stacks, details)
-		return stackPlanLoadedMsg{seq: seq, a: a, plan: plan, err: err}
+		return stackPlanLoadedMsg{seq: seq, keys: keys, a: a, plan: plan, err: err}
 	}, m.startSpinner())
 }
 
@@ -294,7 +321,9 @@ func (m *Model) settleStackLoad(load *actionStat, text string) tea.Cmd {
 }
 
 // runStackMerge submits a confirmed plan. The run owns its stat for the reason
-// cascadeRun.stat gives; nums and refresh cover every layer.
+// cascadeRun.stat gives; nums and refresh cover every layer. The membership is
+// re-read first: the prompt may have sat open while the stack changed, and the
+// server merges whatever is below target now, not what the prompt named.
 func (m *Model) runStackMerge(a action.Action, plan *stackMergePlan) tea.Cmd {
 	nums := plan.numbers()
 	stat := statForBulk(a, len(plan.layers))
@@ -305,8 +334,16 @@ func (m *Model) runStackMerge(a action.Action, plan *stackMergePlan) tea.Cmd {
 	m.actionStatus = stat
 	m.invalidateLaunchCache(nums...)
 	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
-	id, src, target, queue := m.stackRunID, m.mutationSource, plan.target, plan.mergeQueue
+	id, src, stacks, target, queue := m.stackRunID, m.mutationSource, m.stackSource, plan.target, plan.mergeQueue
 	return tea.Batch(func() tea.Msg {
+		st, ok, err := stacks.FetchStackForPR(target)
+		if err != nil {
+			return stackMergeSubmittedMsg{id: id, err: err}
+		}
+		members, err := stackRange(target, st)
+		if !ok || err != nil || !slices.Equal(memberNumbers(members), nums) {
+			return stackMergeSubmittedMsg{id: id, err: stackChangedError{key: a.Key}}
+		}
 		res, err := src.MergeStack(target, queue)
 		return stackMergeSubmittedMsg{id: id, res: res, err: err}
 	}, m.startSpinner())

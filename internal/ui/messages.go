@@ -152,9 +152,10 @@ type cascadeProbedMsg struct {
 
 // stackPlanLoadedMsg carries the S press's async stack load. seq matches it to
 // the live load; a carries the triggering action so a remapped key keeps its
-// labels into the prompt and the run.
+// labels into the prompt and the run. keys is Model.keyPresses at the press.
 type stackPlanLoadedMsg struct {
 	seq  int
+	keys int
 	a    action.Action
 	plan *stackMergePlan
 	err  error

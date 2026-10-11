@@ -125,6 +125,7 @@ type Model struct {
 	polling           bool                 // the live-checks poll tick loop is running
 	now               func() time.Time     // clock for check elapsed times; nil means time.Now
 	pollQuietBeats    int                  // poll beats since a key was handled; pauses the fetch at pollIdleBeats
+	keyPresses        int                  // bumped per handled key; a stack load drops its prompt if any key arrived since S
 	actionStatus      *actionStat          // transient inline-action progress shown by the header
 	cascade           *cascadeRun          // live cascade run; nil when none
 	pendingCascade    *cascadePlan         // plan awaiting the y/n prompt
@@ -2452,9 +2453,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, m.settleStackLoad(load, msg.err.Error())
 		}
-		// A plan landing over another surface is dropped rather than stacking a
-		// second prompt on it, or opening one away from the board it was asked on.
-		if m.pending != nil || m.showPicker || m.showActions || m.showLegend || m.logView || m.expanded || m.filtering || m.mode != "pr" {
+		// A plan landing over another surface or a live cascade is dropped rather
+		// than stacking a second prompt on it, or opening one away from the board
+		// it was asked on. So is one landing after any later key: the prompt would
+		// open under the user's typing, and a stray y would confirm it unread.
+		if m.pending != nil || m.cascade != nil || msg.keys != m.keyPresses || m.showPicker || m.showActions || m.showLegend || m.logView || m.expanded || m.filtering || m.mode != "pr" {
 			return m, m.settleStackLoad(load, fmt.Sprintf("Stack merge cancelled — press %s again", msg.a.Key))
 		}
 		if m.actionStatus == load {
@@ -2500,6 +2503,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
+		m.keyPresses++
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit // hard quit, ahead of every overlay that would read it as input
 		}
@@ -3170,9 +3174,11 @@ func (m Model) confirmPanel() string {
 	q := m.confirmQuestion()
 	hint := accentStyle.Render("y") + statusBarStyle.Render(" confirm   ") +
 		accentStyle.Render("n") + statusBarStyle.Render(" cancel")
-	body := titleStyle.Render(q) + "\n\n" + hint
-	w := max(lipgloss.Width(q)+6, 34)
-	return titledBox(body, w, 5, "Confirm")
+	// A stack merge names every layer, so the question can outgrow the
+	// terminal: the box is capped to it and the question wraps inside.
+	w := min(max(lipgloss.Width(q)+6, 34), max(4, m.width))
+	body := titleStyle.Render(ansi.Wrap(q, max(1, w-4), "")) + "\n\n" + ansi.Truncate(hint, max(1, w-2), "")
+	return titledBox(body, w, lipgloss.Height(body)+2, "Confirm")
 }
 
 // actionsPanel is the floating action menu.
