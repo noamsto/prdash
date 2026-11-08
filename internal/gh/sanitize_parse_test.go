@@ -47,6 +47,9 @@ func (r payloadRow) check(t *testing.T, fields []parsedField) {
 			continue
 		}
 		assertNoControls(t, f.name, f.got, f.multiline)
+		if f.multiline && r.name == "newline" && f.got != r.value {
+			t.Errorf("%s = %q, want newlines kept: %q", f.name, f.got, r.value)
+		}
 		for _, v := range r.visible {
 			if !strings.Contains(f.got, v) {
 				t.Errorf("%s = %q lost visible text %q", f.name, f.got, v)
@@ -221,6 +224,56 @@ func TestParseSanitizesRuns(t *testing.T) {
 				{"run.actor", r.Actor, false},
 				{"run.event", r.Event, false},
 			})
+		})
+	}
+}
+
+func TestParseSanitizesRunsForBranch(t *testing.T) {
+	for _, row := range payloadRows {
+		t.Run(row.name, func(t *testing.T) {
+			v := jstr(t, row.value)
+			srv := jsonServer(t, `{"workflow_runs":[{"id":1,"conclusion":`+v+`,"head_sha":`+v+`}]}`)
+			runs, err := testSource(srv, "o/r", "tok").ListRunsForBranch("main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.check(t, []parsedField{
+				{"run.conclusion", runs[0].Conclusion, false},
+				{"run.headSHA", runs[0].HeadSHA, false},
+			})
+		})
+	}
+}
+
+func TestParseSanitizesIssueDetail(t *testing.T) {
+	for _, row := range payloadRows {
+		t.Run(row.name, func(t *testing.T) {
+			v := jstr(t, row.value)
+			srv := jsonServer(t, `{"data":{"repository":{"issue":{"body":`+v+`}}}}`)
+			d, raw, err := testQuerySource(srv, "o/r").FetchIssueDetail(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.check(t, []parsedField{{"issue.body", d.Body, true}})
+
+			var cached IssueDetail
+			if err := json.Unmarshal(raw, &cached); err != nil {
+				t.Fatal(err)
+			}
+			row.check(t, []parsedField{{"issue.cachedBody", cached.Body, true}})
+		})
+	}
+}
+
+func TestParseSanitizesViewer(t *testing.T) {
+	for _, row := range payloadRows {
+		t.Run(row.name, func(t *testing.T) {
+			srv := jsonServer(t, `{"data":{"viewer":{"login":`+jstr(t, row.value)+`}}}`)
+			login, err := testQuerySource(srv, "o/r").FetchViewer()
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.check(t, []parsedField{{"viewer.login", login, false}})
 		})
 	}
 }

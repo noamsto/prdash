@@ -10,30 +10,37 @@ import (
 	"charm.land/glamour/v2"
 )
 
-// ampSentinel stands in for an `&` that could start a control character
-// reference; Render restores it to `&` after glamour returns.
-const ampSentinel = "\uE000"
+// ampSentinel picks a private-use code point that stands in for an `&` that
+// could start a control character reference. It must be absent from md and
+// from md with references decoded, or restoring it would rewrite real input.
+func ampSentinel(md string) rune {
+	decoded := html.UnescapeString(md)
+	for r := rune(0xE000); r <= 0xF8FF; r++ {
+		if !strings.ContainsRune(md, r) && !strings.ContainsRune(decoded, r) {
+			return r
+		}
+	}
+	return 0xE000
+}
 
-var ampToken = regexp.MustCompile(`&(?:#[0-9]+;|#[xX][0-9a-fA-F]+;|[a-zA-Z])?`)
+var ampToken = regexp.MustCompile(`&(?:#[0-9]+;|#[xX][0-9a-fA-F]+;|[a-zA-Z0-9=\-.%+,/])?`)
 
 // neutralizeAmp replaces every `&` that is not provably harmless with
-// ampSentinel. Glamour decodes character references after the sanitize
+// sentinel. Glamour decodes character references after the sanitize
 // boundary and concatenates inline nodes before decoding, so any `&` that can
-// start a numeric reference must not reach it.
-func neutralizeAmp(md string) string {
+// start a numeric reference must not reach it. An `&` before a letter, digit
+// or `=-.%+,/` stays: those are not inline markup, so nothing can be removed
+// between them and a following `#` to splice a reference together.
+func neutralizeAmp(md string, sentinel rune) string {
 	return ampToken.ReplaceAllStringFunc(md, func(tok string) string {
-		if len(tok) == 2 && isASCIILetter(tok[1]) {
+		if len(tok) == 2 {
 			return tok
 		}
 		if dec := html.UnescapeString(tok); dec != tok && !strings.ContainsFunc(dec, unicode.IsControl) {
 			return tok
 		}
-		return ampSentinel + tok[1:]
+		return string(sentinel) + tok[1:]
 	})
-}
-
-func isASCIILetter(b byte) bool {
-	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 // rendererByWidth memoizes term renderers per wrap width. NewTermRenderer parses
@@ -76,11 +83,12 @@ func Render(md string, width int) (string, error) {
 		rendererByWidth[width] = r
 	}
 	renderMisses++
-	out, err := r.Render(neutralizeAmp(md))
+	sentinel := ampSentinel(md)
+	out, err := r.Render(neutralizeAmp(md, sentinel))
 	if err != nil {
 		return "", err
 	}
-	out = strings.ReplaceAll(out, ampSentinel, "&")
+	out = strings.ReplaceAll(out, string(sentinel), "&")
 	outputByKey[key] = out
 	return out, nil
 }

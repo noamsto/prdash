@@ -35,9 +35,9 @@ func parseJobLog(raw []byte, failedOnly bool) []logStep {
 			content = stripTimestamp(parts[2])
 		}
 		// CI job logs carry raw ANSI SGR codes; control sequences and stray
-		// control characters are removed so truncation counts real width and
-		// the viewer's own theme coloring isn't corrupted (a truncated escape
-		// can also bleed into the surrounding lipgloss style).
+		// control characters are removed so the viewer's own theme coloring
+		// isn't corrupted (a truncated escape can also bleed into the
+		// surrounding lipgloss style).
 		content = gh.CleanText(content)
 		i, seen := idx[step]
 		if !seen {

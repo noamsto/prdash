@@ -136,6 +136,7 @@ func TestRenderNeutralizesControlReferences(t *testing.T) {
 		"&#27;", "&#x1b;", "&#X1B;", "&#0027;", "&#27", "&#157;", "&#4294967323;",
 		"&#&#27;27;", "~~&#*2*7;~~", "~~&#x*1*b;~~", "~~&`#`27;~~", "~~&[#](x)27;~~",
 		"~~&#0*2*7;~~", "~~&\n#27;~~", "&amp;#27;",
+		"~~&2#27;~~", "~~&=#*2*7;~~",
 		"&#27;]52;c;aGk=&#7;", "&#27;]8;;http://e&#7;x&#27;]8;;&#7;",
 	}
 	contexts := []struct{ name, format string }{
@@ -200,6 +201,8 @@ func TestRenderKeepsBenignAmpersands(t *testing.T) {
 		"```go\nif a && b {}\n```\n",
 		"x `a && b` y",
 		"https://x/d?a=1&from=now&to=now",
+		"https://x/p?a=1&2=b tail",
+		"https://x/p?a=1&-b=2 tail",
 		"**\"foo\"**&bar",
 		"_foo_&bar",
 	} {
@@ -214,6 +217,49 @@ func TestRenderKeepsBenignAmpersands(t *testing.T) {
 			t.Fatalf("sentinel leaked for %q", md)
 		}
 	}
+}
+
+func TestRenderQueryWithInlineDelimiterAfterAmpersand(t *testing.T) {
+	out, err := Render("https://x/p?a=1&_b=2 tail", 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoPayloadControls(t, out)
+}
+
+func TestRenderPrivateUseRunesInBody(t *testing.T) {
+	t.Run("literal sentinel candidate survives alongside &&", func(t *testing.T) {
+		out, err := Render("a  b && c", 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := ansi.Strip(out); !strings.Contains(text, "a  b && c") {
+			t.Fatalf("body rewritten: %q", text)
+		}
+	})
+	t.Run("reference decoding to the candidate stays a glyph", func(t *testing.T) {
+		out, err := Render("x &#xE000; y && z", 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := ansi.Strip(out); !strings.Contains(text, "x  y && z") {
+			t.Fatalf("reference rewritten: %q", text)
+		}
+	})
+	t.Run("candidate in body does not weaken neutralization", func(t *testing.T) {
+		for _, md := range []string{" &#27;[31m", " ~~&#*2*7;~~", " ~~&2#27;~~"} {
+			out, err := Render(md, 80)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertNoPayloadControls(t, strings.ReplaceAll(out, "", ""))
+		}
+	})
+	t.Run("sentinel skips present code points", func(t *testing.T) {
+		if got := ampSentinel(" &#xE001;"); got != 0xE002 {
+			t.Fatalf("sentinel = %U, want U+E002", got)
+		}
+	})
 }
 
 func TestRenderFencedAmpersandsHaveNoErrorBackground(t *testing.T) {

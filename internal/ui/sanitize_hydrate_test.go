@@ -119,3 +119,21 @@ func TestHydrateSanitizesCachedViewer(t *testing.T) {
 	}
 	assertNoControls(t, "viewerLogin", m.viewerLogin, false)
 }
+
+func TestHydrateSanitizesCachedPRsFromDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	m := NewModel("/repo", "is:open", cache.Open(path))
+	m.SetRepo("x")
+	m.cache.Set(prKey(m.repo, "f", 10), []byte(`[{"number":1,"title":"`+evilJSON+`"}]`))
+	m.cache.Flush()
+	m.cache = cache.Open(path)
+
+	prs, ok := m.cachedPRs("f", 10)
+	if !ok || len(prs) != 1 {
+		t.Fatalf("cachedPRs = %v, %v", prs, ok)
+	}
+	assertNoControls(t, "title", prs[0].Title, false)
+	if !strings.Contains(prs[0].Title, "title") {
+		t.Errorf("title = %q", prs[0].Title)
+	}
+}

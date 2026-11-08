@@ -13,8 +13,8 @@ import (
 
 // CleanLine makes an API string safe for one terminal row: escape sequences
 // are removed, line and paragraph breaks become spaces, and any other control
-// rune becomes U+FFFD rather than vanishing, so two distinct refs never
-// collapse to the same cleaned value.
+// rune becomes U+FFFD rather than vanishing, so a cleaned name never equals
+// the same name with the control removed.
 func CleanLine(s string) string {
 	s = strings.ReplaceAll(ansi.Strip(s), "\r\n", " ")
 	return strings.Map(func(r rune) rune {
