@@ -411,7 +411,7 @@ func (m *Model) setPRs(prs []gh.PR) { m.paintPRs(prs, false) }
 func (m *Model) setIssues(is []gh.Issue) { m.paintIssues(is, false) }
 
 func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
-	m.paintSections(review, reviewed, open, viewer, false)
+	m.paintSections(review, reviewed, open, viewer, false, false)
 }
 
 func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer string) {
@@ -473,8 +473,10 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 // The reviewed half unions PRs back into Review requested that GitHub drops from
 // review-requested:@me once the viewer submits a review; they keep their place
 // and carry the ◐ marker (see commentedByMe) instead of sinking into Others.
-// A held row keeps the category it had; replace as in paintPRs.
-func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, replace bool) {
+// A held row keeps the category it had; replace as in paintPRs, except that a
+// launch replace still carries the rows merged this session: search already
+// omits them, and the cached rows being dropped predate this session.
+func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, replace, launch bool) {
 	num, order := m.paintAnchor(true)
 	selNums, wasHeld := m.selectedRows()
 	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit
@@ -516,6 +518,15 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
+			if launch {
+				prevCats = map[int]string{}
+				for _, p := range s.prs {
+					if _, merged := m.sessionMerged[p.Number]; merged {
+						prev = append(prev, p)
+						prevCats[p.Number] = s.cats[p.Number]
+					}
+				}
+			}
 		} else {
 			prev, prevCats = s.prs, s.cats
 		}
@@ -1954,7 +1965,9 @@ func (m Model) invalidateLaunchCache(nums ...int) {
 // fetchSkippedMsg so the refresh spinner still clears. Split out so the
 // freshness gating is unit-testable without the ticker commands. The list
 // fetches are requested replaces: Hydrate painted a disk cache that can be
-// days old, and nothing on it was shown live this session.
+// days old, and nothing on it was shown live this session. The one exception
+// is a PR merged this session, which the sections paint keeps (see
+// paintSections), hence the launch tag on the sections fetch.
 func (m Model) launchFetchCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 	sectionsFresh := true
@@ -1967,7 +1980,15 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	if sectionsFresh {
 		cmds = append(cmds, func() tea.Msg { return fetchSkippedMsg{} })
 	} else {
-		cmds = append(cmds, m.sectionsFetchCmd(true))
+		fetch := m.sectionsFetchCmd(true)
+		cmds = append(cmds, func() tea.Msg {
+			msg := fetch()
+			if sf, ok := msg.(sectionsFetchedMsg); ok {
+				sf.launch = true
+				return sf
+			}
+			return msg
+		})
 	}
 	// All-or-nothing, like the PR gate above: a fresh assigned half plus a
 	// missing wide half paints a board with no Others at all, so any one
@@ -2059,7 +2080,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.paintSections(msg.review, msg.reviewed, msg.open, m.viewerLogin, msg.replace)
+		m.paintSections(msg.review, msg.reviewed, msg.open, m.viewerLogin, msg.replace, msg.launch)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}

@@ -1273,6 +1273,35 @@ func TestLaunchReconcileReplacesTheHydratedBoard(t *testing.T) {
 	}
 }
 
+// TestLaunchReplaceKeepsSessionMergedRow: the launch replace drops stale
+// cached rows but not a PR prdash merged this session, even though search
+// already omits it.
+func TestLaunchReplaceKeepsSessionMergedRow(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	stubBackends(&m)
+	m.SetPRSource(openListSource{open: []gh.PR{openPR(6, "bob")}})
+	m.setSections(nil, nil, []gh.PR{openPR(5, "bob"), openPR(6, "bob")}, "")
+	u, _ := m.Update(actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 5)}})
+	m = u.(Model)
+
+	for _, cmd := range m.launchFetchCmds() {
+		if msg, ok := cmd().(sectionsFetchedMsg); ok {
+			u, _ := m.Update(msg)
+			m = u.(Model)
+		}
+	}
+	got := shownNumbers(m)
+	slices.Sort(got)
+	if !slices.Equal(got, []int{5, 6}) {
+		t.Fatalf("shown = %v, want [5 6] — the session-merged #5 survives the launch replace", got)
+	}
+	if st := findPR(t, m.section.(*PRSection), 5).State; st != "MERGED" {
+		t.Errorf("#5 state = %q, want MERGED", st)
+	}
+}
+
 // TestLaunchReplaceThenAnchors: the launch replace pins the cursor to the top
 // row just like a filter switch (paintAnchor's homing rule also pins it while
 // the opening jump to Mine is unspent — cursorHomed is set directly here to
