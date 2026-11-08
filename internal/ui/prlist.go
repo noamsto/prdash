@@ -929,17 +929,21 @@ func (m *Model) repaintActive() {
 	}
 }
 
+// previewBodyRows is how many body lines the side pane shows under head.
+func (m Model) previewBodyRows(head string) int {
+	visible := m.previewHeight(m.layout()) - 2 // inside the pane border
+	if head != "" {
+		visible -= lipgloss.Height(head) + 1 // the head and the blank row under it
+	}
+	return visible
+}
+
 // previewScrollBy scrolls the side preview by delta lines, clamped so the last
 // line can't scroll above the top of the pane. Only the body scrolls — the
 // pinned head keeps its rows, so they come off the visible budget.
 func (m *Model) previewScrollBy(delta int) {
-	l := m.layout()
 	head, body := m.previewParts()
-	visible := m.previewHeight(l) - 2 // inside the pane border
-	if head != "" {
-		visible -= lipgloss.Height(head) + 1 // the head and the blank row under it
-	}
-	over := max(lipgloss.Height(body)-visible, 0) // content fits the pane; nothing to scroll
+	over := max(lipgloss.Height(body)-m.previewBodyRows(head), 0) // content fits the pane; nothing to scroll
 	m.previewOffset += delta
 	if m.previewOffset > over {
 		m.previewOffset = over
@@ -2158,13 +2162,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshing = false
 		}
 		if m.logView {
-			return m, m.maybeStartRunPoll() // painting would overwrite the viewport the log view owns
+			cmd := m.maybeStartRunPoll() // painting would overwrite the viewport the log view owns
+			return m, cmd
 		}
 		m.emptyNotice = ""
 		m.loaded = true
 		m.paintRuns(msg.runs, msg.replace)
 		m.repaintActive() // paintRuns rendered before the cursor moved back
-		return m, tea.Batch(m.detailCmdForCursor(), m.maybeStartRunPoll())
+		cmd := tea.Batch(m.detailCmdForCursor(), m.maybeStartRunPoll())
+		return m, cmd
 	case runsFailedMsg:
 		if m.mode != "run" || (msg.poll && msg.seq != m.runsFetchSeq) {
 			return m, nil
@@ -2180,10 +2186,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loaded = true
 			m.emptyNotice = "Couldn't load runs: " + msg.err.Error()
 		default:
-			return m, tea.Batch(m.hint("Runs refresh failed: "+msg.err.Error()), m.maybeStartRunPoll())
+			cmd := tea.Batch(m.hint("Runs refresh failed: "+msg.err.Error()), m.maybeStartRunPoll())
+			return m, cmd
 		}
 		m.repaintActive()
-		return m, m.maybeStartRunPoll()
+		cmd := m.maybeStartRunPoll()
+		return m, cmd
 	case runJobsMsg:
 		entry := m.runJobs[msg.runID]
 		if msg.err != nil {
@@ -2221,7 +2229,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.mode != "" {
 				return m, nil // wrong board entirely
 			}
-			return m, m.hint("Background fetch failed: " + msg.err.Error())
+			cmd := m.hint("Background fetch failed: " + msg.err.Error())
+			return m, cmd
 		}
 		if msg.mode != "" && msg.mode != m.mode {
 			return m, nil // wrong board entirely
@@ -2807,7 +2816,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.actionFilter.Focus()
 		case "s":
 			if m.mode == "run" {
-				return m, m.cycleRunState()
+				cmd := m.cycleRunState()
+				return m, cmd
 			}
 			m.state = nextState(m.state, statesFor(m.mode))
 			body := m.body
@@ -2937,6 +2947,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
 		case "right", "l":
+			if m.mode == "run" {
+				m.moveRunJobFocus(1)
+				return m, nil
+			}
 			if m.mode != "pr" {
 				return m, nil // tabs/expanded view are PR-only in v1
 			}
@@ -2949,6 +2963,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
 		case "left", "h":
+			if m.mode == "run" {
+				m.moveRunJobFocus(-1)
+				return m, nil
+			}
 			if m.mode != "pr" || !m.layout().ShowSide {
 				return m, nil
 			}
@@ -2973,7 +2991,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingStackMerge = nil
 					return m, nil
 				}
-				return m, m.runAction(a)
+				cmd := m.runAction(a) // openJobLog mutates m; read it after the call
+				return m, cmd
 			}
 			if m.mode != "pr" {
 				if a, ok := action.DefaultPRActions()[msg.String()]; ok {

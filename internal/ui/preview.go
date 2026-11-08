@@ -306,6 +306,9 @@ func (m Model) previewParts() (head, body string) {
 	if is, ok := m.section.(*IssueSection); ok {
 		return m.issuePreviewParts(is, w, w-2)
 	}
+	if rs, ok := m.section.(*RunSection); ok {
+		return m.runPreviewParts(rs, w, w-2)
+	}
 	ps, ok := m.section.(*PRSection)
 	if !ok {
 		return "", ""

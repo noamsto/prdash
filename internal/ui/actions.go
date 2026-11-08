@@ -259,6 +259,10 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		return tea.Batch(func() tea.Msg {
 			return cleanupDone(dir, p)
 		}, m.startSpinner())
+	case "rerun-run":
+		return m.rerunRunCmd(a)
+	case "run-logs":
+		return m.openRunJobLog()
 	case "rerun-failed":
 		if ps, ok := m.section.(*PRSection); ok {
 			if err := m.mutable(ps.prAt(m.cursor)); err != nil {
