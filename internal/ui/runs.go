@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/noamsto/prdash/internal/gh"
 )
 
-// RunSection is the Actions board: repo-wide workflow runs, live ones first.
+// RunSection is the Runs board: repo-wide workflow runs, live ones first.
 // It is deliberately not `numbered`: a run has no item number the cursor
 // anchor could follow, so the board anchors on run IDs instead.
 type RunSection struct {
@@ -57,7 +58,7 @@ func (s *RunSection) SetRuns(runs []gh.WorkflowRun, held map[int64]bool) {
 		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
 			return c
 		}
-		return int(b.ID - a.ID)
+		return cmp.Compare(b.ID, a.ID)
 	})
 	s.runs = runs
 	s.held = held

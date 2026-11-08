@@ -25,7 +25,7 @@ import (
 	"github.com/noamsto/prdash/internal/triage"
 )
 
-// boardView is the per-mode selection saved across an i-toggle so flipping back
+// boardView is the per-mode selection saved across a Tab cycle so coming back
 // lands on the same state/body the user left.
 type boardView struct {
 	state, body, filter string
@@ -35,12 +35,12 @@ type boardView struct {
 type Model struct {
 	dir               string
 	filter            string
-	state             string    // open | merged | closed; the s-toggle dimension
-	body              string    // state-agnostic qualifier (e.g. "author:@me", "")
-	mode              string    // "pr" | "issue"; the i-toggle dimension
-	omniServer        string    // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
-	omniSeq           int       // bumped on each server-qualifier change; gates the debounced SWR refetch
-	other             boardView // the inactive board's saved state/preset (restored on toggle-back)
+	state             string               // open | merged | closed; the s-toggle dimension
+	body              string               // state-agnostic qualifier (e.g. "author:@me", "")
+	mode              string               // "pr" | "issue" | "run"; the Tab-cycle dimension
+	omniServer        string               // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
+	omniSeq           int                  // bumped on each server-qualifier change; gates the debounced SWR refetch
+	boards            map[string]boardView // each inactive board's saved state/preset, by mode (restored when Tab returns to it)
 	issueDetail       map[int]gh.IssueDetail
 	issueFresh        map[int]bool // issue numbers whose body was refetched this session
 	cache             *cache.Cache
@@ -54,6 +54,7 @@ type Model struct {
 	membersSource     gh.MembersSource     // assignable-users backend
 	mutationSource    gh.MutationSource    // PR-mutation backend (merge/ready/etc.)
 	actionsSource     gh.ActionsSource     // Actions rerun/job-log backend
+	runsSource        gh.RunsSource        // repo-wide workflow-run listing backend
 	rateSource        gh.RateSource        // API rate-limit budgets, scraped off responses the other backends make
 	rate              gh.RateSnapshot      // last sampled budget; the zero value is "nothing observed yet"
 	rowText           []string             // renderList per-row cache: rendered string per shown index
@@ -142,14 +143,20 @@ type Model struct {
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
-	members           []gh.User  // cached assignable users for this repo
-	membersErr        error      // last member-fetch failure; hints the picker/omni dropdown
-	viewerLogin       string     // authenticated user's login; splits Mine from Others in the sections view
-	pendingExec       [][]string // exits-TUI commands to run after quit when no orchestrator sink is set
-	switchNotice      string     // read-only wt preflight failure; held until a keypress
-	switchChecking    bool       // a switchPreflightCmd is in flight; blocks a second dispatch
-	themeMode         string     // "light"|"dark"; active palette mode
-	themeModTime      time.Time  // last-seen mtime of the theme-state file
+	members           []gh.User              // cached assignable users for this repo
+	membersErr        error                  // last member-fetch failure; hints the picker/omni dropdown
+	viewerLogin       string                 // authenticated user's login; splits Mine from Others in the sections view
+	pendingExec       [][]string             // exits-TUI commands to run after quit when no orchestrator sink is set
+	switchNotice      string                 // read-only wt preflight failure; held until a keypress
+	switchChecking    bool                   // a switchPreflightCmd is in flight; blocks a second dispatch
+	themeMode         string                 // "light"|"dark"; active palette mode
+	themeModTime      time.Time              // last-seen mtime of the theme-state file
+	runJobs           map[int64]runJobsEntry // run ID → last jobs fetch; memory only
+	runFocusRun       int64                  // run the focused job belongs to
+	runFocusJob       int64                  // focused job in the side preview
+	runPolling        bool                   // the Runs-board poll tick loop is running
+	runsFetchSeq      int                    // bumped per requested runs fetch; a poll result carrying an older seq is dropped
+	lastKeyAt         time.Time              // last handled key; slows the Runs-board poll when quiet
 }
 
 func NewModel(dir, filter string, c *cache.Cache) Model {
@@ -161,10 +168,12 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 	resolved := searchFor("pr", state, body)
 	return Model{
 		dir: dir, filter: resolved, state: state, body: body, mode: "pr",
-		other: boardView{
-			state: "open", body: "", filter: searchFor("issue", "open", ""),
+		boards: map[string]boardView{
+			"issue": {state: "open", body: "", filter: searchFor("issue", "open", "")},
+			"run":   {state: "recent", filter: searchFor("run", "recent", "")},
 		},
-		cache: c, section: NewPRSection(resolved),
+		runJobs: map[int64]runJobsEntry{},
+		cache:   c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
 		detail:  map[int]gh.PRDetail{}, detailErr: map[int]error{}, fresh: map[int]bool{},
@@ -225,6 +234,9 @@ func (m *Model) SetMutationSource(s gh.MutationSource) { m.mutationSource = s }
 // SetActionsSource installs the REST backend for Actions rerun/job-log
 // operations (internal/action.RerunFailed/RerunCheck/JobLog).
 func (m *Model) SetActionsSource(s gh.ActionsSource) { m.actionsSource = s }
+
+// SetRunsSource installs the backend the Runs board lists runs and jobs from.
+func (m *Model) SetRunsSource(s gh.RunsSource) { m.runsSource = s }
 
 // SetRateSource installs the backend the header's API-budget segment samples.
 func (m *Model) SetRateSource(s gh.RateSource) { m.rateSource = s }
@@ -827,7 +839,7 @@ func (m *Model) renderList() {
 		if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
 				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Held: held, Tag: tag, Commented: commented,
-				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor,
+				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor, Now: m.clock(),
 			})
 			m.rowSig[i] = key
 		}
@@ -856,6 +868,11 @@ func (m *Model) renderList() {
 		switch {
 		case m.emptyNotice != "":
 			hint = m.emptyNotice
+		case m.loaded && m.section.Kind() == "run":
+			hint = "No runs."
+			if m.state != "recent" {
+				hint = fmt.Sprintf("No %s runs.", m.state)
+			}
 		case m.loaded:
 			noun := "PRs"
 			if m.section.Kind() == "issue" {
@@ -863,7 +880,7 @@ func (m *Model) renderList() {
 			}
 			hint = fmt.Sprintf("No %s %s.", m.state, noun)
 		}
-		content = dimStyle.Render(hint)
+		content = dimStyle.Render(truncate(hint, innerW))
 	}
 	m.listColHeader = ""
 	if isPR && n > 0 {
@@ -945,7 +962,11 @@ func (m *Model) applyFilter() {
 	if is, ok := m.section.(*IssueSection); ok {
 		is.SetForceFlat(strings.TrimSpace(query) != "")
 	}
-	m.section.SetShown(matchIdx(m.section.Haystacks(), query))
+	if rs, ok := m.section.(*RunSection); ok {
+		m.section.SetShown(rs.matchQuery(query))
+	} else {
+		m.section.SetShown(matchIdx(m.section.Haystacks(), query))
+	}
 	if m.cursor >= m.section.Len() {
 		m.cursor = m.section.Len() - 1
 	}
@@ -1169,6 +1190,13 @@ func (m *Model) cachedIssues(filter string, limit int) ([]gh.Issue, bool) {
 func (m *Model) hydrate() bool {
 	if m.cache == nil {
 		return false
+	}
+	if m.mode == "run" {
+		runs, ok := m.cachedRuns()
+		if ok {
+			m.paintRuns(runs, false)
+		}
+		return ok
 	}
 	if m.mode == "issue" {
 		if m.issueSectionsDefault() {
@@ -1724,6 +1752,10 @@ func (m Model) listFetchCmd(replace bool) tea.Cmd {
 // CI poll, delayedRefreshMsg) that must not drop held rows.
 func (m *Model) refreshCmd(replace bool) tea.Cmd {
 	m.refreshing = true
+	if m.mode == "run" {
+		m.runsFetchSeq++
+		return tea.Batch(m.runsFetchCmd(replace, false), m.startSpinner())
+	}
 	if m.mode == "issue" {
 		fetch := m.issueFetchCmd(m.filter, replace)
 		if m.issueSectionsDefault() {
@@ -1748,11 +1780,21 @@ func (m *Model) switchToFilter() tea.Cmd {
 		s.SetPRs(nil)
 	case *IssueSection:
 		s.SetIssues(nil)
+	case *RunSection:
+		s.SetRuns(nil, nil)
+		s.resetView()
 	}
 	m.emptyNotice = ""
 	m.refreshing = true
 	hit := m.hydrate()
 	m.loaded = hit // warm cache shows data/empty-state; a miss shows Loading…
+	if m.mode == "run" {
+		if !hit {
+			m.applyFilter() // drop the previous board's rows while the fetch is in flight
+		}
+		m.runsFetchSeq++
+		return tea.Batch(m.runsFetchCmd(true, false), m.startSpinner())
+	}
 	if m.mode == "issue" {
 		if !hit {
 			if m.issueSectionsDefault() {
@@ -1781,21 +1823,26 @@ func (m *Model) switchToFilter() tea.Cmd {
 	return tea.Batch(fetch, m.startSpinner())
 }
 
-// toggleMode flips the board between PRs and issues: it saves the active board's
-// selection, restores the other's, swaps the section + action set, resets all
-// per-item/preview view state, and re-fetches (cached → instant).
-func (m *Model) toggleMode() tea.Cmd {
-	cur := boardView{state: m.state, body: m.body, filter: m.filter, hideDrafts: m.hideDrafts}
-	m.state, m.body, m.filter = m.other.state, m.other.body, m.other.filter
-	m.hideDrafts = m.other.hideDrafts
-	m.other = cur
+// boardCycle is the order Tab walks the boards in.
+var boardCycle = []string{"pr", "issue", "run"}
 
-	if m.mode == "pr" {
-		m.mode = "issue"
+// cycleBoard moves to the next board: it saves the active board's selection,
+// restores the next one's, swaps the section + action set, resets all
+// per-item/preview view state, and re-fetches (cached → instant).
+func (m *Model) cycleBoard() tea.Cmd {
+	m.boards[m.mode] = boardView{state: m.state, body: m.body, filter: m.filter, hideDrafts: m.hideDrafts}
+	m.mode = boardCycle[(slices.Index(boardCycle, m.mode)+1)%len(boardCycle)]
+	next := m.boards[m.mode]
+	m.state, m.body, m.filter, m.hideDrafts = next.state, next.body, next.filter, next.hideDrafts
+
+	switch m.mode {
+	case "issue":
 		m.section = NewIssueSection(m.filter)
 		m.actions = action.DefaultIssueActions()
-	} else {
-		m.mode = "pr"
+	case "run":
+		m.section = NewRunSection(m.filter, m.state)
+		m.actions = action.DefaultRunActions()
+	default:
 		m.section = NewPRSection(m.filter)
 		m.actions = action.DefaultPRActions()
 		if ps, ok := m.section.(*PRSection); ok {
@@ -1988,6 +2035,9 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 	if m.viewerLogin == "" {
 		cmds = append(cmds, m.fetchViewerCmd())
 	}
+	if m.runsSource != nil && !m.cacheFresh(runsKey(m.repo)) {
+		cmds = append(cmds, m.runsFetchCmd(true, false))
+	}
 	return cmds
 }
 
@@ -2097,6 +2147,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.detailCmdForCursor()
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.heldStatesCmd())
+	case runsFetchedMsg:
+		if m.cache != nil && msg.raw != nil {
+			m.cache.Set(runsKey(m.repo), msg.raw)
+		}
+		if m.mode != "run" || (msg.poll && msg.seq != m.runsFetchSeq) {
+			return m, nil // launch prewarm off the board, or a beat a ctrl+r overtook: cache only
+		}
+		if !msg.poll {
+			m.refreshing = false
+		}
+		if m.logView {
+			return m, m.maybeStartRunPoll() // painting would overwrite the viewport the log view owns
+		}
+		m.emptyNotice = ""
+		m.loaded = true
+		m.paintRuns(msg.runs, msg.replace)
+		m.repaintActive() // paintRuns rendered before the cursor moved back
+		return m, tea.Batch(m.detailCmdForCursor(), m.maybeStartRunPoll())
+	case runsFailedMsg:
+		if m.mode != "run" || (msg.poll && msg.seq != m.runsFetchSeq) {
+			return m, nil
+		}
+		if !msg.poll {
+			m.refreshing = false
+		}
+		switch {
+		case gh.ActionsDisabled(msg.err):
+			m.loaded = true
+			m.emptyNotice = "GitHub Actions is disabled or unavailable for this repository."
+		case m.section.Len() == 0:
+			m.loaded = true
+			m.emptyNotice = "Couldn't load runs: " + msg.err.Error()
+		default:
+			return m, tea.Batch(m.hint("Runs refresh failed: "+msg.err.Error()), m.maybeStartRunPoll())
+		}
+		m.repaintActive()
+		return m, m.maybeStartRunPoll()
+	case runJobsMsg:
+		entry := m.runJobs[msg.runID]
+		if msg.err != nil {
+			entry.err, entry.runUpdated = msg.err, time.Time{}
+		} else {
+			entry = runJobsEntry{jobs: msg.jobs, total: msg.total, runUpdated: msg.runUpdated}
+		}
+		m.runJobs[msg.runID] = entry
+		m.repaintActive()
+		return m, nil
+	case runsPollMsg:
+		if m.mode != "run" {
+			m.runPolling = false
+			return m, nil
+		}
+		tick := runsPollTick(m.runsPollDelay())
+		if m.pollBusy() || m.logView || runPollPaused(m.rate, m.clock()) {
+			return m, tick // skip this beat, keep the loop alive
+		}
+		return m, tea.Batch(m.runsFetchCmd(false, true), tick)
 	case heldStatesMsg:
 		if msg.gen != m.heldGen {
 			return m, nil // a clearHeld (ctrl+r, filter switch) fired since this lookup was sent
@@ -2110,6 +2217,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive()
 		return m, nil
 	case fetchFailedMsg:
+		if m.mode == "run" {
+			if msg.mode != "" {
+				return m, nil // wrong board entirely
+			}
+			return m, m.hint("Background fetch failed: " + msg.err.Error())
+		}
 		if msg.mode != "" && msg.mode != m.mode {
 			return m, nil // wrong board entirely
 		}
@@ -2288,6 +2401,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// is rebuilt every View and needs nothing.
 		if m.expanded && !m.logView && (m.expandedTab == tabOverview || m.expandedTab == tabChecks) && m.focusedHasTimedPending() {
 			m.reflowExpanded()
+		}
+		// A live run's elapsed time lives in the cached row text, so it advances
+		// only if this beat re-renders the list.
+		if rs, ok := m.section.(*RunSection); ok && !m.logView && rs.anyLive() {
+			m.rowGen++
+			m.renderList()
 		}
 		mod, err := themestate.ModTime(themestate.Path())
 		if err != nil || mod.Equal(msg.lastMod) {
@@ -2504,6 +2623,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.pollQuietBeats = 0 // any handled key resumes a paused checks poll
 		m.keyPresses++
+		m.lastKeyAt = m.clock()
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit // hard quit, ahead of every overlay that would read it as input
 		}
@@ -2686,6 +2806,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showActions = true
 			return m, m.actionFilter.Focus()
 		case "s":
+			if m.mode == "run" {
+				return m, m.cycleRunState()
+			}
 			m.state = nextState(m.state, statesFor(m.mode))
 			body := m.body
 			if m.mode == "pr" && m.omniServer != "" {
@@ -2694,7 +2817,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filter = searchFor(m.mode, m.state, body)
 			return m, m.switchToFilter()
 		case "tab":
-			return m, m.toggleMode()
+			return m, m.cycleBoard()
 		case "ctrl+r":
 			// The one refresh the user asked for by name: held rows go once its
 			// result lands. Every other refresh (post-action, CI poll) keeps them.
@@ -2785,10 +2908,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, tea.Quit
 		case "space":
+			if m.mode == "run" {
+				return m.statusHint("Runs can't be multi-selected")
+			}
 			m.sel.toggle(m.cursor)
 			m.renderList()
 			return m, nil
 		case "V":
+			if m.mode == "run" {
+				return m.statusHint("Runs can't be multi-selected")
+			}
 			m.advanceSelection()
 			m.renderList()
 			return m, nil

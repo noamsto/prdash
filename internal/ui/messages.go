@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -196,6 +198,38 @@ type checksPollMsg struct{}
 type checksFetchedMsg struct {
 	checks map[int][]gh.Check
 }
+
+// runsFetchedMsg carries one ListRuns result. poll marks an unrequested beat,
+// whose seq is compared with Model.runsFetchSeq so a beat that a ctrl+r
+// overtook cannot regress the board.
+type runsFetchedMsg struct {
+	runs    []gh.WorkflowRun
+	raw     []byte
+	replace bool // requested (ctrl+r, tab switch) vs. an unrequested reconcile
+	poll    bool
+	seq     int
+}
+
+// runsFailedMsg is deliberately not a fetchFailedMsg: a runs failure stays
+// inside the board chrome and never becomes m.err.
+type runsFailedMsg struct {
+	err  error
+	poll bool
+	seq  int
+}
+
+// runJobsMsg carries one run's jobs. runUpdated is the run's UpdatedAt as of
+// the request, so a run that moved on while it was in flight is fetched again.
+type runJobsMsg struct {
+	runID      int64
+	jobs       []gh.RunJob
+	total      int
+	runUpdated time.Time
+	err        error
+}
+
+// runsPollMsg fires one Runs-board poll beat.
+type runsPollMsg struct{}
 
 // logFetchedMsg carries a fetched job log back to the log sub-view. all
 // distinguishes the full-log variant from failed-only so a stale in-flight

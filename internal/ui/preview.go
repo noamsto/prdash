@@ -74,6 +74,8 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 			return nil
 		}
 		return m.batchDetailCmd([]int{v.Number})
+	case "run":
+		return m.runJobsCmdForCursor()
 	}
 	return nil
 }

@@ -329,11 +329,11 @@ func ciGlyph(state string) string {
 	}
 }
 
-// Runs-board glyphs. runGlyph is a placeholder until the real nerd glyph is supplied.
+// Runs-board glyphs.
 const (
-	runGlyph          = "▶" // nerd: nf-oct-workflow
-	runQueuedGlyph    = "" // nerd: nf-oct-clock
-	runCancelledGlyph = "" // nerd: nf-oct-circle_slash
+	runGlyph          = "\uF52E" // nerd: nf-oct-workflow
+	runQueuedGlyph    = "\uF43A" // nerd: nf-oct-clock
+	runCancelledGlyph = "\uF468" // nerd: nf-oct-circle_slash
 )
 
 // runStatusGlyph maps a workflow run's status/conclusion to a colored glyph.
