@@ -544,8 +544,8 @@ func filterActions(acts map[string]action.Action, query string) []action.Action 
 	}
 	matches := fuzzy.Find(query, hay)
 	out := make([]action.Action, 0, len(matches))
-	for _, mch := range matches {
-		out = append(out, list[mch.Index])
+	for _, match := range matches {
+		out = append(out, list[match.Index])
 	}
 	return out
 }
