@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -172,23 +173,37 @@ func TestPensOpenAtEnd(t *testing.T) {
 // and View() scans it on the Bubble Tea loop, so a quadratic here freezes the app.
 func TestPensOpenAtEndStaysLinear(t *testing.T) {
 	const small, big = 20000, 160000
-	measure := func(n int) time.Duration {
+	// Pauses from the scheduler or GC only ever add time, so the fastest of
+	// several runs tracks the scan's own cost.
+	fastest := func(n int) time.Duration {
 		s := strings.Repeat("\x1b]", n/2)
-		start := time.Now()
-		_ = pensOpenAtEnd(s)
-		return time.Since(start)
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			_ = pensOpenAtEnd(s)
+			best = min(best, time.Since(start))
+		}
+		return best
 	}
-	measure(small) // warm
+	fastest(small) // warm
 
 	// Linear scaling would be ~8x for 8x the input; quadratic is ~64x. A 20x
-	// ceiling separates them without being flaky on a loaded machine.
-	sm, bg := measure(small), measure(big)
-	if sm <= 0 {
-		sm = time.Microsecond
+	// ceiling separates them. Contention from other load can slow every sample
+	// in one short window, so the best ratio over spaced rounds is the verdict:
+	// quadratic is slow in every round, linear only needs one clean one.
+	ratio := math.Inf(1)
+	for range 5 {
+		sm, bg := fastest(small), fastest(big)
+		if sm <= 0 {
+			sm = time.Microsecond
+		}
+		ratio = min(ratio, float64(bg)/float64(sm))
+		if ratio <= 20 {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if ratio := bg / sm; ratio > 20 {
-		t.Errorf("scan cost grew %dx for %dx the input (%v -> %v): superlinear", ratio, big/small, sm, bg)
-	}
+	t.Errorf("scan cost grew at least %.0fx for %dx the input: superlinear", ratio, big/small)
 }
 
 // TestBoxBodyBelowPrecondition covers w and h under boxBody's documented
