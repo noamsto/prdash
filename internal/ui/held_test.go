@@ -1714,6 +1714,9 @@ func TestConfirmPromptCancelsWhenTheSelectionLeaves(t *testing.T) {
 	if m.pending == nil {
 		t.Fatal("test setup: an unrequested refetch must not clear a pending confirm")
 	}
+	if q := m.confirmQuestion(); !strings.Contains(q, "2 PRs") {
+		t.Fatalf("confirmQuestion after the selection left = %q, want it to still name 2 PRs", q)
+	}
 
 	if cmd := m.confirmAnswer(true); cmd != nil {
 		invokeCmdTree(t, cmd) // drives the merge network call too, if the fix regresses and fires one
@@ -1727,6 +1730,27 @@ func TestConfirmPromptCancelsWhenTheSelectionLeaves(t *testing.T) {
 	}
 	if m.pending != nil || m.pendingTargets != nil {
 		t.Fatalf("pending/pendingTargets should clear on the answer, got %v / %v", m.pending, m.pendingTargets)
+	}
+}
+
+// TestConfirmPromptKeepsOpenedSingleTarget: auto-merge on a foreign PR opens
+// "#12 by alice?" for the cursor row. A refetch that drops #12 must leave the
+// prompt naming #12, without the author suffix, rather than naming whatever
+// row the cursor now sits on.
+func TestConfirmPromptKeepsOpenedSingleTarget(t *testing.T) {
+	m, _ := mutationModel(t, []gh.PR{mergeablePR(20, "alice"), mergeablePR(12, "alice")})
+	m.cursor = shownIndex(m, 12)
+	if cmd := m.startBulk(automergeAction()); cmd != nil || m.pending == nil {
+		t.Fatalf("auto-merge on a foreign PR should prompt: cmd=%v pending=%v", cmd, m.pending)
+	}
+	if q := m.confirmQuestion(); q != "Auto-merge (squash) #12 by alice?" {
+		t.Fatalf("confirmQuestion = %q, want %q", q, "Auto-merge (squash) #12 by alice?")
+	}
+
+	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(20, "alice")}, replace: true})
+	m = u.(Model)
+	if q := m.confirmQuestion(); q != "Auto-merge (squash) #12?" {
+		t.Fatalf("confirmQuestion after #12 left = %q, want %q", q, "Auto-merge (squash) #12?")
 	}
 }
 

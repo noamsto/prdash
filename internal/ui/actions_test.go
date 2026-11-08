@@ -371,8 +371,7 @@ func TestConfirmQuestionNamesForeignAuthor(t *testing.T) {
 	p.Author.Login = "alice"
 	sec.SetPRs([]gh.PR{p})
 	m.section = sec
-	a := automergeAction()
-	m.pending = &a
+	m.startBulk(automergeAction())
 
 	q := m.confirmQuestion()
 	if !strings.Contains(q, "#42") || !strings.Contains(q, "alice") {
@@ -385,8 +384,7 @@ func TestConfirmQuestionEmptySectionNoPanic(t *testing.T) {
 	sec := NewPRSection("is:open")
 	sec.SetPRs(nil)
 	m.section = sec
-	a := automergeAction()
-	m.pending = &a
+	m.startBulk(automergeAction())
 
 	q := m.confirmQuestion() // must not panic
 	if q == "" {
@@ -405,8 +403,7 @@ func TestConfirmQuestionBulkShowsCount(t *testing.T) {
 	m.section = sec
 	m.sel.toggle(0)
 	m.sel.toggle(1)
-	a := automergeAction()
-	m.pending = &a
+	m.startBulk(automergeAction())
 
 	q := m.confirmQuestion()
 	if !strings.Contains(q, "for 2 PRs") {
