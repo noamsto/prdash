@@ -3168,9 +3168,8 @@ func (m Model) confirmQuestion() string {
 	return fmt.Sprintf("%s #%d?", a.Label, n)
 }
 
-// authorOfNumber returns the author of the shown row numbered n. ok is false
-// once that row has left the section, so the prompt can keep naming the
-// number without the author.
+// authorOfNumber returns the author of the shown row numbered n; ok is false
+// once that row has left the section.
 func (m Model) authorOfNumber(n int) (author string, ok bool) {
 	num, isNumbered := m.section.(numbered)
 	if !isNumbered {

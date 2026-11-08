@@ -1733,10 +1733,8 @@ func TestConfirmPromptCancelsWhenTheSelectionLeaves(t *testing.T) {
 	}
 }
 
-// TestConfirmPromptKeepsOpenedSingleTarget: auto-merge on a foreign PR opens
-// "#12 by alice?" for the cursor row. A refetch that drops #12 must leave the
-// prompt naming #12, without the author suffix, rather than naming whatever
-// row the cursor now sits on.
+// TestConfirmPromptKeepsOpenedSingleTarget: the prompt keeps naming the PR it
+// opened with after that PR leaves the board.
 func TestConfirmPromptKeepsOpenedSingleTarget(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{mergeablePR(20, "alice"), mergeablePR(12, "alice")})
 	m.cursor = shownIndex(m, 12)
