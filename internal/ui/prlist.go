@@ -2328,8 +2328,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, p := range msg.merged {
 			delete(m.fresh, p.Number) // force the detail/summary to revalidate
 		}
-		// Keyed off the result, not m.actionStatus, which may now belong to
-		// another action; the branches below only flag a refetch, issued once.
+		// m.actionStatus may belong to another action by now, so a merge's
+		// reconcile is keyed off the result.
 		refetch := len(msg.merged) > 0
 		if msg.stackMerge {
 			// Before the status guard too: a settle landing on a nil status must
