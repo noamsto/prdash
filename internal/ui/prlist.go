@@ -2329,6 +2329,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Before the status guard: a merge that landed after its status was
 		// replaced and cleared still merged, and still needs reconciling.
 		m.markSessionMerged(msg.merged)
+		for _, p := range msg.merged {
+			delete(m.fresh, p.Number) // force the detail/summary to revalidate
+		}
+		// m.actionStatus may belong to another action by now, so a merge's
+		// reconcile is keyed off the result.
+		refetch := len(msg.merged) > 0
 		if msg.stackMerge {
 			// Before the status guard too: a settle landing on a nil status must
 			// still free the run, or every later S press is silently ignored.
@@ -2364,7 +2370,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, n := range m.actionStatus.nums {
 				delete(m.fresh, n) // force the detail/summary to revalidate
 			}
-			cmds = append(cmds, m.backgroundRefresh())
+			refetch = true
 		}
 		if msg.err != nil && (m.actionStatus.native == "merge-squash" || m.actionStatus.native == "merge-stack") {
 			for _, n := range m.actionStatus.nums {
@@ -2375,7 +2381,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil && m.actionStatus.native == "merge-stack" {
 			// A poll that ran out of budget may still land server-side; the list
 			// refresh is what shows the layers merged once it does.
-			cmds = append(cmds, m.backgroundRefresh())
+			refetch = true
 		}
 		if msg.err == nil && m.actionStatus.rerunCI {
 			stamp := time.Now()
@@ -2394,6 +2400,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, n := range msg.partial {
 				delete(m.fresh, n) // force the detail/summary to revalidate
 			}
+			refetch = true
+		}
+		if refetch {
 			cmds = append(cmds, m.backgroundRefresh())
 		}
 		if msg.err != nil && len(msg.partial) > 0 && msg.rerunCI {
