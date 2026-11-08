@@ -1282,7 +1282,7 @@ func TestLaunchReplaceKeepsSessionMergedRow(t *testing.T) {
 	m.width, m.height = 100, 40
 	stubBackends(&m)
 	m.SetPRSource(openListSource{open: []gh.PR{openPR(6, "bob")}})
-	m.setSections(nil, nil, []gh.PR{openPR(5, "bob"), openPR(6, "bob")}, "")
+	m.setSections(nil, nil, []gh.PR{openPR(5, "bob"), openPR(6, "bob"), openPR(7, "bob")}, "") // #7: stale, never merged
 	u, _ := m.Update(actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 5)}})
 	m = u.(Model)
 
