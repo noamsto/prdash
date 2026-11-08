@@ -15,6 +15,7 @@ import (
 // (Latte/Frappé/Macchiato) or a dark/light toggle later is a second constructor.
 type Theme struct {
 	Accent  string // teal — #, keys, links, PR-board accent (title/segment/active tab)
+	Run     string // blue — Runs-board accent
 	Issue   string // peach coral — Issues-board accent; shares Draft's hex but drafts are PR-only, so they never co-occur
 	Header  string // mauve — top header + repo wordmark, the app identity
 	Focus   string // sky — cursor-row bar
@@ -35,7 +36,7 @@ type Theme struct {
 // Mocha is the Catppuccin Mocha flavor.
 func Mocha() Theme {
 	return Theme{
-		Accent: "#94e2d5", Issue: "#fab387", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
+		Accent: "#94e2d5", Run: "#89b4fa", Issue: "#fab387", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
 		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
 		Section: "#74c7ec", Base: "#1e1e2e",
@@ -53,7 +54,7 @@ func Mocha() Theme {
 // adjusted values from nix-config palette.nix, so prdash matches the desktop.
 func Latte() Theme {
 	return Theme{
-		Accent: "#179299", Issue: "#fe640b", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
+		Accent: "#179299", Run: "#1e66f5", Issue: "#fe640b", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
 		Text: "#4c4f69", Meta: "#6c6f85", Rule: "#acb0be", RowBg: "#ccd0da",
 		Pass: "#358023", Fail: "#d20f39", Pending: "#996b00", Draft: "#c24b00",
 		Section: "#1a7d8f", Base: "#eff1f5",
@@ -79,6 +80,7 @@ var (
 	titleStyle        lipgloss.Style
 	accentStyle       lipgloss.Style
 	issueAccentStyle  lipgloss.Style
+	runAccentStyle    lipgloss.Style
 	dimStyle          lipgloss.Style
 	sepStyle          lipgloss.Style
 	passStyle         lipgloss.Style
@@ -108,6 +110,7 @@ func applyTheme(t Theme) {
 	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Text))
 	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
 	issueAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Issue))
+	runAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Run))
 	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	sepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Rule))
 	passStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Pass))
@@ -324,6 +327,32 @@ func ciGlyph(state string) string {
 	default: // "none" and anything unexpected
 		return dimStyle.Render("·")
 	}
+}
+
+// Runs-board glyphs. runGlyph is a placeholder until the real nerd glyph is supplied.
+const (
+	runGlyph          = "▶" // nerd: nf-oct-workflow
+	runQueuedGlyph    = "" // nerd: nf-oct-clock
+	runCancelledGlyph = "" // nerd: nf-oct-circle_slash
+)
+
+// runStatusGlyph maps a workflow run's status/conclusion to a colored glyph.
+func runStatusGlyph(status, conclusion string) string {
+	switch {
+	case status == "in_progress":
+		return pendStyle.Render(ciRunningGlyph)
+	case status != "" && status != "completed":
+		return pendStyle.Render(runQueuedGlyph)
+	}
+	switch conclusion {
+	case "success":
+		return passStyle.Render("✓")
+	case "failure", "timed_out", "startup_failure":
+		return failStyle.Render("✗")
+	case "cancelled":
+		return dimStyle.Render(runCancelledGlyph)
+	}
+	return dimStyle.Render("·")
 }
 
 // autoMergeGlyphRune marks a PR with GitHub auto-merge armed — it will land on

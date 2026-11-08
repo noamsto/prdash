@@ -21,18 +21,19 @@ type RowOpts struct {
 	NumWidth     int // cell width for the right-aligned number column (0 = natural)
 	Focused      bool
 	Selected     bool
-	Draft        bool   // dim the title; drafts sort last (see sortPRs)
-	Held         bool   // gone from the latest refresh or no longer a member; dim until ctrl+r
-	Tag          string // held-row tag ("merged", "closed", "open", "left filter"); "" when not held
-	Commented    bool   // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
-	Flag         string // pre-rendered ! column glyph (conflict/behind), "" when unknown
-	Tree         string // stack chain glyph, rendered between the gutter and the number
-	StackMissing string // complete dim ⧉+N marker, rendered in the title/tag budget
-	DiffWidth    int    // cell width of the diffstat column; 0 hides it
-	TicketWidth  int    // cell width of the ticket-id column; 0 hides it
-	AuthorWidth  int    // fixed cell width for the author column; 0 = natural width (no padding)
-	CompactDiff  bool   // render ±N instead of +N -N
-	Initials     bool   // 2-char author initials instead of the login
+	Draft        bool      // dim the title; drafts sort last (see sortPRs)
+	Held         bool      // gone from the latest refresh or no longer a member; dim until ctrl+r
+	Tag          string    // held-row tag ("merged", "closed", "open", "left filter"); "" when not held
+	Commented    bool      // viewer's latest review is a comment; the review column shows ◐ instead of the decision dot
+	Flag         string    // pre-rendered ! column glyph (conflict/behind), "" when unknown
+	Tree         string    // stack chain glyph, rendered between the gutter and the number
+	StackMissing string    // complete dim ⧉+N marker, rendered in the title/tag budget
+	DiffWidth    int       // cell width of the diffstat column; 0 hides it
+	TicketWidth  int       // cell width of the ticket-id column; 0 hides it
+	AuthorWidth  int       // fixed cell width for the author column; 0 = natural width (no padding)
+	CompactDiff  bool      // render ±N instead of +N -N
+	Initials     bool      // 2-char author initials instead of the login
+	Now          time.Time // clock for live run elapsed times; zero shows age instead
 }
 
 type Section interface {
