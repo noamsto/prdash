@@ -239,3 +239,86 @@ func TestThemeRunAccent(t *testing.T) {
 		t.Error("runAccentStyle must follow the theme")
 	}
 }
+
+func TestRunMatchQueryEventLabels(t *testing.T) {
+	ev := func(id int64, event string) gh.WorkflowRun {
+		r := testRun(id, "CI", "completed", "success", time.Duration(id)*time.Hour)
+		r.Event = event
+		return r
+	}
+	s := runSection("recent", ev(1, "pull_request"), ev(2, "schedule"), ev(3, "workflow_dispatch"), ev(4, "push"))
+	for _, tc := range []struct {
+		query string
+		want  []int64
+	}{
+		{"event:pr", []int64{1}},
+		{"event:cron", []int64{2}},
+		{"event:manual", []int64{3}},
+		{"event:pull_request", []int64{1}},
+		{"event:schedule", []int64{2}},
+		{"event:push", []int64{4}},
+	} {
+		var got []int64
+		for _, ix := range s.matchQuery(tc.query) {
+			got = append(got, s.runs[ix].ID)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%q: got %v, want %v", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestRunRowColumnsIndependentOfTimeText(t *testing.T) {
+	live := testRun(1, "CI", "in_progress", "", time.Minute)
+	live.RunStartedAt = runsNow.Add(-75 * time.Minute)
+	done := testRun(2, "CI", "completed", "success", 3*time.Hour)
+	s := runSection("active", live, done)
+	pos := func(row, sub string) int {
+		i := strings.Index(row, sub)
+		if i < 0 {
+			return -1
+		}
+		return ansi.StringWidth(row[:i])
+	}
+	for w := 24; w <= 110; w++ {
+		var rows [2]string
+		for i := range 2 {
+			rows[i] = plainRow(s, i, w, RowOpts{Now: runsNow})
+			if got := lipgloss.Width(rows[i]); got != w {
+				t.Fatalf("width %d row %d is %d cells", w, i, got)
+			}
+		}
+		for _, cell := range []string{"feat/runs-b", "pr", "Fix"} {
+			if a, b := pos(rows[0], cell), pos(rows[1], cell); a != b {
+				t.Errorf("width %d: %q at %d vs %d\n%q\n%q", w, cell, a, b, rows[0], rows[1])
+			}
+		}
+	}
+}
+
+func TestRunRowVS16EmojiKeepsWidthAndTime(t *testing.T) {
+	r := testRun(1, "♻️ refactor "+strings.Repeat("♻️", 20), "completed", "success", 3*time.Hour)
+	r.DisplayTitle = strings.Repeat("♻️", 30)
+	s := runSection("recent", r)
+	for _, w := range []int{40, 50} {
+		row := s.RenderRow(0, RowOpts{Width: w})
+		if got := lipgloss.Width(row); got != w {
+			t.Errorf("width %d: row is %d cells", w, got)
+		}
+		if plain := ansi.Strip(row); !strings.HasSuffix(plain, "3h") {
+			t.Errorf("width %d: time clipped in %q", w, plain)
+		}
+	}
+}
+
+func TestRunRowSkipsEmptyBranchColumn(t *testing.T) {
+	r := testRun(1, "CI", "completed", "success", 3*time.Hour)
+	r.HeadBranch = ""
+	s := runSection("recent", r)
+	row := plainRow(s, 0, 80, RowOpts{})
+	for _, want := range []string{"octocat", "pr"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("row %q missing %q", row, want)
+		}
+	}
+}

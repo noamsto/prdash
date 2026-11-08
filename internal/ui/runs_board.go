@@ -73,17 +73,19 @@ func (m Model) runJobsFetchCmd(run gh.WorkflowRun) tea.Cmd {
 }
 
 // runJobsCmdForCursor refetches the focused run's jobs unless they are known
-// current: a finished run whose UpdatedAt has not moved. A held run is frozen.
+// current: a finished run whose UpdatedAt has not moved. A held run is frozen
+// once its jobs are loaded.
 func (m *Model) runJobsCmdForCursor() tea.Cmd {
 	rs, ok := m.section.(*RunSection)
 	if !ok || m.cursor < 0 || m.cursor >= rs.Len() {
 		return nil
 	}
 	run := rs.runAt(m.cursor)
-	if rs.isHeld(run.ID) {
+	e, loaded := m.runJobs[run.ID]
+	if rs.isHeld(run.ID) && loaded {
 		return nil
 	}
-	if e, ok := m.runJobs[run.ID]; ok && e.runUpdated.Equal(run.UpdatedAt) && !run.Active() {
+	if loaded && e.runUpdated.Equal(run.UpdatedAt) && !run.Active() {
 		return nil
 	}
 	return m.runJobsFetchCmd(run)

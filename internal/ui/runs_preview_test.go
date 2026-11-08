@@ -468,3 +468,37 @@ func TestNoPROrIssueActionReachableFromRunRow(t *testing.T) {
 		t.Errorf("palette keys = %v, want %v", got, runKeys)
 	}
 }
+
+func focusInView(m Model) bool {
+	head, body := m.previewParts()
+	for i, ln := range strings.Split(ansi.Strip(dropLines(body, m.previewOffset)), "\n") {
+		if strings.Contains(ln, focusBarGlyph) {
+			return i < m.previewBodyRows(head)
+		}
+	}
+	return false
+}
+
+func TestRunDefaultFocusScrolledIntoViewOnFirstJobs(t *testing.T) {
+	run := finished(testRun(7, "ci", "", "", time.Minute), "failure")
+	var jobs []gh.RunJob
+	for i := range 60 {
+		conclusion := "success"
+		if i == 50 {
+			conclusion = "failure"
+		}
+		jobs = append(jobs, doneJob(int64(i+1), fmt.Sprintf("job-%02d", i), conclusion, time.Minute))
+	}
+	m := withJobs(previewBoard(t, run), run, jobs...)
+	if !focusInView(m) {
+		t.Fatalf("the default focused job is off screen (offset %d)", m.previewOffset)
+	}
+
+	m, _ = update(m, keyMsg("alt+k"))
+	m, _ = update(m, keyMsg("alt+k"))
+	offset := m.previewOffset
+	m = withJobs(m, run, jobs...)
+	if m.previewOffset != offset {
+		t.Errorf("a poll repaint moved the user's scroll: %d -> %d", offset, m.previewOffset)
+	}
+}

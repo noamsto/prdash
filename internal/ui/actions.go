@@ -288,12 +288,13 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	}
 }
 
-// singleNativeCmd runs a Scope:"single" native mutation/open. It is unreachable
-// via the packaged defaults (all merge/ready/update-branch/open-web keybindings
-// are Scope:"per-selected", so runBulkNative below is what fires), but a
-// user-configured single-row action with the same Command.Native marker routes
-// here. ok is false when a.Command.Native names something this dispatcher
-// doesn't recognize, or when the action isn't on the PR board.
+// singleNativeCmd runs a Scope:"single" native mutation/open. On the PR board
+// the packaged merge/ready/update-branch/open-web bindings are
+// Scope:"per-selected", so runBulkNative below fires there; the Runs board binds
+// `o` to open-web with Scope:"single", and a user-configured single-row action
+// with the same Command.Native marker also routes here. ok is false when
+// a.Command.Native names something this dispatcher doesn't recognize, or when
+// the action isn't on the PR board.
 func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) {
 	if a.Command.Native == "open-web" {
 		url := v.URL
@@ -651,9 +652,10 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 // runBulk applies a per-selected action to each selected row (or the cursor row
 // if none selected). Exits-tui actions write one handoff line each and quit;
 // native mutations run across the selection and settle to an aggregate badge.
-// Every default merge/auto-merge/ready/update-branch/open-web keybinding is
-// Scope:"per-selected", so runBulkNative — not singleNativeCmd — is the one
-// that actually fires for a single cursor-row press too.
+// Every default PR-board merge/auto-merge/ready/update-branch/open-web binding
+// is Scope:"per-selected", so runBulkNative — not singleNativeCmd — fires for a
+// single cursor-row press too. The Runs board's `o` (open-web) is
+// Scope:"single" and takes the singleNativeCmd path.
 func (m *Model) runBulk(a action.Action) tea.Cmd {
 	a = m.resolvePRAction(a)
 	if a.Command.Native != "" {

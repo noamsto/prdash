@@ -764,6 +764,7 @@ func (m *Model) moveCursor(delta int) {
 		m.cursor = n - 1
 	}
 	m.previewOffset = 0
+	m.scrollRunFocusIntoView()
 	m.renderList()
 }
 
@@ -2179,6 +2180,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshing = false
 		}
 		switch {
+		case gh.ActionsDisabled(msg.err) && m.section.Len() > 0:
+			cmd := tea.Batch(m.hint("Runs unavailable: "+msg.err.Error()), m.maybeStartRunPoll())
+			return m, cmd
 		case gh.ActionsDisabled(msg.err):
 			m.loaded = true
 			m.emptyNotice = "GitHub Actions is disabled or unavailable for this repository."
@@ -2194,12 +2198,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case runJobsMsg:
 		entry := m.runJobs[msg.runID]
+		firstJobs := len(entry.jobs) == 0
 		if msg.err != nil {
 			entry.err, entry.runUpdated = msg.err, time.Time{}
 		} else {
 			entry = runJobsEntry{jobs: msg.jobs, total: msg.total, runUpdated: msg.runUpdated}
 		}
 		m.runJobs[msg.runID] = entry
+		if _, run, ok := m.cursorRun(); ok && run.ID == msg.runID && firstJobs && len(entry.jobs) > 0 {
+			m.scrollRunFocusIntoView()
+		}
 		m.repaintActive()
 		return m, nil
 	case runsPollMsg:
@@ -2666,6 +2674,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterInput, cmd = m.filterInput.Update(msg)
 				m.sel.clear() // editing the query reorders the shown set
 				m.applyFilter()
+				if m.mode == "run" {
+					m.detailSeq++ // the cursor row changed; polling is deferred while filtering
+					return m, tea.Batch(cmd, m.debounceDetailCmd())
+				}
 				return m, cmd
 			}
 			switch msg.String() {
@@ -2838,6 +2850,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "z":
 			m.previewMax = !m.previewMax
+			m.scrollRunFocusIntoView()
 			return m, nil
 		case "alt+j":
 			m.previewScrollBy(1)
@@ -2914,6 +2927,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchToFilter() // restore the sections default
 			}
 			m.applyFilter()
+			if m.mode == "run" {
+				m.detailSeq++
+				return m, m.debounceDetailCmd()
+			}
 			return m, nil
 		case "q":
 			return m, tea.Quit

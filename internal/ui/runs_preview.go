@@ -163,10 +163,10 @@ func (m Model) focusedRunJob(run gh.WorkflowRun, jobs []gh.RunJob) int {
 // moveRunJobFocus moves the focused job and scrolls it into the pane. It is a
 // no-op while no preview is visible: focus must not move out of sight.
 func (m *Model) moveRunJobFocus(delta int) {
-	if !m.layout().ShowSide && !m.previewMax {
+	if !m.previewShown() {
 		return
 	}
-	rs, run, ok := m.cursorRun()
+	_, run, ok := m.cursorRun()
 	if !ok {
 		return
 	}
@@ -177,11 +177,30 @@ func (m *Model) moveRunJobFocus(delta int) {
 	}
 	next := min(max(cur+delta, 0), len(jobs)-1)
 	m.runFocusRun, m.runFocusJob = run.ID, jobs[next].ID
+	m.scrollRunFocusIntoView()
+}
 
+func (m Model) previewShown() bool { return m.layout().ShowSide || m.previewMax }
+
+// scrollRunFocusIntoView scrolls the focused job into the pane. It does nothing
+// unless a run is under the cursor, the preview is visible and its jobs are
+// loaded.
+func (m *Model) scrollRunFocusIntoView() {
+	if !m.previewShown() {
+		return
+	}
+	rs, run, ok := m.cursorRun()
+	if !ok {
+		return
+	}
+	focus := m.focusedRunJob(run, m.runJobs[run.ID].jobs)
+	if focus < 0 {
+		return
+	}
 	head, _ := m.previewParts()
 	w := min(m.previewWidth(), m.width-2)
 	_, spans := m.runPreviewBody(rs, run, w, w-2)
-	span, rows := spans[next], m.previewBodyRows(head)
+	span, rows := spans[focus], m.previewBodyRows(head)
 	switch {
 	case span.top < m.previewOffset:
 		m.previewScrollBy(span.top - m.previewOffset)

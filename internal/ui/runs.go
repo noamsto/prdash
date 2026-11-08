@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -37,6 +38,9 @@ const (
 	runActorMax    = 14
 	runMinTitle    = 8
 	runInitialsW   = 2
+	// runTimeCells reserves the time column for the longest live elapsed
+	// ("1h 15m"), so a row's columns don't move when its time text changes.
+	runTimeCells = 7
 )
 
 func NewRunSection(filter, state string) *RunSection {
@@ -177,16 +181,18 @@ func parseRunQuery(query string) (quals map[string][]string, bare string) {
 	return quals, strings.Join(rest, " ")
 }
 
-func runQualField(r gh.WorkflowRun, key string) string {
+// runQualFields are the values a qualifier matches: the event also matches the
+// label the row shows.
+func runQualFields(r gh.WorkflowRun, key string) []string {
 	switch key {
 	case "branch":
-		return r.HeadBranch
+		return []string{r.HeadBranch}
 	case "workflow":
-		return r.Name
+		return []string{r.Name}
 	case "event":
-		return r.Event
+		return []string{r.Event, runEventLabel(r.Event)}
 	}
-	return r.Actor
+	return []string{r.Actor}
 }
 
 // matchQuery applies the state view, the qualifiers and the bare fuzzy text,
@@ -199,9 +205,11 @@ func (s *RunSection) matchQuery(query string) []int {
 	for i, r := range s.runs {
 		ok := true
 		for key, vals := range quals {
-			field := strings.ToLower(runQualField(r, key))
+			fields := runQualFields(r, key)
 			for _, v := range vals {
-				ok = ok && strings.Contains(field, v)
+				ok = ok && slices.ContainsFunc(fields, func(f string) bool {
+					return strings.Contains(strings.ToLower(f), v)
+				})
 			}
 		}
 		if !ok {
@@ -249,7 +257,7 @@ func runEventLabel(event string) string {
 
 // padCell right-pads plain text to exactly w cells, truncating first.
 func padCell(txt string, w int) string {
-	txt = truncate(txt, w)
+	txt = ansi.Truncate(txt, w, "…")
 	return txt + strings.Repeat(" ", max(0, w-lipgloss.Width(txt)))
 }
 
@@ -280,7 +288,7 @@ func (s *RunSection) RenderRow(i int, o RowOpts) string {
 	} else {
 		timeTxt = dimStyle.Render(ageString(r.UpdatedAt))
 	}
-	timeW := 2 + max(3, lipgloss.Width(timeTxt))
+	timeW := 2 + max(runTimeCells, lipgloss.Width(timeTxt))
 	right := strings.Repeat(" ", timeW-lipgloss.Width(timeTxt)) + timeTxt
 
 	rem := w - lipgloss.Width(left) - timeW
@@ -307,8 +315,11 @@ func (s *RunSection) RenderRow(i int, o RowOpts) string {
 		{s.eventW, func(w int) string { return dimStyle.Render(padCell(runEventLabel(r.Event), w)) }},
 	}
 	for _, c := range cols {
-		if c.width == 0 || rem < 2+c.width {
+		if c.width == 0 {
 			continue
+		}
+		if rem < 2+c.width {
+			break
 		}
 		body.WriteString("  " + c.cell(c.width))
 		rem -= 2 + c.width

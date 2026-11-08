@@ -773,3 +773,120 @@ func TestRunElapsedAdvancesOnThemeBeat(t *testing.T) {
 		t.Errorf("the theme beat repainted under the log view: %q", m.vp.View())
 	}
 }
+
+func TestActionsDisabledWithRowsShowsHint(t *testing.T) {
+	m := runsBoard(t, &fakeRunsSource{}, testRun(1, "a", "in_progress", "", time.Minute))
+	m.runPolling = false
+
+	m, cmd := update(m, runsFailedMsg{err: fmt.Errorf("list runs: %w", gh.ErrActionsDisabled)})
+	if m.emptyNotice != "" {
+		t.Errorf("a board with rows must not use the empty notice, got %q", m.emptyNotice)
+	}
+	if m.actionStatus == nil || !strings.Contains(m.actionStatus.fail, "Runs unavailable") {
+		t.Errorf("status = %+v, want a transient hint", m.actionStatus)
+	}
+	if cmd == nil || !m.runPolling || m.section.Len() != 1 {
+		t.Errorf("cmd=%v polling=%v rows=%d", cmd != nil, m.runPolling, m.section.Len())
+	}
+}
+
+func TestHeldRunWithoutJobsIsFetchedOnce(t *testing.T) {
+	kept := testRun(1, "a", "in_progress", "", time.Minute)
+	dropped := finished(testRun(2, "b", "", "", 2*time.Minute), "success")
+	m := runsBoard(t, &fakeRunsSource{}, kept, dropped)
+	m, _ = update(m, pollResult(m, kept))
+	rs := m.section.(*RunSection)
+	m.cursor = slices.Index(rs.shownIDs(), 2)
+	if !rs.isHeld(2) || m.cursor < 0 {
+		t.Fatalf("setup: held=%v cursor=%d", rs.held, m.cursor)
+	}
+
+	if m.runJobsCmdForCursor() == nil {
+		t.Fatal("a held run with no jobs entry must be fetched, or its preview loads forever")
+	}
+	m, _ = update(m, runJobsMsg{runID: 2, jobs: []gh.RunJob{{ID: 1}}, runUpdated: dropped.UpdatedAt})
+	if m.runJobsCmdForCursor() != nil {
+		t.Error("a held run is frozen once its jobs are loaded")
+	}
+}
+
+func TestRunFilterFetchesJobsForNewCursorRow(t *testing.T) {
+	alpha := finished(testRun(1, "alpha", "", "", 2*time.Minute), "success")
+	beta := finished(testRun(2, "beta", "", "", time.Minute), "success")
+	src := &fakeRunsSource{jobs: map[int64][]gh.RunJob{2: {{ID: 9, Name: "build"}}}}
+	m := runsBoard(t, src, alpha, beta)
+	m = withJobs(m, alpha, gh.RunJob{ID: 8})
+	m.cursor = slices.Index(shownRunIDs(m), 1)
+
+	m, _ = update(m, keyMsg("/"))
+	var cmd tea.Cmd
+	for _, r := range "workflow:beta" {
+		m, cmd = update(m, keyMsg(string(r)))
+	}
+	if ids := shownRunIDs(m); !slices.Equal(ids, []int64{2}) {
+		t.Fatalf("setup: shown %v", ids)
+	}
+	deb := msgOf[detailDebounceMsg](t, collectMsgs(t, cmd))
+	m, cmd = update(m, deb)
+	m, _ = update(m, msgOf[runJobsMsg](t, collectMsgs(t, cmd)))
+	if len(m.runJobs[2].jobs) != 1 {
+		t.Errorf("jobs for the filtered-to row were not fetched: %+v", m.runJobs[2])
+	}
+
+	m, _ = update(m, keyMsg("enter"))
+	m, cmd = update(m, keyMsg("esc"))
+	if m.filterInput.Value() != "" || m.section.Len() != 2 {
+		t.Fatalf("setup: filter %q rows %d", m.filterInput.Value(), m.section.Len())
+	}
+	if cmd == nil {
+		t.Error("clearing the filter on the Runs board must schedule a detail fetch")
+	}
+}
+
+func TestRunPollBeatRearmsFetchAndTick(t *testing.T) {
+	m := runsBoard(t, &fakeRunsSource{}, testRun(1, "a", "in_progress", "", time.Minute))
+	m.spinning = false
+
+	_, cmd := update(m, runsPollMsg{})
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("a beat must return the fetch and the next tick, got %T %d", batch, len(batch))
+	}
+}
+
+func TestActiveRunWithJobsEntryIsRefetchedByListResult(t *testing.T) {
+	live := testRun(5, "ci", "in_progress", "", time.Minute)
+	src := &fakeRunsSource{jobs: map[int64][]gh.RunJob{5: {{ID: 1, Name: "build", Status: "in_progress"}}}}
+	m := runsBoard(t, src, live)
+	m = withJobs(m, live, gh.RunJob{ID: 1, Name: "build", Status: "queued"})
+
+	_, cmd := update(m, pollResult(m, live))
+	collectMsgs(t, cmd)
+	if ids := src.jobIDs(); !slices.Equal(ids, []int64{5}) {
+		t.Errorf("job calls = %v, want one refetch for run 5", ids)
+	}
+}
+
+func TestPROnlyKeysChangeNothingOnRunRow(t *testing.T) {
+	run := finished(testRun(7, "ci", "", "", time.Minute), "failure")
+	src := &fakeRunsSource{}
+	m := runsBoard(t, src, run)
+	ms, as := &fakeMutationSource{}, &fakeActionsSource{}
+	m.SetMutationSource(ms)
+	m.SetActionsSource(as)
+	listsBefore := src.lists()
+
+	for _, k := range []string{"R", "D", "g", "p"} {
+		next, cmd := update(m, keyMsg(k))
+		collectMsgs(t, cmd)
+		if next.pending != nil || next.showPicker || next.hideDrafts != m.hideDrafts || next.byAuthor != m.byAuthor {
+			t.Errorf("%q changed state: pending=%v picker=%v drafts=%v byAuthor=%v", k, next.pending, next.showPicker, next.hideDrafts, next.byAuthor)
+		}
+	}
+	if n := len(ms.mergeCalls) + len(ms.approveCalls) + len(ms.markReadyCalls) + len(as.rerunFailedCalls) + len(as.jobLogCalls); n != 0 {
+		t.Errorf("%d source calls", n)
+	}
+	if src.lists() != listsBefore || len(src.jobIDs()) != 0 {
+		t.Error("a key reached the runs source")
+	}
+}
