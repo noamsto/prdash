@@ -170,7 +170,7 @@ func TestRunJobFocusDefault(t *testing.T) {
 }
 
 func focusedLine(m Model) string {
-	for _, ln := range strings.Split(previewText(m), "\n") {
+	for ln := range strings.SplitSeq(previewText(m), "\n") {
 		if strings.Contains(ln, focusBarGlyph) && !strings.Contains(ln, "feat/") {
 			return ln
 		}
@@ -374,7 +374,7 @@ func TestOpenInBrowserOpensRunURL(t *testing.T) {
 	t.Setenv("BROWSER", stub)
 
 	m := runsBoard(t, &fakeRunsSource{}, run)
-	m, cmd := update(m, keyMsg("o"))
+	_, cmd := update(m, keyMsg("o"))
 	if done, ok := driveBulk(t, cmd).(actionDoneMsg); !ok || done.err != nil {
 		t.Fatalf("want a successful actionDoneMsg, got %+v", done)
 	}

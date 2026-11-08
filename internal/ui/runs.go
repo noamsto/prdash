@@ -161,7 +161,7 @@ var runQualifiers = map[string]bool{"branch": true, "workflow": true, "event": t
 // `foo:bar` stays bare.
 func parseRunQuery(query string) (quals map[string][]string, bare string) {
 	var rest []string
-	for _, tok := range strings.Fields(query) {
+	for tok := range strings.FieldsSeq(query) {
 		if login, ok := strings.CutPrefix(tok, "@"); ok {
 			tok = "actor:" + login
 		}
@@ -289,7 +289,8 @@ func (s *RunSection) RenderRow(i int, o RowOpts) string {
 	if o.Focused {
 		wfSt = wfSt.Bold(true)
 	}
-	body := wfSt.Render(padCell(r.Name, wfW))
+	var body strings.Builder
+	body.WriteString(wfSt.Render(padCell(r.Name, wfW)))
 	rem -= wfW
 
 	actorW := s.actorW
@@ -309,16 +310,16 @@ func (s *RunSection) RenderRow(i int, o RowOpts) string {
 		if c.width == 0 || rem < 2+c.width {
 			continue
 		}
-		body += "  " + c.cell(c.width)
+		body.WriteString("  " + c.cell(c.width))
 		rem -= 2 + c.width
 	}
 	if rem-2 >= runMinTitle {
-		body += "  " + titleStyle.Render(padCell(r.DisplayTitle, rem-2))
+		body.WriteString("  " + titleStyle.Render(padCell(r.DisplayTitle, rem-2)))
 		rem = 0
 	}
-	body += strings.Repeat(" ", rem)
+	body.WriteString(strings.Repeat(" ", rem))
 
-	line := left + body + right
+	line := left + body.String() + right
 	switch {
 	case o.Focused:
 		line = rowBgWrap(line, theme.RowBg)

@@ -188,11 +188,9 @@ func (s GraphSource) ListRuns(limit int) ([]WorkflowRun, []byte, error) {
 	var errs [3]error
 	var wg sync.WaitGroup
 	for i, status := range statuses {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			pages[i], errs[i] = s.listRunsPage(limit, status)
-		}()
+		})
 	}
 	wg.Wait()
 	for _, err := range errs {

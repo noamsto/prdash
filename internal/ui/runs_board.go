@@ -120,7 +120,7 @@ func (m *Model) paintRuns(runs []gh.WorkflowRun, replace bool) {
 	}
 	order := rs.shownIDs()
 	var anchor int64
-	if !(m.cursor == 0 && m.cursorPinnedTop) && m.cursor >= 0 && m.cursor < len(order) {
+	if (m.cursor != 0 || !m.cursorPinnedTop) && m.cursor >= 0 && m.cursor < len(order) {
 		anchor = order[m.cursor]
 	}
 	var held map[int64]bool
