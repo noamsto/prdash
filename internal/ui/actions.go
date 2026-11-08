@@ -293,8 +293,8 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 // Scope:"per-selected", so runBulkNative below fires there; the Runs board binds
 // `o` to open-web with Scope:"single", and a user-configured single-row action
 // with the same Command.Native marker also routes here. ok is false when
-// a.Command.Native names something this dispatcher doesn't recognize, or when
-// the action isn't on the PR board.
+// a.Command.Native names something this dispatcher doesn't recognize or, for
+// any native other than open-web, when the section isn't the PR board.
 func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) {
 	if a.Command.Native == "open-web" {
 		url := v.URL

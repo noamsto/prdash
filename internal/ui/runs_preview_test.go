@@ -502,3 +502,22 @@ func TestRunDefaultFocusScrolledIntoViewOnFirstJobs(t *testing.T) {
 		t.Errorf("a poll repaint moved the user's scroll: %d -> %d", offset, m.previewOffset)
 	}
 }
+
+func TestRunMoveCursorRevealsFocusedJob(t *testing.T) {
+	first := finished(testRun(7, "ci", "", "", time.Minute), "success")
+	second := finished(testRun(8, "deploy", "", "", time.Hour), "failure")
+	var jobs []gh.RunJob
+	for i := range 60 {
+		conclusion := "success"
+		if i == 50 {
+			conclusion = "failure"
+		}
+		jobs = append(jobs, doneJob(int64(i+1), fmt.Sprintf("job-%02d", i), conclusion, time.Minute))
+	}
+	m := withJobs(previewBoard(t, first, second), second, jobs...)
+
+	m, _ = update(m, keyMsg("j"))
+	if !focusInView(m) {
+		t.Fatalf("moving onto the run left the focused job off screen (offset %d)", m.previewOffset)
+	}
+}
