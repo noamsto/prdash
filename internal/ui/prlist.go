@@ -1334,7 +1334,7 @@ func (m Model) fetchCmd(filter string, replace bool) tea.Cmd {
 	return func() tea.Msg {
 		prs, raw, err := src.FetchPRs(filter, defaultLimit)
 		if err != nil {
-			return fetchFailedMsg{err: err, mode: "pr", filter: filter}
+			return fetchFailedMsg{err: err, mode: "pr", filter: filter, replace: replace}
 		}
 		return prsFetchedMsg{filter: filter, prs: prs, raw: raw, replace: replace}
 	}
@@ -1347,7 +1347,7 @@ func (m Model) issueFetchCmd(filter string, replace bool) tea.Cmd {
 	return func() tea.Msg {
 		is, raw, err := src.FetchIssues(filter, defaultLimit)
 		if err != nil {
-			return fetchFailedMsg{err: err, mode: "issue", filter: filter}
+			return fetchFailedMsg{err: err, mode: "issue", filter: filter, replace: replace}
 		}
 		return issuesFetchedMsg{filter: filter, issues: is, raw: raw, replace: replace}
 	}
@@ -1390,13 +1390,13 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 		// guard accepts it (see issueSectionsFetchCmd).
 		boardFilter := searchFor("pr", state, "")
 		if review.err != nil {
-			return fetchFailedMsg{err: review.err, mode: "pr", filter: boardFilter}
+			return fetchFailedMsg{err: review.err, mode: "pr", filter: boardFilter, replace: replace}
 		}
 		if reviewed.err != nil {
-			return fetchFailedMsg{err: reviewed.err, mode: "pr", filter: boardFilter}
+			return fetchFailedMsg{err: reviewed.err, mode: "pr", filter: boardFilter, replace: replace}
 		}
 		if open.err != nil {
-			return fetchFailedMsg{err: open.err, mode: "pr", filter: boardFilter}
+			return fetchFailedMsg{err: open.err, mode: "pr", filter: boardFilter, replace: replace}
 		}
 		return sectionsFetchedMsg{state: state,
 			review: review.prs, reviewRaw: review.raw,
@@ -1440,13 +1440,13 @@ func (m Model) issueSectionsFetchCmd(replace bool) tea.Cmd {
 		// forever. The error passes through unwrapped so IssuesDisabled still reads.
 		boardFilter := searchFor("issue", "open", "")
 		if assigned.err != nil {
-			return fetchFailedMsg{err: assigned.err, mode: "issue", filter: boardFilter}
+			return fetchFailedMsg{err: assigned.err, mode: "issue", filter: boardFilter, replace: replace}
 		}
 		if authored.err != nil {
-			return fetchFailedMsg{err: authored.err, mode: "issue", filter: boardFilter}
+			return fetchFailedMsg{err: authored.err, mode: "issue", filter: boardFilter, replace: replace}
 		}
 		if wide.err != nil {
-			return fetchFailedMsg{err: wide.err, mode: "issue", filter: boardFilter}
+			return fetchFailedMsg{err: wide.err, mode: "issue", filter: boardFilter, replace: replace}
 		}
 		return issueSectionsFetchedMsg{
 			assigned: assigned.issues, assignedRaw: assigned.raw,
@@ -2117,6 +2117,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a background prewarm failed; the current view is unaffected
 		}
 		m.refreshing = false
+		if msg.replace {
+			// The launch or switch replace failed, so nothing will land to release the pin.
+			m.cursorPinnedTop = false
+		}
 		if gh.IssuesDisabled(msg.err) {
 			// Not an error: this repo tracks issues elsewhere. Show an empty board.
 			m.loaded = true

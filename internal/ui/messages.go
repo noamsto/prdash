@@ -73,6 +73,10 @@ type fetchFailedMsg struct {
 	err    error
 	mode   string
 	filter string // set for list fetches; a background prewarm failure is dropped
+	// replace marks a failed requested replace (launch, filter/tab switch) as
+	// opposed to an unrequested background reconcile, which can fail while the
+	// replace is still in flight and must not release its cursor pin.
+	replace bool
 }
 
 // membersFailedMsg reports a failed assignable-users fetch. It is surfaced
