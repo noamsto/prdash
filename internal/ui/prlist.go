@@ -3158,19 +3158,33 @@ func (m Model) confirmQuestion() string {
 		}
 		return fmt.Sprintf("%s #%d?", a.Label, n)
 	}
-	targets := m.selectedOrCursor()
-	if len(targets) != 1 {
-		return fmt.Sprintf("%s for %d PRs?", a.Label, len(targets))
-	}
-	i := targets[0]
-	if i < 0 || i >= m.section.Len() {
+	targets := m.pendingTargets
+	if len(targets) == 0 {
 		return fmt.Sprintf("%s?", a.Label)
 	}
-	v := m.section.VarsAt(i)
-	if a.ConfirmOthers && v.Author != "" && v.Author != m.viewerLogin {
-		return fmt.Sprintf("%s #%d by %s?", a.Label, v.Number, v.Author)
+	if len(targets) > 1 {
+		return fmt.Sprintf("%s for %d PRs?", a.Label, len(targets))
 	}
-	return fmt.Sprintf("%s #%d?", a.Label, v.Number)
+	n := targets[0]
+	if author, ok := m.authorOfNumber(n); ok && a.ConfirmOthers && author != "" && author != m.viewerLogin {
+		return fmt.Sprintf("%s #%d by %s?", a.Label, n, author)
+	}
+	return fmt.Sprintf("%s #%d?", a.Label, n)
+}
+
+// authorOfNumber returns the author of the shown row numbered n; ok is false
+// once that row has left the section.
+func (m Model) authorOfNumber(n int) (author string, ok bool) {
+	num, isNumbered := m.section.(numbered)
+	if !isNumbered {
+		return "", false
+	}
+	for i := 0; i < m.section.Len(); i++ {
+		if num.numberAt(i) == n {
+			return m.section.VarsAt(i).Author, true
+		}
+	}
+	return "", false
 }
 
 // confirmPanel is the y/n dialog for a pending action.
