@@ -209,7 +209,6 @@ func (m *Model) scrollRunFocusIntoView() {
 	}
 }
 
-// runPreviewKey is what decides whether the Runs preview needs reconciling.
 type runPreviewKey struct {
 	run, job    int64 // run under the cursor and its focused job
 	jobsRev     int
@@ -217,7 +216,6 @@ type runPreviewKey struct {
 	rows, width int
 }
 
-// runPreviewState is the key last seen plus the focused job's span under it.
 type runPreviewState struct {
 	runPreviewKey
 	span    lineSpan
