@@ -35,6 +35,7 @@ type sectionsFetchedMsg struct {
 	review, reviewed, open          []gh.PR
 	reviewRaw, reviewedRaw, openRaw []byte
 	replace                         bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
+	launch                          bool // the startup reconcile; see launchFetchCmds
 }
 
 // issueSectionsFetchedMsg carries the three halves of the issue sections view
