@@ -35,6 +35,11 @@ func terminalStyle(s ansi.StyleConfig) ansi.StyleConfig {
 	s.ImageText.Format = hideFormat
 	s.Image.Format = hideFormat
 	s.Link.Format = hideFormat
+	// Render's sentinel tokenizes as chroma Error and must not show a highlight.
+	// Chroma is shared with the stock configs, so copy before writing.
+	chroma := *s.CodeBlock.Chroma
+	chroma.Error = chroma.Operator
+	s.CodeBlock.Chroma = &chroma
 	return s
 }
 

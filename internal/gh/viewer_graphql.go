@@ -13,5 +13,6 @@ func (s GraphSource) FetchViewer() (string, error) {
 	if err := s.client.Query(context.Background(), &q, nil); err != nil {
 		return "", err
 	}
+	sanitize(&q.Viewer.Login)
 	return q.Viewer.Login, nil
 }

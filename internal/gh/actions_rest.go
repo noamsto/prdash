@@ -86,7 +86,7 @@ func (s GraphSource) ListRunsForBranch(branch string) ([]WorkflowRun, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list runs: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("list runs: %s: %s", resp.Status, cleanBody(body))
 	}
 	var parsed struct {
 		WorkflowRuns []struct {
@@ -102,6 +102,7 @@ func (s GraphSource) ListRunsForBranch(branch string) ([]WorkflowRun, error) {
 	for i, r := range parsed.WorkflowRuns {
 		runs[i] = WorkflowRun{ID: r.ID, Conclusion: r.Conclusion, HeadSHA: r.HeadSHA}
 	}
+	sanitize(&runs)
 	return runs, nil
 }
 
@@ -141,7 +142,7 @@ func (s GraphSource) listRunsPage(limit int, status string) ([]WorkflowRun, erro
 		if disabled {
 			return nil, fmt.Errorf("list runs: %s: %w", resp.Status, ErrActionsDisabled)
 		}
-		return nil, fmt.Errorf("list runs: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("list runs: %s: %s", resp.Status, cleanBody(body))
 	}
 	var parsed struct {
 		WorkflowRuns []struct {
@@ -176,6 +177,7 @@ func (s GraphSource) listRunsPage(limit int, status string) ([]WorkflowRun, erro
 			HTMLURL: r.HTMLURL,
 		}
 	}
+	sanitize(&runs)
 	return runs, nil
 }
 
@@ -254,7 +256,7 @@ func (s GraphSource) ListRunJobs(runID int64) ([]RunJob, int, error) {
 		return nil, 0, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("list run jobs: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, 0, fmt.Errorf("list run jobs: %s: %s", resp.Status, cleanBody(body))
 	}
 	var parsed struct {
 		TotalCount int `json:"total_count"`
@@ -286,6 +288,7 @@ func (s GraphSource) ListRunJobs(runID int64) ([]RunJob, int, error) {
 			StartedAt: j.StartedAt, CompletedAt: j.CompletedAt, HTMLURL: j.HTMLURL, Steps: steps,
 		}
 	}
+	sanitize(&jobs)
 	return jobs, parsed.TotalCount, nil
 }
 
@@ -303,7 +306,7 @@ func (s GraphSource) postAction(path string) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
+		return fmt.Errorf("%s: %s: %s", path, resp.Status, cleanBody(body))
 	}
 	return nil
 }
@@ -391,7 +394,11 @@ func (s GraphSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
 	// neither inherits its bound.
 	logResp, err := timeoutHTTPClient(nil).Get(loc)
 	if err != nil {
-		return nil, err
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return nil, fmt.Errorf("job log blob: %w", urlErr.Err)
+		}
+		return nil, fmt.Errorf("job log blob: %w", err)
 	}
 	defer func() { _ = logResp.Body.Close() }()
 	raw, err := io.ReadAll(logResp.Body)

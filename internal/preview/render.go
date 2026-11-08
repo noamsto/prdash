@@ -2,9 +2,39 @@ package preview
 
 import (
 	"fmt"
+	"html"
+	"regexp"
+	"strings"
+	"unicode"
 
 	"charm.land/glamour/v2"
 )
+
+// ampSentinel stands in for an `&` that could start a control character
+// reference; Render restores it to `&` after glamour returns.
+const ampSentinel = "\uE000"
+
+var ampToken = regexp.MustCompile(`&(?:#[0-9]+;|#[xX][0-9a-fA-F]+;|[a-zA-Z])?`)
+
+// neutralizeAmp replaces every `&` that is not provably harmless with
+// ampSentinel. Glamour decodes character references after the sanitize
+// boundary and concatenates inline nodes before decoding, so any `&` that can
+// start a numeric reference must not reach it.
+func neutralizeAmp(md string) string {
+	return ampToken.ReplaceAllStringFunc(md, func(tok string) string {
+		if len(tok) == 2 && isASCIILetter(tok[1]) {
+			return tok
+		}
+		if dec := html.UnescapeString(tok); dec != tok && !strings.ContainsFunc(dec, unicode.IsControl) {
+			return tok
+		}
+		return ampSentinel + tok[1:]
+	})
+}
+
+func isASCIILetter(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
 
 // rendererByWidth memoizes term renderers per wrap width. NewTermRenderer parses
 // the chroma style on every call, so building one per render frame lags the UI.
@@ -46,10 +76,11 @@ func Render(md string, width int) (string, error) {
 		rendererByWidth[width] = r
 	}
 	renderMisses++
-	out, err := r.Render(md)
+	out, err := r.Render(neutralizeAmp(md))
 	if err != nil {
 		return "", err
 	}
+	out = strings.ReplaceAll(out, ampSentinel, "&")
 	outputByKey[key] = out
 	return out, nil
 }

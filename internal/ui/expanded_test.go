@@ -571,3 +571,20 @@ func TestExpandedTabsIncludeOverviewFirst(t *testing.T) {
 		t.Fatalf("len(expandedTabs) = %d, want 6", len(expandedTabs))
 	}
 }
+
+func TestRenderDescriptionKeepsMarkdownOfSanitizedBody(t *testing.T) {
+	pr := gh.PR{Number: 7, Body: gh.CleanText("**bold** \x1b[31mred\x1b[0m\n\n- item\x07")}
+	raw := renderDescription(pr, 80)
+	plain := ansi.Strip(raw)
+	for _, want := range []string{"bold", "red", "• item"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("description missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(raw, "\x07") {
+		t.Errorf("BEL survived: %q", raw)
+	}
+	if !strings.Contains(raw, "\x1b[") {
+		t.Errorf("markdown styling lost: %q", raw)
+	}
+}

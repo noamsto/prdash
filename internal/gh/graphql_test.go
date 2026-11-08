@@ -102,7 +102,7 @@ func testQuerySource(srv *httptest.Server, repo string) GraphSource {
 	hc := &http.Client{}
 	st := newRateStore()
 	hc.Transport = &rateTransport{next: http.DefaultTransport, store: st}
-	return GraphSource{repo: repo, http: hc, client: githubv4.NewEnterpriseClient(srv.URL+"/graphql", hc), rate: st}
+	return GraphSource{repo: repo, http: hc, client: graphClient{githubv4.NewEnterpriseClient(srv.URL+"/graphql", hc)}, rate: st}
 }
 
 // TestFetchPRsSendsMergeInfoHeaderAndParsesMergeState exercises the typed

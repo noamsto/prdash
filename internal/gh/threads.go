@@ -4,8 +4,8 @@ import "time"
 
 type ThreadComment struct {
 	Author    string
-	Body      string
-	DiffHunk  string
+	Body      string `sanitize:"text"`
+	DiffHunk  string `sanitize:"text"`
 	CreatedAt time.Time
 }
 

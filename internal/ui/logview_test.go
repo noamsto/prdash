@@ -495,3 +495,39 @@ func TestLogViewLegendTogglesAndDismisses(t *testing.T) {
 		t.Fatal("a key should close the log-view legend")
 	}
 }
+
+func TestParseJobLogSanitizesStepNameAndContent(t *testing.T) {
+	raw := []byte("job\t\x1b]8;;https://evil.example\x07st\rep\x1b]8;;\x07\t2024-01-02T03:04:05Z a\x07b\tc\r\n")
+	steps := parseJobLog(raw, false)
+	if len(steps) != 1 || len(steps[0].lines) != 1 {
+		t.Fatalf("steps = %+v", steps)
+	}
+	if steps[0].name != "st ep" {
+		t.Fatalf("step name = %q, want %q", steps[0].name, "st ep")
+	}
+	assertNoControls(t, "step name", steps[0].name, false)
+	line := steps[0].lines[0]
+	if strings.ContainsAny(line, "\x07\r") {
+		t.Fatalf("line keeps BEL/CR: %q", line)
+	}
+	if !strings.Contains(line, "\t") {
+		t.Fatalf("line lost its tab: %q", line)
+	}
+}
+
+func TestRenderLogBodyStepNameRendersClean(t *testing.T) {
+	raw := []byte("job\t\x1b]8;;https://evil.example\x07stepname\x1b]8;;\x07\t2024-01-02T03:04:05Z \x1b[31mred\x1b[0m\n")
+	m := logViewModel(t)
+	m.setLogSteps(parseJobLog(raw, false))
+	out := m.renderLogBody(80)
+	if strings.Contains(out, "\x07") || strings.Contains(out, "evil.example") {
+		t.Fatalf("raw output leaks step-name escape: %q", out)
+	}
+	if strings.Contains(out, "\x1b[31m") {
+		t.Fatalf("log colour input honoured: %q", out)
+	}
+	plain := ansi.Strip(out)
+	if !strings.Contains(plain, "stepname") || !strings.Contains(plain, "red") {
+		t.Fatalf("visible text missing: %q", plain)
+	}
+}

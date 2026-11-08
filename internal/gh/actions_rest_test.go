@@ -3,6 +3,9 @@ package gh
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -457,6 +460,41 @@ func TestJobLogNon302IsError(t *testing.T) {
 	s := testSource(api, "owner/repo", "tok")
 	if _, err := s.JobLog(1, false); err == nil {
 		t.Fatal("expected an error on non-302 response")
+	}
+}
+
+func TestJobLogBlobTransportFailureRedactsURL(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	blob := fmt.Sprintf("http://127.0.0.1:%d/log?sig=SECRETSIG&se=2099", port)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, blob, http.StatusFound)
+	}))
+	defer api.Close()
+
+	s := testSource(api, "owner/repo", "tok")
+	_, err = s.JobLog(1, false)
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	msg := err.Error()
+	for _, leak := range []string{"SECRETSIG", "sig=", "/log?"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("error %q leaks %q", msg, leak)
+		}
+	}
+	if !strings.Contains(msg, "connection refused") {
+		t.Errorf("error %q lost the transport reason", msg)
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		t.Errorf("error chain %v no longer reaches *net.OpError", err)
 	}
 }
 

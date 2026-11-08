@@ -106,7 +106,7 @@ type PR struct {
 	ClosedAt          time.Time         `json:"closedAt"` // zero while OPEN; set for MERGED and CLOSED
 	IsDraft           bool              `json:"isDraft"`
 	State             string            `json:"state"` // OPEN | CLOSED | MERGED
-	Body              string            `json:"body"`
+	Body              string            `json:"body" sanitize:"text"`
 	AutoMergeRequest  *AutoMergeRequest `json:"autoMergeRequest"`
 	Additions         int               `json:"additions"`
 	Deletions         int               `json:"deletions"`

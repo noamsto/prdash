@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"encoding/json"
 	"log/slog"
 	"slices"
 	"time"
@@ -44,7 +43,7 @@ func (m *Model) cachedRuns() ([]gh.WorkflowRun, bool) {
 		return []gh.WorkflowRun{}, false
 	}
 	var runs []gh.WorkflowRun
-	if err := json.Unmarshal(e.Rows, &runs); err != nil {
+	if err := gh.DecodeCached(e.Rows, &runs); err != nil {
 		slog.Debug("runs cache unmarshal failed", "err", err)
 		return []gh.WorkflowRun{}, false
 	}

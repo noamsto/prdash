@@ -48,7 +48,7 @@ func (s GraphSource) FetchStates(numbers []int) (map[int]ItemState, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("graphql states: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("graphql states: %s: %s", resp.Status, cleanBody(body))
 	}
 	return parseStates(body, numbers)
 }
@@ -91,7 +91,7 @@ func parseStates(body []byte, numbers []int) (map[int]ItemState, error) {
 		return nil, fmt.Errorf("parse states: %w", err)
 	}
 	if len(resp.Errors) > 0 && resp.Data.Repository == nil {
-		return nil, fmt.Errorf("graphql states: %s", resp.Errors[0].Message)
+		return nil, fmt.Errorf("graphql states: %s", CleanLine(resp.Errors[0].Message))
 	}
 	out := make(map[int]ItemState, len(numbers))
 	for _, n := range numbers {
@@ -106,6 +106,7 @@ func parseStates(body []byte, numbers []int) (map[int]ItemState, error) {
 		if ql.ClosedAt != nil {
 			st.ClosedAt = *ql.ClosedAt
 		}
+		sanitize(&st)
 		out[n] = st
 	}
 	return out, nil

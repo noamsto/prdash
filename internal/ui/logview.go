@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/gh"
@@ -32,13 +31,14 @@ func parseJobLog(raw []byte, failedOnly bool) []logStep {
 		}
 		step, content := "", line
 		if parts := strings.SplitN(line, "\t", 3); len(parts) == 3 {
-			step = parts[1]
+			step = gh.CleanLine(parts[1])
 			content = stripTimestamp(parts[2])
 		}
-		// CI job logs carry raw ANSI SGR codes; strip them so truncation counts
-		// real width and the viewer's own theme coloring isn't corrupted (a
-		// truncated escape can also bleed into the surrounding lipgloss style).
-		content = ansi.Strip(content)
+		// CI job logs carry raw ANSI SGR codes; control sequences and stray
+		// control characters are removed so truncation counts real width and
+		// the viewer's own theme coloring isn't corrupted (a truncated escape
+		// can also bleed into the surrounding lipgloss style).
+		content = gh.CleanText(content)
 		i, seen := idx[step]
 		if !seen {
 			i = len(steps)

@@ -51,7 +51,7 @@ func (s GraphSource) FetchChecks(numbers []int) (map[int][]Check, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("graphql checks: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("graphql checks: %s: %s", resp.Status, cleanBody(body))
 	}
 	return parseChecks(body, numbers)
 }
@@ -117,7 +117,7 @@ func parseChecks(body []byte, numbers []int) (map[int][]Check, error) {
 		return nil, fmt.Errorf("parse checks: %w", err)
 	}
 	if len(resp.Errors) > 0 {
-		return nil, fmt.Errorf("graphql checks: %s", resp.Errors[0].Message)
+		return nil, fmt.Errorf("graphql checks: %s", CleanLine(resp.Errors[0].Message))
 	}
 	out := make(map[int][]Check, len(numbers))
 	for _, n := range numbers {
@@ -166,5 +166,6 @@ func mapChecks(q qlChecks) []Check {
 			}
 		}
 	}
+	sanitize(&checks)
 	return checks
 }
