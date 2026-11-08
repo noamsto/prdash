@@ -228,8 +228,9 @@ type runPreviewState struct {
 // than a deliberate alt+j/k scroll changes the preview: a different run or
 // focused job reveals the focus; any other change (geometry, jobs content)
 // reveals it unless it was already out of view, so a deliberate scroll away
-// survives. It skips while no run is under the cursor and keeps the old key,
-// so filtering back to the same run reuses its offset on purpose.
+// survives. The offset is always left within the body. With no run under the
+// cursor the seen state resets: alt+j/k clamps the offset to the empty preview,
+// so a run coming back must count as a run change.
 func (m *Model) reconcileRunPreview() {
 	if m.mode != "run" {
 		m.runPreviewSeen = runPreviewState{}
@@ -237,6 +238,7 @@ func (m *Model) reconcileRunPreview() {
 	}
 	rs, run, ok := m.cursorRun()
 	if !ok {
+		m.runPreviewSeen = runPreviewState{}
 		return
 	}
 	w := min(m.previewWidth(), m.width-2)
@@ -257,23 +259,20 @@ func (m *Model) reconcileRunPreview() {
 		return
 	}
 
+	// prev.rows is the previous geometry's; previewOffset is current (alt+j/k
+	// may have moved it since). Spans do not depend on the offset.
+	wasOutside := prev.shown && prev.hasSpan &&
+		(prev.span.top < m.previewOffset || prev.span.bottom >= m.previewOffset+prev.rows)
 	switch {
 	case key.run != prev.run:
 		m.previewOffset = 0
 		m.scrollRunFocusIntoView()
-	case key.job != prev.job:
+	case key.job != prev.job || !wasOutside:
 		m.scrollRunFocusIntoView()
-	default:
-		// prev.rows is the previous geometry's; previewOffset is current (alt+j/k
-		// may have moved it since). Spans do not depend on the offset.
-		wasOutside := prev.shown && prev.hasSpan &&
-			(prev.span.top < m.previewOffset || prev.span.bottom >= m.previewOffset+prev.rows)
-		if wasOutside {
-			m.previewScrollBy(0)
-		} else {
-			m.scrollRunFocusIntoView()
-		}
 	}
+	// A shorter body or taller pane can leave the offset past its maximum while
+	// the focus is still visible, which scrollRunFocusIntoView does not clamp.
+	m.previewScrollBy(0)
 
 	state := runPreviewState{runPreviewKey: key}
 	if focus >= 0 {

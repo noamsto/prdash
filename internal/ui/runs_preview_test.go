@@ -856,3 +856,71 @@ func TestRunJobsRefreshShiftingSpanKeepsFocusInView(t *testing.T) {
 		}
 	})
 }
+
+// maxPreviewOffset is the furthest the preview can scroll right now.
+func maxPreviewOffset(m Model) int {
+	head, body := m.previewParts()
+	return max(0, lipgloss.Height(body)-m.previewBodyRows(head))
+}
+
+func TestRunResizeTallerClampsOffset(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	m := resize(withJobs(previewBoard(t, run), run, focusJobs(50)...), 160, 30)
+	for range 100 {
+		m, _ = update(m, keyMsg("alt+j"))
+	}
+	if m.previewOffset == 0 || m.previewOffset != maxPreviewOffset(m) || !focusInView(m) {
+		t.Fatalf("setup: offset %d, max %d, focus in view %v", m.previewOffset, maxPreviewOffset(m), focusInView(m))
+	}
+
+	m = resize(m, 160, 60)
+	if got, limit := m.previewOffset, maxPreviewOffset(m); got > limit {
+		t.Errorf("a taller terminal left the offset at %d, past its maximum %d", got, limit)
+	}
+}
+
+func TestRunJobsRefreshShrinkingBodyClampsOffset(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	// Running jobs above the failed one carry a "↳ step" line each; finishing
+	// them shrinks the body while the failed job stays the focus.
+	running := focusJobs(50)
+	for i := range 5 {
+		running[i] = runningJob(int64(i+1), fmt.Sprintf("job-%02d", i))
+	}
+	m := withJobs(previewBoard(t, run), run, running...)
+	for range 100 {
+		m, _ = update(m, keyMsg("alt+j"))
+	}
+	if m.previewOffset == 0 || m.previewOffset != maxPreviewOffset(m) || !focusInView(m) {
+		t.Fatalf("setup: offset %d, max %d, focus in view %v", m.previewOffset, maxPreviewOffset(m), focusInView(m))
+	}
+
+	m = withJobs(m, run, focusJobs(50)...)
+	if !focusInView(m) {
+		t.Fatalf("setup: the focus left the view (offset %d)", m.previewOffset)
+	}
+	if got, limit := m.previewOffset, maxPreviewOffset(m); got > limit {
+		t.Errorf("a refresh that shrank the body left the offset at %d, past its maximum %d", got, limit)
+	}
+}
+
+func TestRunFilterNoMatchThenClearRevealsFocus(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	m := withJobs(previewBoard(t, run), run, focusJobs(50)...)
+	if m.previewOffset == 0 || !focusInView(m) {
+		t.Fatalf("setup: offset %d, focus in view %v", m.previewOffset, focusInView(m))
+	}
+
+	m = typeFilter(m, "workflow:nomatch")
+	m, _ = update(m, keyMsg("enter"))
+	if _, _, ok := m.cursorRun(); ok || m.filtering {
+		t.Fatalf("setup: a run is under the cursor (%v) or still filtering (%v)", ok, m.filtering)
+	}
+	m, _ = update(m, keyMsg("alt+k"))
+
+	m, _ = update(m, keyMsg("esc"))
+	onRun(t, m, run.ID)
+	if !focusInView(m) {
+		t.Errorf("clearing a no-match filter left the focused job off screen (offset %d)", m.previewOffset)
+	}
+}
