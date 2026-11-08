@@ -329,9 +329,8 @@ func ciGlyph(state string) string {
 	}
 }
 
-// Runs-board glyphs.
 const (
-	runGlyph          = "\uF52E" // nerd: nf-oct-workflow
+	runGlyph         = "\uF52E" // nerd: nf-oct-workflow
 	runQueuedGlyph    = "\uF43A" // nerd: nf-oct-clock
 	runCancelledGlyph = "\uF468" // nerd: nf-oct-circle_slash
 )

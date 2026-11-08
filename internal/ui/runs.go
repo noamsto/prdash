@@ -14,8 +14,8 @@ import (
 )
 
 // RunSection is the Runs board: repo-wide workflow runs, live ones first.
-// It is deliberately not `numbered`: a run has no item number the cursor
-// anchor could follow, so the board anchors on run IDs instead.
+// It is deliberately not `numbered`: run IDs are int64, far past the int-keyed
+// held and selection maps, so the board anchors on run IDs itself.
 type RunSection struct {
 	filter, state string
 	runs          []gh.WorkflowRun
@@ -110,7 +110,6 @@ func (s *RunSection) SetShown(idx []int) {
 	s.grouped = s.state == "recent" && !s.forceFlat && slices.ContainsFunc(idx, liveAt)
 	s.shown = slices.Clone(idx)
 	if s.grouped {
-		// Stable partition: live rows first, order kept within each half.
 		slices.SortStableFunc(s.shown, func(a, b int) int {
 			switch la, lb := liveAt(a), liveAt(b); {
 			case la == lb:

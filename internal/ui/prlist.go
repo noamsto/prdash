@@ -3391,9 +3391,9 @@ func modeGlyph(mode string) string {
 	return prGlyph
 }
 
-// accentFor is the per-board accent: mauve for PRs, teal for Issues, blue for Runs. Used for the
-// active header segment and the list/preview box titles so each board reads as a
-// distinct color at a glance.
+// accentFor is the per-board accent: mauve for PRs, teal for Issues, blue for
+// Runs. Used for the active header segment and the list/preview box titles so
+// each board reads as a distinct color at a glance.
 func accentFor(mode string) lipgloss.Style {
 	switch mode {
 	case "issue":
