@@ -55,9 +55,6 @@ func sanitize[T any](v *T) {
 func sanitizeValue(v reflect.Value, text bool) {
 	switch v.Kind() {
 	case reflect.String:
-		if !v.CanSet() {
-			return
-		}
 		if text {
 			v.SetString(CleanText(v.String()))
 		} else {
