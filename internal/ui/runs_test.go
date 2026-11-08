@@ -268,6 +268,27 @@ func TestRunMatchQueryEventLabels(t *testing.T) {
 	}
 }
 
+// The row shows the shortened event ("cron"), so bare text must find it the way
+// event:cron does. The other fields are chosen so "cron" is not a fuzzy
+// subsequence of them: only the event label can make the schedule row match.
+func TestRunBareTextMatchesEventLabel(t *testing.T) {
+	ev := func(id int64, event string) gh.WorkflowRun {
+		r := testRun(id, "build", "completed", "success", time.Duration(id)*time.Hour)
+		r.DisplayTitle, r.HeadBranch, r.Actor, r.Event = "x", "main", "bob", event
+		return r
+	}
+	s := runSection("recent", ev(1, "push"), ev(2, "schedule"))
+	for _, query := range []string{"cron", "event:cron", "schedule"} {
+		var got []int64
+		for _, ix := range s.matchQuery(query) {
+			got = append(got, s.runs[ix].ID)
+		}
+		if !slices.Equal(got, []int64{2}) {
+			t.Errorf("%q: got %v, want [2]", query, got)
+		}
+	}
+}
+
 func TestRunRowColumnsIndependentOfTimeText(t *testing.T) {
 	live := testRun(1, "CI", "in_progress", "", time.Minute)
 	live.RunStartedAt = runsNow.Add(-75 * time.Minute)

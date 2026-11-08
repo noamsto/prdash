@@ -140,7 +140,7 @@ func (s *RunSection) Haystacks() []string {
 }
 
 func runHaystack(r gh.WorkflowRun) string {
-	return strings.Join([]string{r.Name, r.DisplayTitle, r.HeadBranch, r.Event, r.Actor, r.Status, r.Conclusion}, " ")
+	return strings.Join([]string{r.Name, r.DisplayTitle, r.HeadBranch, r.Event, runEventLabel(r.Event), r.Actor, r.Status, r.Conclusion}, " ")
 }
 
 func (s *RunSection) VarsAt(i int) action.Vars {

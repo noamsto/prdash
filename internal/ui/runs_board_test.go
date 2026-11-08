@@ -810,6 +810,79 @@ func TestHeldRunWithoutJobsIsFetchedOnce(t *testing.T) {
 	}
 }
 
+// heldRunBoard is a two-row board whose second row (run 2, finished) the poll
+// dropped, with the cursor on it.
+func heldRunBoard(t *testing.T, src *fakeRunsSource) Model {
+	t.Helper()
+	kept := testRun(1, "a", "in_progress", "", time.Minute)
+	dropped := finished(testRun(2, "b", "", "", 2*time.Minute), "success")
+	m := runsBoard(t, src, kept, dropped)
+	m, _ = update(m, pollResult(m, kept))
+	rs := m.section.(*RunSection)
+	m.cursor = slices.Index(rs.shownIDs(), 2)
+	if !rs.isHeld(2) || m.cursor < 0 {
+		t.Fatalf("setup: held=%v cursor=%d", rs.held, m.cursor)
+	}
+	return m
+}
+
+func TestHeldRunErrOnlyJobsRetries(t *testing.T) {
+	t.Run("error-only entry retries", func(t *testing.T) {
+		m := heldRunBoard(t, &fakeRunsSource{})
+		m, _ = update(m, runJobsMsg{runID: 2, err: errors.New("boom")})
+		if e := m.runJobs[2]; len(e.jobs) != 0 || e.err == nil {
+			t.Fatalf("setup: entry = %+v", e)
+		}
+		if m.runJobsCmdForCursor() == nil {
+			t.Error("a held run whose only jobs fetch failed must be fetched again")
+		}
+	})
+
+	t.Run("loaded entry stays frozen", func(t *testing.T) {
+		m := heldRunBoard(t, &fakeRunsSource{})
+		m, _ = update(m, runJobsMsg{runID: 2, jobs: []gh.RunJob{{ID: 1}}, runUpdated: m.section.(*RunSection).runAt(m.cursor).UpdatedAt})
+		if m.runJobsCmdForCursor() != nil {
+			t.Error("a held run is frozen once its jobs are loaded")
+		}
+	})
+
+	// A failure that persists must not turn every keypress into a fetch: only
+	// the settled cursor (the debounce carrying the current seq) retries.
+	t.Run("a persistent failure does not refetch per keypress", func(t *testing.T) {
+		src := &fakeRunsSource{}
+		m := heldRunBoard(t, src)
+		m, _ = update(m, runJobsMsg{runID: 2, err: errors.New("boom")})
+
+		for _, key := range []string{"l", "h", "alt+j", "alt+k"} {
+			var cmd tea.Cmd
+			m, cmd = update(m, keyMsg(key))
+			collectMsgs(t, cmd)
+			if ids := src.jobIDs(); len(ids) != 0 {
+				t.Fatalf("%q fetched jobs: %v", key, ids)
+			}
+		}
+
+		m, up := update(m, keyMsg("k"))
+		stale := msgOf[detailDebounceMsg](t, collectMsgs(t, up))
+		m, down := update(m, keyMsg("j"))
+		settled := msgOf[detailDebounceMsg](t, collectMsgs(t, down))
+		if m.cursor != slices.Index(m.section.(*RunSection).shownIDs(), 2) {
+			t.Fatalf("setup: cursor %d is not back on the held run", m.cursor)
+		}
+
+		m, cmd := update(m, stale)
+		collectMsgs(t, cmd)
+		if ids := src.jobIDs(); len(ids) != 0 {
+			t.Fatalf("a superseded debounce fetched jobs: %v", ids)
+		}
+		_, cmd = update(m, settled)
+		collectMsgs(t, cmd)
+		if ids := src.jobIDs(); len(ids) > 1 {
+			t.Errorf("one settle fetched %d times: %v", len(ids), ids)
+		}
+	})
+}
+
 func TestRunFilterFetchesJobsForNewCursorRow(t *testing.T) {
 	alpha := finished(testRun(1, "alpha", "", "", 2*time.Minute), "success")
 	beta := finished(testRun(2, "beta", "", "", time.Minute), "success")
