@@ -258,7 +258,7 @@ func TestIssueBoardFailurePathIsModeScoped(t *testing.T) {
 	fs := &fakeIssueSource{err: errors.New("the 'factify-inc/mono' repository has disabled issues")}
 	m := NewModel("/repo", "is:open", nil)
 	m.SetIssueSource(fs)
-	_ = m.toggleMode() // pr -> issue; m.filter becomes m.other's default ("is:open")
+	_ = m.cycleBoard() // pr -> issue; m.filter becomes the issue board's default ("is:open")
 
 	msg := m.issueSectionsFetchCmd(false)()
 	ffm, ok := msg.(fetchFailedMsg)
@@ -296,7 +296,7 @@ func TestIssueBoardFailurePathIsModeScoped(t *testing.T) {
 	t.Run("pr-side wide-half failure arriving on the issue board changes nothing", func(t *testing.T) {
 		m3 := NewModel("/repo", "is:open", nil)
 		m3.SetPRSource(erroringWidePRSource{err: errors.New("boom")})
-		_ = m3.toggleMode() // pr -> issue
+		_ = m3.cycleBoard() // pr -> issue
 
 		prMsg := m3.sectionsFetchCmd(false)()
 		prFfm, ok := prMsg.(fetchFailedMsg)

@@ -74,6 +74,8 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 			return nil
 		}
 		return m.batchDetailCmd([]int{v.Number})
+	case "run":
+		return m.runJobsCmdForCursor()
 	}
 	return nil
 }
@@ -303,6 +305,9 @@ func (m Model) previewParts() (head, body string) {
 	w := m.previewWidth()
 	if is, ok := m.section.(*IssueSection); ok {
 		return m.issuePreviewParts(is, w, w-2)
+	}
+	if rs, ok := m.section.(*RunSection); ok {
+		return m.runPreviewParts(rs, w, w-2)
 	}
 	ps, ok := m.section.(*PRSection)
 	if !ok {

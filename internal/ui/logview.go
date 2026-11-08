@@ -156,27 +156,35 @@ func (m Model) enterLogView() (tea.Model, tea.Cmd) {
 	if c.IsExternal() { // StatusContext: no job log — open its page in the browser
 		return m.openHoveredCheck()
 	}
+	cmd := m.openJobLog(c.JobID(), c.Label(), false) // capture before the return copies m
+	return m, cmd
+}
+
+// openJobLog opens the log sub-view on a job. A cached log paints instantly;
+// otherwise it kicks an async fetch. showAll picks the whole log over the
+// failed steps only.
+func (m *Model) openJobLog(jobID, label string, showAll bool) tea.Cmd {
 	m.logView = true
-	m.logJobID = c.JobID()
-	m.logLabel = c.Label()
+	m.logJobID = jobID
+	m.logLabel = label
 	m.logCursor = 0
-	m.logShowAll = false
+	m.logShowAll = showAll
 	m.logErr = nil
-	if m.logJobID == "" { // Actions check with no job assigned yet (pending/queued)
+	if jobID == "" { // Actions check with no job assigned yet (pending/queued)
 		m.logLoading = false
 		m.setLogSteps(nil) // renders "No logs."
-		return m, nil
+		return nil
 	}
-	if steps, hit := m.logCache[logCacheKey(m.logJobID, false)]; hit {
+	if steps, hit := m.logCache[logCacheKey(jobID, showAll)]; hit {
 		m.logLoading = false
 		m.setLogSteps(steps)
-		return m, nil
+		return nil
 	}
 	m.logLoading = true
 	m.logSteps, m.logLines = nil, nil
 	m.setLogContent()
 	spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
-	return m, tea.Batch(m.fetchJobLogCmd(m.logJobID, false), spin)
+	return tea.Batch(m.fetchJobLogCmd(jobID, showAll), spin)
 }
 
 // fetchJobLogCmd fetches a job log off the UI thread and reports it back.
@@ -308,7 +316,11 @@ func (m Model) updateLogView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "esc", "h", "left":
 		m.logView = false
-		m.renderExpanded() // restore the Checks tab into the viewport
+		if m.expanded {
+			m.renderExpanded() // restore the Checks tab into the viewport
+		} else {
+			m.renderList()
+		}
 		return m, nil
 	case "q", "ctrl+c":
 		return m, tea.Quit

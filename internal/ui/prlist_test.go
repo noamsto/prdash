@@ -858,7 +858,9 @@ func TestToggleModeSwapsBoard(t *testing.T) {
 		t.Error("view state not reset on toggle")
 	}
 
-	back, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	// From Issues, Tab reaches Runs first; a second Tab returns to PRs.
+	runs, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	back, _ := runs.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	b := back.(Model)
 	if b.mode != "pr" || b.section.Kind() != "pr" {
 		t.Errorf("toggle back failed: mode=%q kind=%q", b.mode, b.section.Kind())
@@ -884,7 +886,9 @@ func TestHideDraftsSurvivesBoardToggle(t *testing.T) {
 		t.Error("hideDrafts should be inert while on the issue board")
 	}
 
-	back, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	// From Issues, Tab reaches Runs first; a second Tab returns to PRs.
+	runs, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	back, _ := runs.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	b := back.(Model)
 	if !b.hideDrafts {
 		t.Error("hideDrafts should be restored on toggle back to the PR board")

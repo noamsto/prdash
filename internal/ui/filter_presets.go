@@ -5,6 +5,7 @@ import "strings"
 // prStates / issueStates are the `s`-toggle cycles per board. Order = cycle order.
 var prStates = []string{"open", "merged", "closed"}
 var issueStates = []string{"open", "closed"}
+var runStates = []string{"recent", "active", "failed"}
 
 // searchFor composes a gh search from a state and an optional body qualifier.
 // A PR's "closed" state adds is:unmerged, since GitHub counts merged PRs as
@@ -63,6 +64,9 @@ const (
 func statesFor(mode string) []string {
 	if mode == "issue" {
 		return issueStates
+	}
+	if mode == "run" {
+		return runStates
 	}
 	return prStates
 }

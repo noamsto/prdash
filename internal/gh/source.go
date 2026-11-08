@@ -1,6 +1,9 @@
 package gh
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // PRSource fetches a PR list for a search filter, returning the parsed PRs and
 // the JSON bytes to persist in the on-disk cache. The []byte is the marshalled
@@ -98,6 +101,46 @@ type WorkflowRun struct {
 	ID         int64
 	Conclusion string
 	HeadSHA    string
+
+	// The fields below are filled by RunsSource.ListRuns alone.
+	Name, DisplayTitle                 string
+	RunNumber                          int
+	Status, HeadBranch, Event, Actor   string
+	CreatedAt, UpdatedAt, RunStartedAt time.Time
+	HTMLURL                            string
+}
+
+// Active reports whether the run is still queued or executing.
+func (r WorkflowRun) Active() bool {
+	return r.Status != "" && r.Status != "completed"
+}
+
+// RunJobStep is one step of a RunJob.
+type RunJobStep struct {
+	Name, Status string
+}
+
+// RunJob is one job of a workflow run.
+type RunJob struct {
+	ID                              int64
+	Name, Status, Conclusion        string
+	StartedAt, CompletedAt, HTMLURL string
+	Steps                           []RunJobStep
+}
+
+// Check maps the job onto the Check shape so Check.Result and the check timing
+// helpers work on it unchanged.
+func (j RunJob) Check() Check {
+	c := Check{Name: j.Name, StartedAt: j.StartedAt, CompletedAt: j.CompletedAt}
+	switch j.Status {
+	case "completed":
+		c.Conclusion = strings.ToUpper(j.Conclusion)
+	case "in_progress":
+		c.State = "IN_PROGRESS"
+	default:
+		c.State = "QUEUED"
+	}
+	return c
 }
 
 // ActionsSource performs the Actions rerun/job-log operations via REST.
@@ -117,6 +160,13 @@ type ActionsSource interface {
 	// `gh run view --log[-failed]` emits so it round-trips through the
 	// existing parseJobLog consumer unchanged.
 	JobLog(jobID int64, failedOnly bool) ([]byte, error)
+}
+
+// RunsSource lists the repo's workflow runs and a run's jobs for the runs board.
+// The []byte is the marshalled []WorkflowRun for the cache hydrate round-trip.
+type RunsSource interface {
+	ListRuns(limit int) ([]WorkflowRun, []byte, error)
+	ListRunJobs(runID int64) ([]RunJob, int, error)
 }
 
 // RateSource reports the tightest GitHub rate-limit budget seen so far, scraped

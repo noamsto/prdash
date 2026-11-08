@@ -179,6 +179,9 @@ func (m *Model) applyHeldStates(states map[int]gh.ItemState) {
 // omitted a still-matching row just by pushing it past the limit. Such a row
 // stays dim and untagged.
 func (m *Model) heldTag(i int) (held bool, tag string) {
+	if rs, ok := m.section.(*RunSection); ok {
+		return rs.isHeld(rs.runAt(i).ID), ""
+	}
 	boardState := strings.ToUpper(m.state)
 	if ps, ok := m.section.(*PRSection); ok {
 		p := ps.prAt(i)
