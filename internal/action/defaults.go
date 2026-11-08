@@ -98,3 +98,19 @@ func DefaultIssueActions() map[string]Action {
 			Command: Command{Builtin: "copy-branch"}, Scope: "single"},
 	}
 }
+
+func DefaultRunActions() map[string]Action {
+	return map[string]Action{
+		"enter": {Key: "enter", Label: "View logs",
+			Command: Command{Builtin: "run-logs"}, Scope: "single"},
+		"r": {Key: "r", Label: "Rerun failed jobs",
+			Command: Command{Builtin: "rerun-run"}, Scope: "single", Refresh: true,
+			Progress: "Rerunning failed jobs", Past: "Rerun queued", Fail: "Rerun failed"},
+		"o": {Key: "o", Label: "Open in browser",
+			Command: Command{Native: "open-web"}, Scope: "single"},
+		"Y": {Key: "Y", Label: "Copy URL",
+			Command: Command{Builtin: "copy-url"}, Scope: "single"},
+		"b": {Key: "b", Label: "Copy branch",
+			Command: Command{Builtin: "copy-branch"}, Scope: "single"},
+	}
+}

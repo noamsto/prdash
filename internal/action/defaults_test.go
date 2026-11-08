@@ -100,6 +100,27 @@ func TestApproveActionStillRefreshes(t *testing.T) {
 	}
 }
 
+func TestDefaultRunActionsKeySet(t *testing.T) {
+	want := []string{"enter", "r", "o", "Y", "b"}
+	got := DefaultRunActions()
+	if len(got) != len(want) {
+		t.Fatalf("run actions = %d keys, want %d: %v", len(got), len(want), got)
+	}
+	for _, k := range want {
+		a, ok := got[k]
+		if !ok {
+			t.Errorf("run actions missing key %q", k)
+			continue
+		}
+		if a.Key != k {
+			t.Errorf("run action %q has Key %q", k, a.Key)
+		}
+		if a.Scope != "single" {
+			t.Errorf("run action %q scope = %q, want single", k, a.Scope)
+		}
+	}
+}
+
 func TestDefaultsConfirmOthers(t *testing.T) {
 	d := DefaultPRActions()
 	if !d["A"].ConfirmOthers {

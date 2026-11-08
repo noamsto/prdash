@@ -3,11 +3,15 @@ package gh
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // githubAPIVersion pins the REST API version prdash's Actions client speaks,
@@ -99,6 +103,192 @@ func (s GraphSource) ListRunsForBranch(branch string) ([]WorkflowRun, error) {
 		runs[i] = WorkflowRun{ID: r.ID, Conclusion: r.Conclusion, HeadSHA: r.HeadSHA}
 	}
 	return runs, nil
+}
+
+// ErrActionsDisabled marks a run listing refused because Actions is off for the
+// repo, which is a state to show rather than a failure to retry.
+var ErrActionsDisabled = errors.New("actions disabled")
+
+// ActionsDisabled reports whether err is ErrActionsDisabled.
+func ActionsDisabled(err error) bool { return errors.Is(err, ErrActionsDisabled) }
+
+// listRunsPage fetches one page of the repo's runs, optionally filtered by status.
+func (s GraphSource) listRunsPage(limit int, status string) ([]WorkflowRun, error) {
+	owner, name, err := s.repoParts()
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/repos/%s/%s/actions/runs?per_page=%d&exclude_pull_requests=true", owner, name, limit)
+	if status != "" {
+		path += "&status=" + status
+	}
+	req, err := s.restRequest(http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		disabled := resp.StatusCode == http.StatusNotFound ||
+			(resp.StatusCode == http.StatusForbidden && strings.Contains(strings.ToLower(string(body)), "disabled"))
+		if disabled {
+			return nil, fmt.Errorf("list runs: %s: %w", resp.Status, ErrActionsDisabled)
+		}
+		return nil, fmt.Errorf("list runs: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var parsed struct {
+		WorkflowRuns []struct {
+			ID           int64     `json:"id"`
+			Name         string    `json:"name"`
+			DisplayTitle string    `json:"display_title"`
+			RunNumber    int       `json:"run_number"`
+			Status       string    `json:"status"`
+			Conclusion   string    `json:"conclusion"`
+			HeadBranch   string    `json:"head_branch"`
+			HeadSHA      string    `json:"head_sha"`
+			Event        string    `json:"event"`
+			CreatedAt    time.Time `json:"created_at"`
+			UpdatedAt    time.Time `json:"updated_at"`
+			RunStartedAt time.Time `json:"run_started_at"`
+			HTMLURL      string    `json:"html_url"`
+			Actor        struct {
+				Login string `json:"login"`
+			} `json:"actor"`
+		} `json:"workflow_runs"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("parse run list: %w", err)
+	}
+	runs := make([]WorkflowRun, len(parsed.WorkflowRuns))
+	for i, r := range parsed.WorkflowRuns {
+		runs[i] = WorkflowRun{
+			ID: r.ID, Conclusion: r.Conclusion, HeadSHA: r.HeadSHA,
+			Name: r.Name, DisplayTitle: r.DisplayTitle, RunNumber: r.RunNumber,
+			Status: r.Status, HeadBranch: r.HeadBranch, Event: r.Event, Actor: r.Actor.Login,
+			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, RunStartedAt: r.RunStartedAt,
+			HTMLURL: r.HTMLURL,
+		}
+	}
+	return runs, nil
+}
+
+// ListRuns lists the repo's runs for the runs board: the limit most recent plus
+// the in-progress and queued ones, so a live run older than the recent window
+// still shows. The three requests run concurrently and any failure fails the call.
+func (s GraphSource) ListRuns(limit int) ([]WorkflowRun, []byte, error) {
+	statuses := [3]string{"", "in_progress", "queued"}
+	var pages [3][]WorkflowRun
+	var errs [3]error
+	var wg sync.WaitGroup
+	for i, status := range statuses {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pages[i], errs[i] = s.listRunsPage(limit, status)
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	runs := mergeRuns(pages[0], pages[1], pages[2])
+	raw, err := json.Marshal(runs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return runs, raw, nil
+}
+
+// mergeRuns dedupes by run ID and returns the runs newest first. On a duplicate
+// the entry with the latest UpdatedAt wins, completed winning a tie, so a run
+// that finished between the three concurrent requests shows its final state.
+func mergeRuns(lists ...[]WorkflowRun) []WorkflowRun {
+	byID := map[int64]WorkflowRun{}
+	for _, list := range lists {
+		for _, r := range list {
+			prev, ok := byID[r.ID]
+			if !ok || r.UpdatedAt.After(prev.UpdatedAt) ||
+				(r.UpdatedAt.Equal(prev.UpdatedAt) && !r.Active() && prev.Active()) {
+				byID[r.ID] = r
+			}
+		}
+	}
+	runs := make([]WorkflowRun, 0, len(byID))
+	for _, r := range byID {
+		runs = append(runs, r)
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if !runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
+			return runs[i].CreatedAt.After(runs[j].CreatedAt)
+		}
+		return runs[i].ID > runs[j].ID
+	})
+	return runs
+}
+
+// ListRunJobs fetches the first page of runID's latest-attempt jobs and the
+// total job count.
+func (s GraphSource) ListRunJobs(runID int64) ([]RunJob, int, error) {
+	owner, name, err := s.repoParts()
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := s.restRequest(http.MethodGet, fmt.Sprintf("/repos/%s/%s/actions/runs/%d/jobs?filter=latest&per_page=100", owner, name, runID))
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("list run jobs: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var parsed struct {
+		TotalCount int `json:"total_count"`
+		Jobs       []struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			Status      string `json:"status"`
+			Conclusion  string `json:"conclusion"`
+			StartedAt   string `json:"started_at"`
+			CompletedAt string `json:"completed_at"`
+			HTMLURL     string `json:"html_url"`
+			Steps       []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"steps"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, 0, fmt.Errorf("parse run jobs: %w", err)
+	}
+	jobs := make([]RunJob, len(parsed.Jobs))
+	for i, j := range parsed.Jobs {
+		steps := make([]RunJobStep, len(j.Steps))
+		for k, st := range j.Steps {
+			steps[k] = RunJobStep{Name: st.Name, Status: st.Status}
+		}
+		jobs[i] = RunJob{
+			ID: j.ID, Name: j.Name, Status: j.Status, Conclusion: j.Conclusion,
+			StartedAt: j.StartedAt, CompletedAt: j.CompletedAt, HTMLURL: j.HTMLURL, Steps: steps,
+		}
+	}
+	return jobs, parsed.TotalCount, nil
 }
 
 // postAction POSTs an empty body to path and requires 201 Created, the
