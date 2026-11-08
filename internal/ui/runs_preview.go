@@ -80,11 +80,11 @@ func (m Model) runPreviewBody(rs *RunSection, run gh.WorkflowRun, w, bw int) (st
 	entry, ok := m.runJobs[run.ID]
 	switch {
 	case !ok:
-		return dimStyle.Render("  loading jobs…"), nil
+		return dimStyle.Render("  loading jobs…"), []lineSpan{}
 	case entry.err != nil && len(entry.jobs) == 0:
-		return failStyle.Render("  " + truncate("jobs failed: "+entry.err.Error(), bw-2)), nil
+		return failStyle.Render("  " + truncate("jobs failed: "+entry.err.Error(), bw-2)), []lineSpan{}
 	case len(entry.jobs) == 0:
-		return dimStyle.Render("  no jobs yet"), nil
+		return dimStyle.Render("  no jobs yet"), []lineSpan{}
 	}
 
 	now := m.runClock(rs, run)

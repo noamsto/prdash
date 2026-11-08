@@ -195,7 +195,7 @@ func runQualField(r gh.WorkflowRun, key string) string {
 func (s *RunSection) matchQuery(query string) []int {
 	quals, bare := parseRunQuery(query)
 	s.forceFlat = bare != ""
-	var cands []int
+	cands := make([]int, 0, len(s.runs))
 	for i, r := range s.runs {
 		ok := true
 		for key, vals := range quals {

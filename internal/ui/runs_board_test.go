@@ -735,9 +735,9 @@ func TestForeignFetchFailedDoesNotBlankRunBoard(t *testing.T) {
 		t.Errorf("status = %+v, want a transient hint", m.actionStatus)
 	}
 
-	m.actionStatus = nil
+	before := m.actionStatus
 	m, _ = update(m, fetchFailedMsg{err: errors.New("pr boom"), mode: "pr", filter: "is:open"})
-	if m.err != nil || !m.refreshing || m.actionStatus != nil {
+	if m.err != nil || !m.refreshing || m.actionStatus != before {
 		t.Errorf("another board's failure must be dropped: err=%v refreshing=%v status=%+v", m.err, m.refreshing, m.actionStatus)
 	}
 }
