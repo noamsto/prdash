@@ -200,9 +200,9 @@ func TestRenderKeepsBenignAmpersands(t *testing.T) {
 	for _, md := range []string{
 		"```go\nif a && b {}\n```\n",
 		"x `a && b` y",
-		"https://x/d?a=1&from=now&to=now",
-		"https://x/p?a=1&2=b tail",
-		"https://x/p?a=1&-b=2 tail",
+		"https://x.io/d?a=1&from=now&to=now",
+		"https://x.io/p?a=1&2=b tail",
+		"https://x.io/p?a=1&-b=2 tail",
 		"**\"foo\"**&bar",
 		"_foo_&bar",
 	} {
@@ -220,7 +220,7 @@ func TestRenderKeepsBenignAmpersands(t *testing.T) {
 }
 
 func TestRenderQueryWithInlineDelimiterAfterAmpersand(t *testing.T) {
-	out, err := Render("https://x/p?a=1&_b=2 tail", 80)
+	out, err := Render("https://x.io/p?a=1&_b=2 tail", 80)
 	if err != nil {
 		t.Fatal(err)
 	}
