@@ -154,6 +154,8 @@ type Model struct {
 	runJobs           map[int64]runJobsEntry // run ID → last jobs fetch; memory only
 	runFocusRun       int64                  // run the focused job belongs to
 	runFocusJob       int64                  // focused job in the side preview
+	runPreviewSeen    runPreviewState        // what reconcileRunPreview last saw on the Runs board
+	runJobsRev        int                    // bumped per runJobsMsg; moves the focused job's span while its ID stays
 	runPolling        bool                   // the Runs-board poll tick loop is running
 	runsFetchSeq      int                    // bumped per requested runs fetch; a poll result carrying an older seq is dropped
 	lastKeyAt         time.Time              // last handled key; slows the Runs-board poll when quiet
@@ -774,8 +776,9 @@ func (m *Model) moveCursor(delta int) {
 	if m.cursor >= n {
 		m.cursor = n - 1
 	}
-	m.previewOffset = 0
-	m.scrollRunFocusIntoView()
+	if m.mode != "run" {
+		m.previewOffset = 0 // on Runs the reconciler owns the offset: a clamped move keeps the row
+	}
 	m.renderList()
 }
 
@@ -2077,6 +2080,13 @@ func (m Model) debounceDetailCmd() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.updateMsg(msg)
+	nm := next.(Model)
+	nm.reconcileRunPreview()
+	return nm, cmd
+}
+
+func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case previewMouseScrollMsg:
 		if _, _, _, _, ok := m.previewMouseBounds(); !ok {
@@ -2219,16 +2229,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case runJobsMsg:
 		entry := m.runJobs[msg.runID]
-		firstJobs := len(entry.jobs) == 0
 		if msg.err != nil {
 			entry.err, entry.runUpdated = msg.err, time.Time{}
 		} else {
 			entry = runJobsEntry{jobs: msg.jobs, total: msg.total, runUpdated: msg.runUpdated}
 		}
 		m.runJobs[msg.runID] = entry
-		if _, run, ok := m.cursorRun(); ok && run.ID == msg.runID && firstJobs && len(entry.jobs) > 0 {
-			m.scrollRunFocusIntoView()
-		}
+		m.runJobsRev++
 		m.repaintActive()
 		return m, nil
 	case runsPollMsg:
@@ -2884,7 +2891,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "z":
 			m.previewMax = !m.previewMax
-			m.scrollRunFocusIntoView()
 			return m, nil
 		case "alt+j":
 			m.previewScrollBy(1)

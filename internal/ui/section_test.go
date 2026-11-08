@@ -1409,3 +1409,44 @@ func TestPRSectionVarsAtCarriesTicket(t *testing.T) {
 		}
 	}
 }
+
+func TestTruncateTable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		w    int
+		want string // exact output; empty for the grapheme rows, which only assert the fit
+	}{
+		{name: "ascii cut", in: "hello world", w: 8, want: "hello w…"},
+		{name: "ascii fits", in: "short", w: 10, want: "short"},
+		{name: "exact fit", in: "abcde", w: 5, want: "abcde"},
+		{name: "zero width", in: "anything", w: 0, want: ""},
+		{name: "negative width", in: "anything", w: -3, want: ""},
+		{name: "one cell", in: "anything", w: 1, want: "…"},
+		{name: "cjk", in: "日本語テキスト", w: 7, want: "日本語…"},
+		{name: "cjk odd budget", in: "日本語テキスト", w: 8, want: "日本語…"},
+		{name: "accented", in: "café au lait", w: 8, want: "café au…"},
+		{name: "combining accent", in: "café au lait", w: 8, want: "café au…"},
+		{name: "vs16 hearts", in: "❤️❤️❤️", w: 4},
+		{name: "vs16 mid text", in: "ci ✔️ build", w: 6},
+		{name: "vs16 narrow", in: "❤️❤️❤️❤️❤️❤️❤️❤️", w: 9},
+		{name: "flags", in: "🇺🇸🇩🇪🇫🇷🇯🇵", w: 5},
+		{name: "zwj family", in: "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧", w: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncate(tc.in, tc.w)
+			if tc.want != "" || tc.w <= 0 {
+				if got != tc.want {
+					t.Fatalf("truncate(%q, %d) = %q, want %q", tc.in, tc.w, got, tc.want)
+				}
+				return
+			}
+			if w := lipgloss.Width(got); w > tc.w {
+				t.Errorf("truncate(%q, %d) = %q is %d cells wide", tc.in, tc.w, got, w)
+			}
+			if strings.HasPrefix(tc.name, "vs16") && !strings.HasSuffix(got, "…") {
+				t.Errorf("truncate(%q, %d) = %q lacks the ellipsis", tc.in, tc.w, got)
+			}
+		})
+	}
+}

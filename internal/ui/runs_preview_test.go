@@ -521,3 +521,406 @@ func TestRunMoveCursorRevealsFocusedJob(t *testing.T) {
 		t.Fatalf("moving onto the run left the focused job off screen (offset %d)", m.previewOffset)
 	}
 }
+
+// focusJobs is 60 jobs; the one at failAt failed (none when negative), which is
+// where the default focus lands.
+func focusJobs(failAt int) []gh.RunJob {
+	jobs := make([]gh.RunJob, 0, 60)
+	for i := range 60 {
+		conclusion := "success"
+		if i == failAt {
+			conclusion = "failure"
+		}
+		jobs = append(jobs, doneJob(int64(i+1), fmt.Sprintf("job-%02d", i), conclusion, time.Minute))
+	}
+	return jobs
+}
+
+func shortJobs(prefix string) []gh.RunJob {
+	jobs := make([]gh.RunJob, 0, 3)
+	for i := range 3 {
+		jobs = append(jobs, doneJob(int64(i+1), fmt.Sprintf("%s-%d", prefix, i), "success", time.Minute))
+	}
+	return jobs
+}
+
+func failedRun(id int64, name string, age time.Duration) gh.WorkflowRun {
+	return finished(testRun(id, name, "", "", age), "failure")
+}
+
+func typeFilter(m Model, query string) Model {
+	m, _ = update(m, keyMsg("/"))
+	for _, r := range query {
+		m, _ = update(m, keyMsg(string(r)))
+	}
+	return m
+}
+
+func onRun(t *testing.T, m Model, id int64) {
+	t.Helper()
+	if _, run, ok := m.cursorRun(); !ok || run.ID != id {
+		t.Fatalf("setup: cursor on run %d (ok=%v), want %d", run.ID, ok, id)
+	}
+}
+
+func TestRunPollMovingDefaultFocusStaysVisible(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	m := withJobs(previewBoard(t, run), run, focusJobs(-1)...)
+	if m.previewOffset != 0 || !focusInView(m) {
+		t.Fatalf("setup: focus 0 not shown at offset %d", m.previewOffset)
+	}
+
+	m = withJobs(m, run, focusJobs(50)...)
+	if !focusInView(m) {
+		t.Errorf("the default focus moved to job 50 and is off screen (offset %d)", m.previewOffset)
+	}
+}
+
+func TestRunStateCycleRevealsFocus(t *testing.T) {
+	t.Run("to_short_run", func(t *testing.T) {
+		x := testRun(1, "xray", "in_progress", "", time.Minute)
+		y := failedRun(2, "yank", 2*time.Minute)
+		m := withJobs(previewBoard(t, x, y), x, shortJobs("xjob")...)
+		m = withJobs(m, y, focusJobs(50)...)
+		m, _ = update(m, keyMsg("j"))
+		onRun(t, m, y.ID)
+		if m.previewOffset == 0 || !focusInView(m) {
+			t.Fatalf("setup: focus 50 not scrolled into view (offset %d)", m.previewOffset)
+		}
+
+		m, _ = update(m, keyMsg("s"))
+		onRun(t, m, x.ID)
+		if m.previewOffset != 0 || !strings.Contains(ansi.Strip(m.previewScrolled()), "xjob-0") {
+			t.Errorf("active view: offset %d, want 0 with the run's jobs showing:\n%s", m.previewOffset, ansi.Strip(m.previewScrolled()))
+		}
+	})
+	t.Run("to_long_run", func(t *testing.T) {
+		x := finished(testRun(1, "xray", "", "", time.Minute), "success")
+		y := failedRun(2, "yank", 2*time.Minute)
+		m := withJobs(previewBoard(t, x, y), x, shortJobs("xjob")...)
+		m = withJobs(m, y, focusJobs(50)...)
+		onRun(t, m, x.ID)
+
+		m, _ = update(m, keyMsg("s")) // active: nothing is running
+		m, _ = update(m, keyMsg("s"))
+		onRun(t, m, y.ID)
+		if m.state != "failed" || !focusInView(m) {
+			t.Errorf("failed view (state %q): the focused job is off screen (offset %d)", m.state, m.previewOffset)
+		}
+	})
+}
+
+func TestRunFilterRevealsFocusAndNeverBlank(t *testing.T) {
+	t.Run("to_long_run", func(t *testing.T) {
+		x := finished(testRun(1, "xray", "", "", time.Minute), "success")
+		y := failedRun(2, "yank", 2*time.Minute)
+		m := withJobs(previewBoard(t, x, y), x, shortJobs("xjob")...)
+		m = withJobs(m, y, focusJobs(50)...)
+		onRun(t, m, x.ID)
+
+		m = typeFilter(m, "workflow:yank")
+		onRun(t, m, y.ID)
+		if !focusInView(m) {
+			t.Errorf("filtering to the long run left the focused job off screen (offset %d)", m.previewOffset)
+		}
+	})
+	t.Run("to_short_run", func(t *testing.T) {
+		x := finished(testRun(1, "xray", "", "", 2*time.Minute), "success")
+		y := failedRun(2, "yank", time.Minute)
+		m := withJobs(previewBoard(t, x, y), x, shortJobs("xjob")...)
+		m = withJobs(m, y, focusJobs(50)...)
+		onRun(t, m, y.ID)
+		if m.previewOffset == 0 {
+			t.Fatal("setup: the long run's preview is not scrolled")
+		}
+
+		m = typeFilter(m, "workflow:xray")
+		onRun(t, m, x.ID)
+		if m.previewOffset != 0 || !strings.Contains(ansi.Strip(m.previewScrolled()), "xjob-0") {
+			t.Errorf("filtering to the short run: offset %d, want 0 with its jobs showing:\n%s", m.previewOffset, ansi.Strip(m.previewScrolled()))
+		}
+	})
+}
+
+func TestRunFilterEscClearRevealsFocus(t *testing.T) {
+	x := finished(testRun(1, "xray", "", "", 2*time.Minute), "success")
+	y := failedRun(2, "yank", time.Minute)
+	m := withJobs(previewBoard(t, x, y), y, focusJobs(50)...)
+	m = withJobs(m, x, shortJobs("xjob")...)
+	m, _ = update(m, keyMsg("j"))
+	onRun(t, m, x.ID)
+
+	m = typeFilter(m, "workflow:xray")
+	m, _ = update(m, keyMsg("enter"))
+	onRun(t, m, x.ID)
+	if m.filtering || m.previewOffset != 0 {
+		t.Fatalf("setup: filtering=%v offset=%d", m.filtering, m.previewOffset)
+	}
+
+	m, _ = update(m, keyMsg("esc"))
+	onRun(t, m, y.ID)
+	if !focusInView(m) {
+		t.Errorf("clearing the filter left the focused job off screen (offset %d)", m.previewOffset)
+	}
+}
+
+func TestRunRefreshDroppingAnchorRevealsFocus(t *testing.T) {
+	a := testRun(1, "alpha", "in_progress", "", time.Minute)
+	b := failedRun(2, "bravo", 2*time.Minute)
+	m := withJobs(previewBoard(t, a, b), b, focusJobs(50)...)
+	onRun(t, m, a.ID)
+
+	m, _ = update(m, runsFetchedMsg{runs: []gh.WorkflowRun{b}, replace: true})
+	onRun(t, m, b.ID)
+	if !focusInView(m) {
+		t.Errorf("the refresh moved the cursor onto a run whose focused job is off screen (offset %d)", m.previewOffset)
+	}
+}
+
+func TestRunBoardReentryRevealsFocus(t *testing.T) {
+	y := failedRun(1, "yank", time.Minute)
+	w := failedRun(2, "whisky", 2*time.Minute)
+	m := withJobs(previewBoard(t, y, w), w, focusJobs(50)...)
+	m = withJobs(m, y, focusJobs(50)...)
+	m, _ = update(m, keyMsg("j"))
+	onRun(t, m, w.ID)
+	m, _ = update(m, keyMsg("alt+j"))
+	if m.previewOffset == 0 {
+		t.Fatal("setup: the other run's preview is not scrolled")
+	}
+
+	for range 3 {
+		m, _ = update(m, keyMsg("tab"))
+	}
+	m, _ = update(m, runsFetchedMsg{runs: []gh.WorkflowRun{y, w}, replace: true})
+	if m.mode != "run" || len(m.runJobs[y.ID].jobs) != 60 {
+		t.Fatalf("setup: mode %q, cached jobs %d", m.mode, len(m.runJobs[y.ID].jobs))
+	}
+	onRun(t, m, y.ID)
+	if !focusInView(m) || m.previewOffset == 0 {
+		t.Errorf("re-entering the board left the focused job off screen (offset %d)", m.previewOffset)
+	}
+}
+
+func TestRunResizeRevealsFocus(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	t.Run("widen", func(t *testing.T) {
+		m := runsBoard(t, &fakeRunsSource{}, run)
+		m = withJobs(m, run, focusJobs(50)...)
+		if m.previewShown() {
+			t.Fatal("setup: the preview is already shown")
+		}
+
+		m = resize(m, 160, 40)
+		if !m.previewShown() {
+			t.Fatal("setup: widening did not show the preview")
+		}
+		if !focusInView(m) {
+			t.Errorf("widening left the focused job off screen (offset %d)", m.previewOffset)
+		}
+	})
+	t.Run("shrink", func(t *testing.T) {
+		m := withJobs(previewBoard(t, run), run, focusJobs(50)...)
+		if !focusInView(m) {
+			t.Fatal("setup: the focused job is not in view")
+		}
+
+		m = resize(m, 160, 14)
+		if !m.previewShown() {
+			t.Fatal("setup: shrinking hid the preview")
+		}
+		if !focusInView(m) {
+			t.Errorf("shrinking the height left the focused job off screen (offset %d)", m.previewOffset)
+		}
+	})
+}
+
+// scrollAway moves the preview up until the focused job leaves the window.
+func scrollAway(t *testing.T, m Model) Model {
+	t.Helper()
+	for range 2 {
+		m, _ = update(m, keyMsg("alt+k"))
+	}
+	if focusInView(m) || m.previewOffset == 0 {
+		t.Fatalf("setup: focus still in view or no scroll left (offset %d)", m.previewOffset)
+	}
+	return m
+}
+
+func TestRunResizeKeepsDeliberateScroll(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	m := scrollAway(t, withJobs(previewBoard(t, run), run, focusJobs(50)...))
+	offset := m.previewOffset
+
+	for _, size := range [][2]int{{170, 40}, {170, 36}} {
+		m = resize(m, size[0], size[1])
+		if m.previewOffset != offset || focusInView(m) {
+			t.Errorf("resize to %v: offset %d -> %d, focus in view %v; want the scroll kept", size, offset, m.previewOffset, focusInView(m))
+		}
+	}
+}
+
+func TestRunZKeepsDeliberateScroll(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	// inMax reports whether the focus shows with the preview maximized, which
+	// is the shorter pane while the keys panel docks beside the side preview.
+	inMax := func(m Model) bool {
+		m.previewMax = true
+		return focusInView(m)
+	}
+	loaded := withJobs(previewBoard(t, run), run, focusJobs(50)...)
+	if !focusInView(loaded) || inMax(loaded) {
+		t.Fatalf("setup: focus must show in the side pane and not maximized (offset %d)", loaded.previewOffset)
+	}
+
+	t.Run("out_of_view", func(t *testing.T) {
+		m := scrollAway(t, loaded)
+		if inMax(m) {
+			t.Fatal("setup: the focus shows in the maximized pane")
+		}
+		offset := m.previewOffset
+
+		for i := range 2 {
+			m, _ = update(m, keyMsg("z"))
+			head, body := m.previewParts()
+			want := min(offset, max(lipgloss.Height(body)-m.previewBodyRows(head), 0))
+			if m.previewOffset != want || focusInView(m) {
+				t.Errorf("z #%d (max=%v): offset %d, focus in view %v; want offset %d, focus out", i+1, m.previewMax, m.previewOffset, focusInView(m), want)
+			}
+		}
+	})
+	t.Run("visible_then_hidden_by_smaller_pane", func(t *testing.T) {
+		m, _ := update(loaded, keyMsg("z"))
+		if !m.previewMax || !focusInView(m) {
+			t.Errorf("z: max=%v, focus in view %v (offset %d); the focus was visible before and must follow", m.previewMax, focusInView(m), m.previewOffset)
+		}
+	})
+}
+
+func TestRunClampedMoveKeepsFocusInView(t *testing.T) {
+	a := testRun(1, "alpha", "in_progress", "", time.Minute)
+	b := failedRun(2, "bravo", 2*time.Minute)
+	t.Run("single_run", func(t *testing.T) {
+		m := withJobs(previewBoard(t, b), b, focusJobs(50)...)
+		if m.section.Len() != 1 || m.previewOffset == 0 || !focusInView(m) {
+			t.Fatalf("setup: rows %d, offset %d, in view %v", m.section.Len(), m.previewOffset, focusInView(m))
+		}
+
+		m, _ = update(m, keyMsg("j"))
+		if !focusInView(m) {
+			t.Errorf("a clamped j left the focused job off screen (offset %d)", m.previewOffset)
+		}
+	})
+	t.Run("last_row", func(t *testing.T) {
+		m := withJobs(previewBoard(t, a, b), b, focusJobs(50)...)
+		m, _ = update(m, keyMsg("j"))
+		onRun(t, m, b.ID)
+		if m.previewOffset == 0 || !focusInView(m) {
+			t.Fatalf("setup: offset %d, in view %v", m.previewOffset, focusInView(m))
+		}
+
+		m, _ = update(m, keyMsg("j"))
+		onRun(t, m, b.ID)
+		if !focusInView(m) {
+			t.Errorf("a clamped j on the last row left the focused job off screen (offset %d)", m.previewOffset)
+		}
+	})
+}
+
+func TestRunJobsRefreshShiftingSpanKeepsFocusInView(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	// Jobs above the failed one start running, each gaining a "↳ step" line, so
+	// the failed job's span moves down while it stays the focus.
+	shifted := focusJobs(50)
+	for i := range 5 {
+		shifted[i] = runningJob(int64(i+1), fmt.Sprintf("job-%02d", i))
+	}
+	t.Run("focus_in_view", func(t *testing.T) {
+		m := withJobs(previewBoard(t, run), run, focusJobs(50)...)
+		if !focusInView(m) {
+			t.Fatal("setup: the focused job is not in view")
+		}
+
+		m = withJobs(m, run, shifted...)
+		if !focusInView(m) {
+			t.Errorf("the focused job's span moved and it is off screen (offset %d)", m.previewOffset)
+		}
+	})
+	t.Run("scrolled_away", func(t *testing.T) {
+		m := scrollAway(t, withJobs(previewBoard(t, run), run, focusJobs(50)...))
+		offset := m.previewOffset
+
+		m = withJobs(m, run, shifted...)
+		if m.previewOffset != offset {
+			t.Errorf("a jobs refresh moved the user's scroll: %d -> %d", offset, m.previewOffset)
+		}
+	})
+}
+
+// maxPreviewOffset is the furthest the preview can scroll right now.
+func maxPreviewOffset(m Model) int {
+	head, body := m.previewParts()
+	return max(0, lipgloss.Height(body)-m.previewBodyRows(head))
+}
+
+func TestRunResizeTallerClampsOffset(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	m := resize(withJobs(previewBoard(t, run), run, focusJobs(50)...), 160, 30)
+	for range 100 {
+		m, _ = update(m, keyMsg("alt+j"))
+	}
+	if m.previewOffset == 0 || m.previewOffset != maxPreviewOffset(m) || !focusInView(m) {
+		t.Fatalf("setup: offset %d, max %d, focus in view %v", m.previewOffset, maxPreviewOffset(m), focusInView(m))
+	}
+
+	m = resize(m, 160, 60)
+	if got, limit := m.previewOffset, maxPreviewOffset(m); got > limit {
+		t.Errorf("a taller terminal left the offset at %d, past its maximum %d", got, limit)
+	}
+}
+
+func TestRunJobsRefreshShrinkingBodyClampsOffset(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	// Running jobs above the failed one carry a "↳ step" line each; finishing
+	// them shrinks the body while the failed job stays the focus.
+	running := focusJobs(50)
+	for i := range 5 {
+		running[i] = runningJob(int64(i+1), fmt.Sprintf("job-%02d", i))
+	}
+	m := withJobs(previewBoard(t, run), run, running...)
+	for range 100 {
+		m, _ = update(m, keyMsg("alt+j"))
+	}
+	if m.previewOffset == 0 || m.previewOffset != maxPreviewOffset(m) || !focusInView(m) {
+		t.Fatalf("setup: offset %d, max %d, focus in view %v", m.previewOffset, maxPreviewOffset(m), focusInView(m))
+	}
+
+	m = withJobs(m, run, focusJobs(50)...)
+	if !focusInView(m) {
+		t.Fatalf("setup: the focus left the view (offset %d)", m.previewOffset)
+	}
+	if got, limit := m.previewOffset, maxPreviewOffset(m); got > limit {
+		t.Errorf("a refresh that shrank the body left the offset at %d, past its maximum %d", got, limit)
+	}
+}
+
+func TestRunFilterNoMatchThenClearRevealsFocus(t *testing.T) {
+	run := failedRun(7, "ci", time.Minute)
+	m := withJobs(previewBoard(t, run), run, focusJobs(50)...)
+	if m.previewOffset == 0 || !focusInView(m) {
+		t.Fatalf("setup: offset %d, focus in view %v", m.previewOffset, focusInView(m))
+	}
+
+	m = typeFilter(m, "workflow:nomatch")
+	m, _ = update(m, keyMsg("enter"))
+	if _, _, ok := m.cursorRun(); ok || m.filtering {
+		t.Fatalf("setup: a run is under the cursor (%v) or still filtering (%v)", ok, m.filtering)
+	}
+	m, _ = update(m, keyMsg("alt+k"))
+
+	m, _ = update(m, keyMsg("esc"))
+	onRun(t, m, run.ID)
+	if !focusInView(m) {
+		t.Errorf("clearing a no-match filter left the focused job off screen (offset %d)", m.previewOffset)
+	}
+}

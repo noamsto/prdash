@@ -1028,32 +1028,15 @@ func columnWidths(s Section) int {
 	return w
 }
 
-// truncate shortens a plain (unstyled) string to at most w display cells, adding
-// an ellipsis when it cuts. Wide (CJK) runes count as two cells, so the result
-// never exceeds w cells even for double-width text. Safe only for plain text
-// (the row title/meta).
+// truncate shortens s to at most w display cells, adding an ellipsis when it
+// cuts. It cuts on grapheme-cluster boundaries, so wide (CJK) runes and
+// VS16/ZWJ emoji count their real width, and it leaves ANSI sequences intact,
+// so styled input is safe too.
 func truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	if w == 1 {
-		return "…"
-	}
-	// Keep as many leading runes as fit in w-1 cells, reserving 1 for the ellipsis.
-	budget, used := w-1, 0
-	var b strings.Builder
-	for _, r := range s {
-		cw := lipgloss.Width(string(r))
-		if used+cw > budget {
-			break
-		}
-		b.WriteRune(r)
-		used += cw
-	}
-	return b.String() + "…"
+	return ansi.Truncate(s, w, "…")
 }
 
 // truncateLeft shortens plain text to w cells by dropping the FRONT, prefixing

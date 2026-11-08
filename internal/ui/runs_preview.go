@@ -209,6 +209,77 @@ func (m *Model) scrollRunFocusIntoView() {
 	}
 }
 
+type runPreviewKey struct {
+	run, job    int64 // run under the cursor and its focused job
+	jobsRev     int
+	shown       bool
+	rows, width int
+}
+
+type runPreviewState struct {
+	runPreviewKey
+	span    lineSpan
+	hasSpan bool
+}
+
+// reconcileRunPreview keeps the focused job visible whenever something other
+// than a deliberate alt+j/k scroll changes the preview: a different run or
+// focused job reveals the focus; any other change (geometry, jobs content)
+// reveals it unless it was already out of view, so a deliberate scroll away
+// survives. The offset is always left within the body. With no run under the
+// cursor the seen state resets: alt+j/k clamps the offset to the empty preview,
+// so a run coming back must count as a run change.
+func (m *Model) reconcileRunPreview() {
+	if m.mode != "run" {
+		m.runPreviewSeen = runPreviewState{}
+		return
+	}
+	rs, run, ok := m.cursorRun()
+	if !ok {
+		m.runPreviewSeen = runPreviewState{}
+		return
+	}
+	w := min(m.previewWidth(), m.width-2)
+	key := runPreviewKey{
+		run:     run.ID,
+		jobsRev: m.runJobsRev,
+		shown:   m.previewShown(),
+		rows:    m.previewBodyRows(m.runHead(rs, run, w-2)),
+		width:   w,
+	}
+	jobs := m.runJobs[run.ID].jobs
+	focus := m.focusedRunJob(run, jobs)
+	if focus >= 0 {
+		key.job = jobs[focus].ID
+	}
+	prev := m.runPreviewSeen
+	if key == prev.runPreviewKey {
+		return
+	}
+
+	// prev.rows is the previous geometry's; previewOffset is current (alt+j/k
+	// may have moved it since). Spans do not depend on the offset.
+	wasOutside := prev.shown && prev.hasSpan &&
+		(prev.span.top < m.previewOffset || prev.span.bottom >= m.previewOffset+prev.rows)
+	switch {
+	case key.run != prev.run:
+		m.previewOffset = 0
+		m.scrollRunFocusIntoView()
+	case key.job != prev.job || !wasOutside:
+		m.scrollRunFocusIntoView()
+	}
+	// A shorter body or taller pane can leave the offset past its maximum while
+	// the focus is still visible, which scrollRunFocusIntoView does not clamp.
+	m.previewScrollBy(0)
+
+	state := runPreviewState{runPreviewKey: key}
+	if focus >= 0 {
+		_, spans := m.runPreviewBody(rs, run, w, w-2)
+		state.span, state.hasSpan = spans[focus], true
+	}
+	m.runPreviewSeen = state
+}
+
 // rerunRunCmd reruns the cursor run's failed jobs, refusing a run that has
 // nothing to rerun or whose state is stale.
 func (m *Model) rerunRunCmd(a action.Action) tea.Cmd {
