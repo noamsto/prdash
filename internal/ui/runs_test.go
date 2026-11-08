@@ -274,11 +274,11 @@ func TestRunRowColumnsIndependentOfTimeText(t *testing.T) {
 	done := testRun(2, "CI", "completed", "success", 3*time.Hour)
 	s := runSection("active", live, done)
 	pos := func(row, sub string) int {
-		i := strings.Index(row, sub)
-		if i < 0 {
+		before, _, found := strings.Cut(row, sub)
+		if !found {
 			return -1
 		}
-		return ansi.StringWidth(row[:i])
+		return ansi.StringWidth(before)
 	}
 	for w := 24; w <= 110; w++ {
 		var rows [2]string
