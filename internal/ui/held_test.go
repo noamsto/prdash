@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1298,6 +1299,48 @@ func TestLaunchReplaceThenAnchors(t *testing.T) {
 	ps = m.section.(*PRSection)
 	if got := ps.prAt(m.cursor).Number; got != 6 {
 		t.Errorf("cursor PR = #%d after the later refetch, want #6 — the cursor anchors once the launch replace landed", got)
+	}
+}
+
+// TestFailedLaunchReplaceReleasesThePin: once the launch replace fails nothing
+// lands to release cursorPinnedTop, so a later refetch must anchor the cursor on
+// its PR rather than pinning it to row 0.
+func TestFailedLaunchReplaceReleasesThePin(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo("owner/repo")
+	m.width, m.height = 100, 40
+	m.setSections(nil, nil, []gh.PR{openPR(5, "bob")}, "")
+
+	u, _ := m.Update(fetchFailedMsg{mode: "pr", filter: m.filter, replace: true, err: errors.New("boom")})
+	m = u.(Model)
+	m.cursorHomed = true
+	u, _ = m.Update(sectionsFetchedMsg{state: "open", open: []gh.PR{openPR(7, "bob"), openPR(6, "bob"), openPR(5, "bob")}})
+	m = u.(Model)
+	ps := m.section.(*PRSection)
+	if got := ps.prAt(m.cursor).Number; got != 5 {
+		t.Errorf("cursor PR = #%d after the refetch, want #5 — a failed launch replace must release the top-row pin", got)
+	}
+}
+
+// TestFetchFailureKeepsTheLaunchPin: a failure that is not the requested replace
+// for the current view (an unrequested background reconcile, another filter, or
+// another board) must leave the launch's pin in place: its replace is still in flight.
+func TestFetchFailureKeepsTheLaunchPin(t *testing.T) {
+	cases := map[string]fetchFailedMsg{
+		"background reconcile": {mode: "pr", filter: "is:open", err: errors.New("boom")},
+		"other filter":         {mode: "pr", filter: "is:closed", replace: true, err: errors.New("boom")},
+		"other board":          {mode: "issue", filter: "is:open", replace: true, err: errors.New("boom")},
+	}
+	for name, msg := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := NewModel("/repo", "is:open", nil)
+			m.SetRepo("owner/repo")
+			m.width, m.height = 100, 40
+			u, _ := m.Update(msg)
+			if got := u.(Model).cursorPinnedTop; !got {
+				t.Errorf("cursorPinnedTop = false after %s failure, want true — the launch replace is still in flight", name)
+			}
+		})
 	}
 }
 
