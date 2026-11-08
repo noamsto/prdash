@@ -3206,6 +3206,8 @@ func (m Model) filterBar() string {
 	case m.filterInput.Value() != "":
 		body = accentStyle.Render(truncate(m.filterInput.Value(), inner)) +
 			dimStyle.Render("  esc clears")
+	case m.mode == "run":
+		body = dimStyle.Render("filter — branch: · workflow: · event: · @actor · text")
 	default:
 		body = dimStyle.Render("filter — @user · is: · text")
 	}
@@ -3363,33 +3365,52 @@ var (
 
 // modeGlyph returns the board's marker glyph.
 func modeGlyph(mode string) string {
-	if mode == "issue" {
+	switch mode {
+	case "issue":
 		return issueGlyph
+	case "run":
+		return runGlyph
 	}
 	return prGlyph
 }
 
-// accentFor is the per-board accent: mauve for PRs, teal for Issues. Used for the
+// accentFor is the per-board accent: mauve for PRs, teal for Issues, blue for Runs. Used for the
 // active header segment and the list/preview box titles so each board reads as a
 // distinct color at a glance.
 func accentFor(mode string) lipgloss.Style {
-	if mode == "issue" {
+	switch mode {
+	case "issue":
 		return issueAccentStyle
+	case "run":
+		return runAccentStyle
 	}
 	return accentStyle
 }
 
-// modeSegments renders the "󰓎 PRs │ 󰝖 Issues" board switch: each segment carries
-// its board glyph, and the active one is lit in that board's accent color.
+// modeSegments renders the "PRs │ Issues │ Runs" board switch: each segment
+// carries its board glyph, and the active one is lit in that board's accent color.
 func modeSegments(active string) string {
+	return boardSegments(active, false)
+}
+
+// modeSegmentsCompact is modeSegments with the inactive boards reduced to their
+// glyph, for a header too narrow to fit all three names beside the repo.
+func modeSegmentsCompact(active string) string {
+	return boardSegments(active, true)
+}
+
+func boardSegments(active string, compact bool) string {
 	seg := func(name, mode string) string {
-		label := modeGlyph(mode) + " " + name
 		if mode == active {
-			return accentFor(mode).Bold(true).Render(label)
+			return accentFor(mode).Bold(true).Render(modeGlyph(mode) + " " + name)
 		}
-		return dimStyle.Render(label)
+		if compact {
+			return dimStyle.Render(modeGlyph(mode))
+		}
+		return dimStyle.Render(modeGlyph(mode) + " " + name)
 	}
-	return seg("PRs", "pr") + dimStyle.Render(" │ ") + seg("Issues", "issue")
+	sep := dimStyle.Render(" │ ")
+	return seg("PRs", "pr") + sep + seg("Issues", "issue") + sep + seg("Runs", "run")
 }
 
 // minRepoCells is the least repo name worth showing — roughly "…/short-name".
@@ -3411,10 +3432,13 @@ func (m Model) header() string {
 	}
 	// org/repo is unbounded and can run past 50 cells, so it takes what the
 	// fixed segments leave, keeping its tail — the half that identifies it.
-	// Under minRepoCells the spinner yields instead: transient chrome, where
-	// the repo is identity.
+	// Under minRepoCells the inactive board names collapse to glyphs first, then
+	// the spinner yields: transient chrome, where the repo is identity.
 	budget := func(spin string) int {
 		return m.width - lipgloss.Width(boards) - lipgloss.Width(sel) - lipgloss.Width(spin) - 2
+	}
+	if budget("") < minRepoCells {
+		boards = "  " + modeSegmentsCompact(m.mode)
 	}
 	if budget(spin) < minRepoCells {
 		spin = ""
@@ -3459,8 +3483,11 @@ func (m Model) statusBadge(avail int) string {
 // titleGlyph is the list-title marker: the terminal-state glyph for merged/closed
 // PRs, else the board glyph. Issues have no merged state, so they always use theirs.
 func (m Model) titleGlyph() string {
-	if m.mode == "issue" {
+	switch m.mode {
+	case "issue":
 		return issueGlyph
+	case "run":
+		return runGlyph
 	}
 	switch m.state {
 	case "merged":
@@ -3478,6 +3505,9 @@ func (m Model) listTitle() string {
 	label := "all"
 	if m.mode == "pr" && m.omniServer != "" { // omni is PR-only; the issue board's / is local fuzzy
 		label = m.omniServer
+	}
+	if m.mode == "run" {
+		label = "runs"
 	}
 	return fmt.Sprintf("%s %s · %s · %d", m.titleGlyph(), label, m.state, m.section.Len())
 }
@@ -3543,6 +3573,25 @@ func (m Model) glyphPanes() []legendGroup {
 		{key: focusBarGlyph, label: "focus", style: &focusBarStyle},
 		{key: selBarGlyph, label: "selected (hides focus)", style: &selMarkStyle},
 	}}
+	if m.mode == "run" {
+		// Multi-select is off on this board, so the shared bar group's
+		// "selected" line would describe a state that cannot occur.
+		return []legendGroup{
+			{"bar", []keyHint{{key: focusBarGlyph, label: "focus", style: &focusBarStyle}}},
+			{"status", []keyHint{
+				{key: ciRunningGlyph, label: "running", style: &pendStyle},
+				{key: runQueuedGlyph, label: "queued", style: &pendStyle},
+				{key: "✓", label: "success", style: &passStyle},
+				{key: "✗", label: "failed", style: &failStyle},
+				{key: runCancelledGlyph, label: "cancelled", style: &dimStyle},
+				{key: "·", label: "skipped", style: &dimStyle},
+			}},
+			{"row", []keyHint{
+				{key: "time", label: "elapsed while running, else age", style: &dimStyle},
+				heldHint("ended"),
+			}},
+		}
+	}
 	if m.mode != "pr" {
 		return []legendGroup{bar, {"row", []keyHint{
 			{key: "age", label: "last update", style: &dimStyle},
@@ -3602,13 +3651,26 @@ func heldHint(example string) keyHint {
 // keyPanes is the right modal pane: what the operator can press, as against the
 // left pane's what the row is telling them.
 func (m Model) keyPanes() []legendGroup {
+	palette := legendGroup{"", []keyHint{
+		{"a", "actions", nil}, {"ctrl+e", "actions panel", nil}, {"ctrl+r", "refresh", nil},
+		{"? / F1", "legend", nil}, {"q", "quit", nil},
+	}}
+	if m.mode == "run" {
+		return []legendGroup{
+			{"navigation", []keyHint{{"↑↓/jk", "move", nil}, {"←→/hl", "job", nil}, {"⇥", "PRs/Issues/Runs", nil}}},
+			{"filters", []keyHint{{"/", "filter (branch:, workflow:, event:, @actor, text)", nil}, {"s", "state", nil}}},
+			{"view", []keyHint{{"z", "maximize", nil}, {"alt+j/k", "scroll", nil}}},
+			{"actions", []keyHint{{"↵", "logs", nil}, {"r", "rerun failed", nil}, {"o", "open", nil}, {"Y", "url", nil}, {"b", "branch", nil}}},
+			palette,
+		}
+	}
 	var groups []legendGroup
 
 	nav := []keyHint{{"↑↓/jk", "move", nil}}
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand", nil})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
+	nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
 
 	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}, {"s", "state", nil}}
@@ -3637,10 +3699,7 @@ func (m Model) keyPanes() []legendGroup {
 	}
 	groups = append(groups, legendGroup{"actions", actions})
 
-	groups = append(groups, legendGroup{"", []keyHint{
-		{"a", "actions", nil}, {"ctrl+e", "actions panel", nil}, {"ctrl+r", "refresh", nil},
-		{"? / F1", "legend", nil}, {"q", "quit", nil},
-	}})
+	groups = append(groups, palette)
 	return groups
 }
 
@@ -3978,6 +4037,7 @@ const (
 	shedSelect   = 3 // batch work needs room to see the rows anyway
 	shedExpand   = 2 // the arrow keys are guessable
 	shedBoard    = 1
+	shedRunExtra = 6 // r and o are also in the actions panel
 )
 
 // shedToFit drops the least load-bearing cells until the bar fits width. The
@@ -4030,8 +4090,15 @@ func (m Model) statusBar() string {
 	if card, ok := m.cursorCard(); ok && card.ActionKey != "" {
 		cells = append(cells, keep(card.ActionKey, card.ActionLabel))
 	}
-	cells = append(cells, keep("↵", "worktree"), keep("a", "actions"),
-		statusCell{hint("⇥", "PRs/Issues"), shedBoard})
+	enter := "worktree"
+	if m.mode == "run" {
+		enter = "logs"
+	}
+	cells = append(cells, keep("↵", enter), keep("a", "actions"),
+		statusCell{hint("⇥", "PRs/Issues/Runs"), shedBoard})
+	if m.mode == "run" {
+		cells = append(cells, statusCell{hint("r", "rerun"), shedRunExtra}, statusCell{hint("o", "open"), shedRunExtra})
+	}
 	if m.mode == "pr" {
 		cells = append(cells, statusCell{hint("→", "expand"), shedExpand})
 		if m.layout().ShowSide {
@@ -4039,7 +4106,10 @@ func (m Model) statusBar() string {
 			cells = append(cells, statusCell{hint("p", "all comments"), shedComments})
 		}
 	}
-	cells = append(cells, keep("/", "find"), statusCell{hint("space", "select"), shedSelect})
+	cells = append(cells, keep("/", "find"))
+	if m.mode != "run" {
+		cells = append(cells, statusCell{hint("space", "select"), shedSelect})
+	}
 	if m.mode == "pr" {
 		drafts := draftTagStyle.Render("drafts") // peach while drafts are on the board
 		if m.hideDrafts {

@@ -14,10 +14,12 @@ key.
   demoted, grouped by author outside the "mine" view.
 - **Triage preview** — the focused PR's recommended next action, check rollup,
   requested reviewers, and a folded comment timeline (rendered markdown).
-- **Fuzzy find** (`/`) narrows either board to the rows you type.
-- **Actions** run against the focused PR or a multi-selected set — merge, rerun
-  failed checks, update branch, mark ready, copy URL/branch, open in browser, and
-  open a git worktree.
+- **Fuzzy find** (`/`) narrows any board to the rows you type.
+- **Runs board** — repo-wide GitHub Actions workflow runs, running and queued
+  first, live status and job preview.
+- **Action palette** (`a`) runs against the focused PR or a multi-selected set —
+  merge, rerun failed checks, update branch, mark ready, copy URL/branch, open in
+  browser, and open a git worktree.
 - **Stale-while-revalidate caching** — the PR list, per-PR detail, and the
   assignable-members list are cached to disk (`$XDG_STATE_HOME/prdash`) and
   painted instantly on launch, then refreshed in the background. Each board's
@@ -42,7 +44,7 @@ go build -o prdash . && ./prdash
 |-----|--------|
 | `↑↓` / `j` `k` | move the cursor |
 | `→` / `l` | open the expanded PR view (PR mode only) |
-| `⇥` (Tab) | toggle PRs ⟷ Issues |
+| `⇥` (Tab) | cycle PRs → Issues → Runs |
 | `p` | unfold all comments in the preview's timeline (PR only) |
 | `z` | maximize the preview; `ctrl+j` / `ctrl+k` scroll it |
 | `s` | cycle state (open · merged · closed · …) |
@@ -61,6 +63,23 @@ Actions on the focused PR (or the whole selection):
 | `W` | open a worktree per selected item (prompts first past four) |
 | `m` merge (squash) · `S` merge stack up to here · `r` rerun checks · `u` update branch · `M` mark ready | PR only |
 | `y` copy # · `Y` copy URL · `b` copy branch · `o` open in browser | |
+
+### Runs board
+
+| Key | Action |
+|-----|--------|
+| `↑↓` / `j` `k` | move the cursor |
+| `←` `→` / `h` `l` | focus a job in the preview |
+| `enter` | view the focused job's logs |
+| `r` | rerun failed jobs |
+| `o` | open in browser |
+| `Y` / `b` | copy URL / branch |
+| `s` | cycle recent · active · failed |
+| `/` | filter with `branch:`, `workflow:`, `event:`, `actor:` or `@login`, plus fuzzy text |
+
+The board loads the 50 most recent runs, plus any in-progress or queued runs
+beyond them, so `active` shows those even when they are older than the window.
+Multi-select (`space`, `V`) is off on this board.
 
 ### Expanded PR view (`→` / `l`)
 

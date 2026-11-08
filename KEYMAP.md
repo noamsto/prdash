@@ -54,7 +54,7 @@ Apps: prdash, wtc.
   merge / `r` rerun / `o` open / `O` open linked issue / `a` actions palette;
   wtc's `d` delete / `D` force-delete / `space` multi-select / `a`
   select-stale / `e` expand / `enter` switch).
-- `tab` — switch board (e.g. prdash's PR ↔ issue).
+- `tab` — switch board (e.g. prdash's PRs → Issues → Runs).
 - The footer is one compact line of hints. `ctrl+e` unfolds it into a panel of
   the actions available for the focused row — context, not the static keymap,
   which is `?`'s job.
