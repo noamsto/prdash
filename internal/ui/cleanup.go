@@ -14,11 +14,11 @@ import (
 // a single-target bulk failure does: the action's own "Cleanup failed" wording
 // doesn't say whether the branch was already gone, the worktree had uncommitted
 // work, or prdash is sitting in the worktree it was asked to remove.
-func cleanupDone(dir string, p gh.PR) tea.Msg {
+func cleanupDone(dir string, p gh.PR, stat *actionStat) tea.Msg {
 	if err := cleanupBranch(dir, p); err != nil {
-		return actionDoneMsg{err: err, fail: err.Error()}
+		return actionDoneMsg{stat: stat, err: err, fail: err.Error()}
 	}
-	return actionDoneMsg{}
+	return actionDoneMsg{stat: stat}
 }
 
 // cleanupBranch deletes a merged PR's leftover local branch and, if it has one,

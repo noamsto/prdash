@@ -1029,6 +1029,15 @@ func TestCascadePanelClosingBorderSurvivesAShortTerminal(t *testing.T) {
 // step still reads cascadeProbe (onProbed hasn't run yet to change it).
 func driveCascade(t *testing.T, m Model, cmd tea.Cmd) (Model, actionDoneMsg) {
 	t.Helper()
+	m, done := driveCascadeToSettle(t, m, cmd)
+	next, _ := m.Update(done)
+	return next.(Model), done
+}
+
+// driveCascadeToSettle is driveCascade stopping just before the settle
+// actionDoneMsg is delivered, so a test can change the model first.
+func driveCascadeToSettle(t *testing.T, m Model, cmd tea.Cmd) (Model, actionDoneMsg) {
+	t.Helper()
 	awaitingFetch := false
 	for range 4 * cascadeWaitProbes * 10 {
 		var msg tea.Msg
@@ -1049,11 +1058,11 @@ func driveCascade(t *testing.T, m Model, cmd tea.Cmd) (Model, actionDoneMsg) {
 			cmd = batch[0] // batch[1] is startSpinner's tick; never invoked
 			continue
 		}
-		next, nextCmd := m.Update(msg)
-		m = next.(Model)
 		if done, ok := msg.(actionDoneMsg); ok {
 			return m, done
 		}
+		next, nextCmd := m.Update(msg)
+		m = next.(Model)
 		cmd = nextCmd
 	}
 	t.Fatal("cascade did not settle in time")
@@ -1275,7 +1284,7 @@ func TestCascadeUOnNonStackedPRUnchanged(t *testing.T) {
 			t.Fatal("a non-stacked PR must not build a cascade plan, prompt, or start a run")
 		}
 
-		u, _ = mo.Update(actionDoneMsg{err: nil})
+		u, _ = mo.Update(withStat(mo, actionDoneMsg{err: nil}))
 		mo = u.(Model)
 		if mo.actionRunning() || mo.actionStatus == nil {
 			t.Fatal("completion should mark the status done, not running")

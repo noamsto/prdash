@@ -287,7 +287,7 @@ func (m *Model) startStackMerge(a action.Action) tea.Cmd {
 	}
 	if err := m.mutable(t); err != nil {
 		m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
-		return clearStatusCmd()
+		return clearStatusCmd(m.actionStatus)
 	}
 	if m.stackSource == nil {
 		return m.hint("Stack merge unavailable")
@@ -317,7 +317,7 @@ func (m *Model) settleStackLoad(load *actionStat, text string) tea.Cmd {
 		return nil
 	}
 	m.actionStatus = &actionStat{err: errors.New(text), fail: text, settled: true}
-	return clearStatusCmd()
+	return clearStatusCmd(m.actionStatus)
 }
 
 // runStackMerge submits a confirmed plan. The run owns its stat for the reason
@@ -362,6 +362,7 @@ func (m *Model) stackMergeDispatch(step stackMergeStep) tea.Cmd {
 	default: // stackMergeSettle
 		m.actionStatus = r.stat
 		done := r.done
+		done.stat = r.stat
 		return func() tea.Msg { return done }
 	}
 }

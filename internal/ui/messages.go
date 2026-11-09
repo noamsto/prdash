@@ -127,9 +127,12 @@ type spinnerTickMsg struct{}
 type fetchSkippedMsg struct{}
 
 // actionDoneMsg reports an inline action's completion so the header can settle
-// its status badge. The running wording is already held on m.actionStatus; ok
-// and fail optionally override the settled text (used by bulk aggregate counts).
+// its status badge. stat is the status that started the action, held by the
+// producer because m.actionStatus may belong to a newer action by delivery; nil
+// means no action produced this, so it settles no status. ok and fail optionally
+// override the settled text (used by bulk aggregate counts).
 type actionDoneMsg struct {
+	stat       *actionStat
 	err        error
 	ok, fail   string
 	cascade    bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
@@ -185,8 +188,9 @@ type stackMergePolledMsg struct {
 	err error
 }
 
-// actionClearMsg wipes a settled action status after its dwell time.
-type actionClearMsg struct{}
+// actionClearMsg wipes stat after its dwell time, only while stat is still the
+// status shown; a nil stat clears nothing.
+type actionClearMsg struct{ stat *actionStat }
 
 // delayedRefreshMsg is the second, later refetch scheduled after an action that
 // re-triggers CI: the immediate refetch races GitHub's queueing and returns the

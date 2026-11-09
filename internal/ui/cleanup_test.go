@@ -137,7 +137,7 @@ func TestCleanupFailureSurfacesReasonInBadge(t *testing.T) {
 	m.width, m.height = 140, 40
 	m.actionStatus = &actionStat{run: "Cleaning up", ok: "Branch cleaned up", fail: "Cleanup failed"}
 
-	updated, _ := m.Update(cleanupDone(dir, p61()))
+	updated, _ := m.Update(cleanupDone(dir, p61(), m.actionStatus))
 	m = updated.(Model)
 
 	if got := ansi.Strip(m.header()); !strings.Contains(got, "no local branch feat/x") {
@@ -149,7 +149,7 @@ func TestCleanupSuccessReportsNoFailure(t *testing.T) {
 	dir := cleanupRepo(t)
 	gitIn(t, dir, "branch", "feat/x")
 
-	msg, ok := cleanupDone(dir, p61()).(actionDoneMsg)
+	msg, ok := cleanupDone(dir, p61(), nil).(actionDoneMsg)
 	if !ok {
 		t.Fatalf("cleanupDone returned %T, want actionDoneMsg", msg)
 	}

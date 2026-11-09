@@ -133,7 +133,7 @@ func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
 	m.fresh[42] = true
 	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
 
-	u, cmd := m.Update(actionDoneMsg{})
+	u, cmd := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 
 	if m.fresh[42] {
@@ -157,7 +157,7 @@ func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
 	m.fresh[42] = true
 	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
 
-	u, _ := m.Update(actionDoneMsg{err: fmt.Errorf("boom")})
+	u, _ := m.Update(withStat(m, actionDoneMsg{err: fmt.Errorf("boom")}))
 	m = u.(Model)
 
 	if !m.fresh[42] {
@@ -205,7 +205,7 @@ func TestInlineActionShowsFeedback(t *testing.T) {
 		t.Fatal("dispatching an inline action should show it running")
 	}
 
-	u, _ = m.Update(actionDoneMsg{err: nil})
+	u, _ = m.Update(withStat(m, actionDoneMsg{err: nil}))
 	m = u.(Model)
 	if m.actionRunning() || m.actionStatus == nil {
 		t.Fatal("completion should mark the status done, not running")
@@ -214,7 +214,7 @@ func TestInlineActionShowsFeedback(t *testing.T) {
 		t.Fatalf("header should surface the finished action in past tense:\n%s", m.render())
 	}
 
-	u, _ = m.Update(actionClearMsg{})
+	u, _ = m.Update(clearFor(m))
 	m = u.(Model)
 	if m.actionStatus != nil {
 		t.Fatal("clear should drop the settled status")
