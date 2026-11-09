@@ -33,11 +33,11 @@ const graphTimeout = 20 * time.Second
 // and RateSource (rate-limit budgets). repo is owner/name.
 type GraphSource struct {
 	repo    string
-	http    *http.Client     // for raw aliased detail queries and REST calls
-	client  *githubv4.Client // for the typed list query
-	token   string           // raw token; actions_rest.go's job-log redirect handling can't reuse http (see its doc comment)
-	apiBase string           // REST API origin override; "" ⇒ https://api.github.com. Set only by tests.
-	rate    *rateStore       // budgets scraped off responses; a pointer so every value copy shares one store
+	http    *http.Client // for raw aliased detail queries and REST calls
+	client  graphClient  // for the typed list query
+	token   string       // raw token; actions_rest.go's job-log redirect handling can't reuse http (see its doc comment)
+	apiBase string       // REST API origin override; "" ⇒ https://api.github.com. Set only by tests.
+	rate    *rateStore   // budgets scraped off responses; a pointer so every value copy shares one store
 }
 
 // NewGraphSource builds a GraphSource authenticated with token, as returned by
@@ -48,7 +48,7 @@ func NewGraphSource(token, repo string) GraphSource {
 	hc.Timeout = graphTimeout
 	rate := newRateStore()
 	hc.Transport = &rateTransport{next: hc.Transport, store: rate}
-	return GraphSource{repo: repo, http: hc, client: githubv4.NewClient(hc), token: token, rate: rate}
+	return GraphSource{repo: repo, http: hc, client: graphClient{githubv4.NewClient(hc)}, token: token, rate: rate}
 }
 
 func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
@@ -227,6 +227,7 @@ func mapPR(g qlPR) PR {
 		}{Login: a.Login})
 	}
 	p.StatusCheckRollup = mapRollup(g)
+	sanitize(&p)
 	return p
 }
 

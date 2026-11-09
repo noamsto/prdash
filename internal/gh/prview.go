@@ -6,7 +6,7 @@ type Comment struct {
 	Author struct {
 		Login string `json:"login"`
 	} `json:"author"`
-	Body      string    `json:"body"`
+	Body      string    `json:"body" sanitize:"text"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -14,7 +14,7 @@ type Review struct {
 	Author struct {
 		Login string `json:"login"`
 	} `json:"author"`
-	Body        string    `json:"body"`
+	Body        string    `json:"body" sanitize:"text"`
 	State       string    `json:"state"`
 	SubmittedAt time.Time `json:"submittedAt"`
 }

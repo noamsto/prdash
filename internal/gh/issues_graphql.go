@@ -87,6 +87,7 @@ func mapIssue(g qlIssue) Issue {
 			Login string `json:"login"`
 		}{Login: a.Login})
 	}
+	sanitize(&i)
 	return i
 }
 
@@ -112,6 +113,7 @@ func (s GraphSource) FetchIssueDetail(number int) (IssueDetail, []byte, error) {
 		return IssueDetail{}, nil, err
 	}
 	d := IssueDetail{Body: q.Repository.Issue.Body}
+	sanitize(&d)
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return IssueDetail{}, nil, err

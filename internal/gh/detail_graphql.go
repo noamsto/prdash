@@ -56,7 +56,7 @@ func (s GraphSource) FetchDetails(numbers []int) (map[int]PRDetail, map[int][]by
 		return nil, nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("graphql detail: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, nil, fmt.Errorf("graphql detail: %s: %s", resp.Status, cleanBody(body))
 	}
 	return parseDetails(body, numbers)
 }
@@ -127,7 +127,7 @@ func parseDetails(body []byte, numbers []int) (map[int]PRDetail, map[int][]byte,
 		return nil, nil, fmt.Errorf("parse detail: %w", err)
 	}
 	if len(resp.Errors) > 0 {
-		return nil, nil, fmt.Errorf("graphql detail: %s", resp.Errors[0].Message)
+		return nil, nil, fmt.Errorf("graphql detail: %s", CleanLine(resp.Errors[0].Message))
 	}
 	details := make(map[int]PRDetail, len(numbers))
 	raws := make(map[int][]byte, len(numbers))
@@ -174,6 +174,7 @@ func mapDetail(q qlDetail) PRDetail {
 		d.Files = append(d.Files, DiffFile{Path: f.Path, Additions: f.Additions, Deletions: f.Deletions})
 	}
 	d.ReviewThreads = mapThreads(q.ReviewThreads)
+	sanitize(&d)
 	return d
 }
 

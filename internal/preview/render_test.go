@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/glamour/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -109,5 +110,164 @@ func TestRenderTableLinkHasNoFootnote(t *testing.T) {
 	}
 	if !strings.Contains(out, "\x1b]8;") {
 		t.Error("table link lost its OSC 8 hyperlink; it is no longer clickable")
+	}
+}
+
+var glamourOwnSeq = regexp.MustCompile(`\x1b\[[0-9;:]*m|\x1b\]8;[^\x07\x1b]*\x07`)
+
+// assertNoPayloadControls removes glamour's own SGR and OSC 8 sequences from
+// the raw output, then fails on any control rune left. ansi.Strip is not used:
+// it consumes a lone ESC and would hide the leak.
+func assertNoPayloadControls(t *testing.T, out string) {
+	t.Helper()
+	rest := glamourOwnSeq.ReplaceAllString(out, "")
+	for _, r := range rest {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F) || r == '\uE000' {
+			t.Fatalf("control rune %U left in output %q", r, out)
+		}
+	}
+}
+
+func TestRenderNeutralizesControlReferences(t *testing.T) {
+	payloads := []string{
+		"&#27;", "&#x1b;", "&#X1B;", "&#0027;", "&#27", "&#157;", "&#4294967323;",
+		"&#&#27;27;", "~~&#*2*7;~~", "~~&#x*1*b;~~", "~~&`#`27;~~", "~~&[#](x)27;~~",
+		"~~&#0*2*7;~~", "~~&\n#27;~~", "&amp;#27;",
+		"~~&2#27;~~", "~~&=#*2*7;~~",
+		"&#27;]52;c;aGk=&#7;", "&#27;]8;;http://e&#7;x&#27;]8;;&#7;",
+	}
+	contexts := []struct{ name, format string }{
+		{"paragraph", "before %s after"},
+		{"link", "[%s](https://e.example/x)"},
+		{"heading", "# %s"},
+		{"codespan", "`%s`"},
+	}
+	for _, p := range payloads {
+		for _, c := range contexts {
+			t.Run(c.name+"/"+p, func(t *testing.T) {
+				out, err := Render(strings.Replace(c.format, "%s", p, 1), 80)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertNoPayloadControls(t, out)
+			})
+		}
+	}
+}
+
+func TestRenderShowsControlReferenceLiterally(t *testing.T) {
+	for _, md := range []string{"&#27;[31m", "&#27;]8;;http://e&#7;"} {
+		out, err := Render(md, 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertNoPayloadControls(t, out)
+		if !strings.Contains(ansi.Strip(out), "&#27;") {
+			t.Fatalf("literal &#27; not visible for %q: %q", md, ansi.Strip(out))
+		}
+	}
+}
+
+func baselineText(t *testing.T, md string, width int) string {
+	t.Helper()
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStyles(activeStyle),
+		glamour.WithWordWrap(width),
+		glamour.WithInlineTableLinks(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Render(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ansi.Strip(out)
+}
+
+func TestRenderKeepsBenignAmpersands(t *testing.T) {
+	out, err := Render("it&#8217;s a &amp; b", 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := ansi.Strip(out); !strings.Contains(text, "it’s a & b") {
+		t.Fatalf("benign references changed: %q", text)
+	}
+
+	for _, md := range []string{
+		"```go\nif a && b {}\n```\n",
+		"x `a && b` y",
+		"https://x.io/d?a=1&from=now&to=now",
+		"https://x.io/p?a=1&2=b tail",
+		"https://x.io/p?a=1&-b=2 tail",
+		"**\"foo\"**&bar",
+		"_foo_&bar",
+	} {
+		got, err := Render(md, 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := baselineText(t, md, 80); ansi.Strip(got) != want {
+			t.Fatalf("%q differs from baseline:\n got %q\nwant %q", md, ansi.Strip(got), want)
+		}
+		if strings.ContainsRune(got, '\uE000') {
+			t.Fatalf("sentinel leaked for %q", md)
+		}
+	}
+}
+
+func TestRenderQueryWithInlineDelimiterAfterAmpersand(t *testing.T) {
+	out, err := Render("https://x.io/p?a=1&_b=2 tail", 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoPayloadControls(t, out)
+}
+
+func TestRenderPrivateUseRunesInBody(t *testing.T) {
+	t.Run("literal sentinel candidate survives alongside &&", func(t *testing.T) {
+		out, err := Render("a  b && c", 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := ansi.Strip(out); !strings.Contains(text, "a  b && c") {
+			t.Fatalf("body rewritten: %q", text)
+		}
+	})
+	t.Run("reference decoding to the candidate stays a glyph", func(t *testing.T) {
+		out, err := Render("x &#xE000; y && z", 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := ansi.Strip(out); !strings.Contains(text, "x  y && z") {
+			t.Fatalf("reference rewritten: %q", text)
+		}
+	})
+	t.Run("candidate in body does not weaken neutralization", func(t *testing.T) {
+		for _, md := range []string{" &#27;[31m", " ~~&#*2*7;~~", " ~~&2#27;~~"} {
+			out, err := Render(md, 80)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertNoPayloadControls(t, strings.ReplaceAll(out, "", ""))
+		}
+	})
+	t.Run("sentinel skips present code points", func(t *testing.T) {
+		if got := ampSentinel(" &#xE001;"); got != 0xE002 {
+			t.Fatalf("sentinel = %U, want U+E002", got)
+		}
+	})
+}
+
+func TestRenderFencedAmpersandsHaveNoErrorBackground(t *testing.T) {
+	out, err := Render("```go\nif a && b {}\n```\n", 81)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "48;5;203") {
+		t.Fatalf("&& carries the Error background: %q", out)
 	}
 }

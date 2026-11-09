@@ -1143,7 +1143,7 @@ func (m *Model) cachedPRs(filter string, limit int) ([]gh.PR, bool) {
 		return []gh.PR{}, false
 	}
 	var prs []gh.PR
-	if err := json.Unmarshal(e.Rows, &prs); err != nil {
+	if err := gh.DecodeCached(e.Rows, &prs); err != nil {
 		slog.Debug("cache unmarshal failed", "err", err)
 		return []gh.PR{}, false
 	}
@@ -1194,7 +1194,7 @@ func (m *Model) cachedIssues(filter string, limit int) ([]gh.Issue, bool) {
 		return []gh.Issue{}, false
 	}
 	var is []gh.Issue
-	if err := json.Unmarshal(e.Rows, &is); err != nil {
+	if err := gh.DecodeCached(e.Rows, &is); err != nil {
 		slog.Debug("issue cache unmarshal failed", "err", err)
 		return []gh.Issue{}, false
 	}
@@ -1279,7 +1279,7 @@ func (m *Model) hydrateDetail() {
 			continue
 		}
 		var d gh.PRDetail
-		if err := json.Unmarshal(e.Rows, &d); err != nil {
+		if err := gh.DecodeCached(e.Rows, &d); err != nil {
 			slog.Debug("detail cache unmarshal failed", "err", err)
 			continue
 		}
@@ -1309,7 +1309,7 @@ func (m *Model) hydrateIssueDetail() {
 			continue
 		}
 		var d gh.IssueDetail
-		if err := json.Unmarshal(e.Rows, &d); err != nil {
+		if err := gh.DecodeCached(e.Rows, &d); err != nil {
 			slog.Debug("issue detail cache unmarshal failed", "err", err)
 			continue
 		}
@@ -1334,7 +1334,7 @@ func (m *Model) hydrateMembers() {
 		return
 	}
 	var users []gh.User
-	if err := json.Unmarshal(e.Rows, &users); err != nil {
+	if err := gh.DecodeCached(e.Rows, &users); err != nil {
 		slog.Debug("members cache unmarshal failed", "err", err)
 		return
 	}
@@ -1358,7 +1358,7 @@ func (m *Model) hydrateViewer() {
 		return
 	}
 	var login string
-	if err := json.Unmarshal(e.Rows, &login); err != nil {
+	if err := gh.DecodeCached(e.Rows, &login); err != nil {
 		slog.Debug("viewer cache unmarshal failed", "err", err)
 		return
 	}

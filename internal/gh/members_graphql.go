@@ -53,5 +53,6 @@ func mapAssignableUsers(nodes []qlUser) []User {
 	for _, n := range nodes {
 		users = append(users, User(n))
 	}
+	sanitize(&users)
 	return users
 }

@@ -78,7 +78,7 @@ func (s GraphSource) FetchStackForPR(prNumber int) (Stack, bool, error) {
 		return Stack{}, false, errors.New("stacked PRs aren't available for this repo")
 	}
 	if reply.code != http.StatusOK {
-		return Stack{}, false, fmt.Errorf("stack lookup: %s: %s", reply.status, strings.TrimSpace(string(reply.body)))
+		return Stack{}, false, fmt.Errorf("stack lookup: %s: %s", reply.status, cleanBody(reply.body))
 	}
 	var wire []struct {
 		Number int `json:"number"`
@@ -106,6 +106,7 @@ func (s GraphSource) FetchStackForPR(prNumber int) (Stack, bool, error) {
 		}
 		st.Members = append(st.Members, StackMember{Number: pr.Number, State: state, IsDraft: pr.Draft})
 	}
+	sanitize(&st)
 	return st, true, nil
 }
 
@@ -137,7 +138,7 @@ func (s GraphSource) BaseUsesMergeQueue(baseRef string) (bool, error) {
 		return false, err
 	}
 	if reply.code != http.StatusOK {
-		return false, fmt.Errorf("graphql merge queue: %s: %s", reply.status, strings.TrimSpace(string(reply.body)))
+		return false, fmt.Errorf("graphql merge queue: %s: %s", reply.status, cleanBody(reply.body))
 	}
 	var parsed struct {
 		Data struct {
@@ -156,7 +157,7 @@ func (s GraphSource) BaseUsesMergeQueue(baseRef string) (bool, error) {
 		return false, fmt.Errorf("parse merge queue: %w", err)
 	}
 	if len(parsed.Errors) > 0 {
-		return false, fmt.Errorf("graphql merge queue: %s", parsed.Errors[0].Message)
+		return false, fmt.Errorf("graphql merge queue: %s", CleanLine(parsed.Errors[0].Message))
 	}
 	repo := parsed.Data.Repository
 	if repo.MergeQueue != nil {
@@ -186,7 +187,9 @@ func decodeStackMerge(body []byte) (StackMergeResult, error) {
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return StackMergeResult{}, fmt.Errorf("parse stack merge: %w", err)
 	}
-	return StackMergeResult{Status: wire.Status, Message: wire.Details.Message, UUID: wire.Details.UUID, SHA: wire.Details.SHA}, nil
+	r := StackMergeResult{Status: wire.Status, Message: wire.Details.Message, UUID: wire.Details.UUID, SHA: wire.Details.SHA}
+	sanitize(&r)
+	return r, nil
 }
 
 // MergeStack asks GitHub to merge the stack up to and including prNumber:
@@ -224,7 +227,7 @@ func (s GraphSource) MergeStack(prNumber int, mergeQueue bool) (StackMergeResult
 	case http.StatusConflict:
 		return StackMergeResult{}, errors.New("a merge for this stack is already in progress")
 	}
-	return StackMergeResult{}, fmt.Errorf("stack merge: %s: %s", reply.status, strings.TrimSpace(string(reply.body)))
+	return StackMergeResult{}, fmt.Errorf("stack merge: %s: %s", reply.status, cleanBody(reply.body))
 }
 
 // StackMergeStatus probes an in-flight merge started by MergeStack.
@@ -242,7 +245,7 @@ func (s GraphSource) StackMergeStatus(prNumber int, uuid string) (StackMergeResu
 		return StackMergeResult{}, err
 	}
 	if reply.code != http.StatusOK {
-		return StackMergeResult{}, fmt.Errorf("stack merge status: %s: %s", reply.status, strings.TrimSpace(string(reply.body)))
+		return StackMergeResult{}, fmt.Errorf("stack merge status: %s: %s", reply.status, cleanBody(reply.body))
 	}
 	return decodeStackMerge(reply.body)
 }

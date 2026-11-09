@@ -5,6 +5,6 @@ package gh
 type TimelineItem struct{}
 
 type IssueDetail struct {
-	Body     string         `json:"body"`
+	Body     string         `json:"body" sanitize:"text"`
 	Timeline []TimelineItem `json:"-"` // populated by a later milestone, not fetched yet
 }
