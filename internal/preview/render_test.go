@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -125,7 +126,7 @@ func assertNoPayloadControls(t *testing.T, out string) {
 		if r == '\n' || r == '\t' {
 			continue
 		}
-		if r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F) || r == '\uE000' {
+		if r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F) || r == ampSentinel("") {
 			t.Fatalf("control rune %U left in output %q", r, out)
 		}
 	}
@@ -138,12 +139,25 @@ func TestRenderNeutralizesControlReferences(t *testing.T) {
 		"~~&#0*2*7;~~", "~~&\n#27;~~", "&amp;#27;",
 		"~~&2#27;~~", "~~&=#*2*7;~~",
 		"&#27;]52;c;aGk=&#7;", "&#27;]8;;http://e&#7;x&#27;]8;;&#7;",
+		"<mailto:a&@#27;>", "a&@b.co#27;", "www.x.io/&:#27;",
+	}
+	templates := []string{
+		"&C#27;", "&C#x1b;", "&C&#27;", "~~&C*#*27;~~", "~~&C#*2*7;~~",
+		"&C<!-- x -->#27;", "&C`#`27;", "&C[#](x)27;", "<mailto:a&C#27;>",
+		"a&C#27;@b.co", "www.x.io/&C#27;", "https://x.io/&C#27;",
+		"&C\n#27;", "&C\\\n#27;", "&C\n: #27;",
+	}
+	for _, c := range []string{"$", ":", "@"} {
+		for _, tpl := range templates {
+			payloads = append(payloads, strings.ReplaceAll(tpl, "C", c))
+		}
 	}
 	contexts := []struct{ name, format string }{
 		{"paragraph", "before %s after"},
 		{"link", "[%s](https://e.example/x)"},
 		{"heading", "# %s"},
 		{"codespan", "`%s`"},
+		{"table", "| %s |\n|--|\n| x |"},
 	}
 	for _, p := range payloads {
 		for _, c := range contexts {
@@ -203,7 +217,11 @@ func TestRenderKeepsBenignAmpersands(t *testing.T) {
 		"https://x.io/d?a=1&from=now&to=now",
 		"https://x.io/p?a=1&2=b tail",
 		"https://x.io/p?a=1&-b=2 tail",
+		"https://x.io/p?a=1&$top=10 tail",
+		"https://x.io/p?a=1&:b=2 tail",
+		"https://x.io/p?a=1&@b=2 tail",
 		"**\"foo\"**&bar",
+		"**\"foo\"**& bar",
 		"_foo_&bar",
 	} {
 		got, err := Render(md, 80)
@@ -211,9 +229,9 @@ func TestRenderKeepsBenignAmpersands(t *testing.T) {
 			t.Fatal(err)
 		}
 		if want := baselineText(t, md, 80); ansi.Strip(got) != want {
-			t.Fatalf("%q differs from baseline:\n got %q\nwant %q", md, ansi.Strip(got), want)
+			t.Errorf("%q differs from baseline:\n got %q\nwant %q", md, ansi.Strip(got), want)
 		}
-		if strings.ContainsRune(got, '\uE000') {
+		if strings.ContainsRune(got, ampSentinel("")) {
 			t.Fatalf("sentinel leaked for %q", md)
 		}
 	}
@@ -228,36 +246,47 @@ func TestRenderQueryWithInlineDelimiterAfterAmpersand(t *testing.T) {
 }
 
 func TestRenderPrivateUseRunesInBody(t *testing.T) {
+	first := ampSentinel("")
 	t.Run("literal sentinel candidate survives alongside &&", func(t *testing.T) {
-		out, err := Render("a  b && c", 80)
+		md := "a " + string(first) + " b && c"
+		out, err := Render(md, 80)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if text := ansi.Strip(out); !strings.Contains(text, "a  b && c") {
+		if text := ansi.Strip(out); !strings.Contains(text, md) {
 			t.Fatalf("body rewritten: %q", text)
 		}
 	})
 	t.Run("reference decoding to the candidate stays a glyph", func(t *testing.T) {
-		out, err := Render("x &#xE000; y && z", 80)
+		out, err := Render(fmt.Sprintf("x &#x%X; y && z", first), 80)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if text := ansi.Strip(out); !strings.Contains(text, "x  y && z") {
+		if text := ansi.Strip(out); !strings.Contains(text, "x "+string(first)+" y && z") {
 			t.Fatalf("reference rewritten: %q", text)
 		}
 	})
 	t.Run("candidate in body does not weaken neutralization", func(t *testing.T) {
-		for _, md := range []string{" &#27;[31m", " ~~&#*2*7;~~", " ~~&2#27;~~"} {
+		for _, md := range []string{
+			string(first) + " &#27;[31m",
+			string(first) + " ~~&#*2*7;~~",
+			string(first) + " ~~&2#27;~~",
+		} {
 			out, err := Render(md, 80)
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertNoPayloadControls(t, strings.ReplaceAll(out, "", ""))
+			assertNoPayloadControls(t, strings.ReplaceAll(out, string(first), ""))
 		}
 	})
 	t.Run("sentinel skips present code points", func(t *testing.T) {
-		if got := ampSentinel(" &#xE001;"); got != 0xE002 {
-			t.Fatalf("sentinel = %U, want U+E002", got)
+		second := ampSentinel(string(first))
+		if second == first {
+			t.Fatalf("sentinel = %U, want a different code point", second)
+		}
+		got := ampSentinel(string(first) + fmt.Sprintf("&#x%X;", second))
+		if got == first || got == second {
+			t.Fatalf("sentinel = %U, want neither %U nor %U", got, first, second)
 		}
 	})
 }
