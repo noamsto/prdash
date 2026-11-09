@@ -1606,9 +1606,10 @@ func (m *Model) cascadeProbeFetchCmd() tea.Cmd {
 }
 
 // cascadeSettleCmd finalizes a finished run. The stat is re-asserted onto
-// m.actionStatus in case a foreign action reachable mid-run (expanded/log view
-// — see cascadeRun.stat's doc comment) replaced or nilled it; without that this
-// settle's own actionDoneMsg could land on a nil or unrelated status.
+// m.actionStatus so the run's result is what the header shows (and so the
+// settle owns the dwell timer), in case a foreign action reachable mid-run
+// (expanded/log view — see cascadeRun.stat's doc comment) replaced or nilled it.
+// The message itself carries r.stat, so the settle is correct either way.
 func (m *Model) cascadeSettleCmd() tea.Cmd {
 	r := m.cascade
 	partial := r.updated()
