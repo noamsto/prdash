@@ -247,7 +247,7 @@ func TestCascadeSettleForeignStatusShown(t *testing.T) {
 
 func TestCascadeSettleNilStatus(t *testing.T) {
 	m, done := cascadeAtSettle(t)
-	m.actionStatus = nil
+	m.actionStatus = Model{}.actionStatus
 
 	m, _ = deliver(t, m, done)
 
@@ -304,7 +304,7 @@ func TestStackMergeSettleFailedWhileStatusNil(t *testing.T) {
 	for _, n := range layers {
 		m.fresh[n] = true
 	}
-	m.actionStatus = nil
+	m.actionStatus = Model{}.actionStatus
 	fetched := len(details.calls)
 
 	m, cmd := deliver(t, m, done)
