@@ -2509,14 +2509,12 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// beat hitting the nil-guard.
 			m.cascade = nil
 		}
-		// No action produced this message, so it settles no status.
 		if msg.stat == nil {
 			if len(msg.merged) > 0 || len(msg.partial) > 0 {
 				return m, m.backgroundRefresh()
 			}
 			return m, nil
 		}
-		// Settle the action's own status, never whichever one is displayed now.
 		// Scope the error to the status line rather than m.err, which blanks the board.
 		stat := msg.stat
 		stat.settled = true
