@@ -277,35 +277,32 @@ func delayedRefreshCmd() tea.Cmd {
 //
 // applyOptimisticAction paints mutation results onto the in-memory board as
 // soon as the request succeeds, so glyphs do not wait on backgroundRefresh.
-func (m *Model) applyOptimisticAction() {
-	if m.actionStatus == nil {
-		return
-	}
+func (m *Model) applyOptimisticAction(stat *actionStat) {
 	ps, ok := m.section.(*PRSection)
 	if !ok {
 		return
 	}
-	switch m.actionStatus.native {
+	switch stat.native {
 	case "auto-merge-squash":
-		for _, n := range m.actionStatus.nums {
+		for _, n := range stat.nums {
 			ps.updatePR(n, func(p *gh.PR) {
 				p.AutoMergeRequest = &gh.AutoMergeRequest{MergeMethod: "SQUASH"}
 			})
 		}
 	case "disable-auto-merge":
-		for _, n := range m.actionStatus.nums {
+		for _, n := range stat.nums {
 			ps.updatePR(n, func(p *gh.PR) { p.AutoMergeRequest = nil })
 		}
 	case "mark-ready":
-		for _, n := range m.actionStatus.nums {
+		for _, n := range stat.nums {
 			ps.updatePR(n, func(p *gh.PR) { p.IsDraft = false })
 		}
 	case "convert-to-draft":
-		for _, n := range m.actionStatus.nums {
+		for _, n := range stat.nums {
 			ps.updatePR(n, func(p *gh.PR) { p.IsDraft = true })
 		}
 	case "approve":
-		for _, n := range m.actionStatus.nums {
+		for _, n := range stat.nums {
 			ps.updatePR(n, func(p *gh.PR) {
 				p.ReviewDecision = "APPROVED"
 			})
@@ -1630,7 +1627,7 @@ func (m *Model) cascadeSettleCmd() tea.Cmd {
 		err = errors.New(fail)
 	}
 	return func() tea.Msg {
-		return actionDoneMsg{cascade: true, err: err, fail: fail, partial: partial, rerunCI: true}
+		return actionDoneMsg{stat: r.stat, cascade: true, err: err, fail: fail, partial: partial, rerunCI: true}
 	}
 }
 
@@ -2504,21 +2501,6 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// still free the run, or every later S press is silently ignored.
 			m.stackMerge = nil
 		}
-		// Scope the error to the status line rather than m.err, which blanks the board.
-		if m.actionStatus == nil {
-			if len(msg.merged) > 0 || len(msg.partial) > 0 {
-				return m, tea.Batch(clearStatusCmd(), m.backgroundRefresh())
-			}
-			return m, clearStatusCmd()
-		}
-		m.actionStatus.settled = true
-		m.actionStatus.err = msg.err
-		if msg.ok != "" {
-			m.actionStatus.ok = msg.ok
-		}
-		if msg.fail != "" {
-			m.actionStatus.fail = msg.fail
-		}
 		if msg.cascade {
 			// Other actions (rerun-failed, cleanup-branch, native clipboard copy)
 			// stay reachable mid-cascade and emit this same message; clearing
@@ -2526,30 +2508,52 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// beat hitting the nil-guard.
 			m.cascade = nil
 		}
-		cmds := []tea.Cmd{clearStatusCmd()}
-		if msg.err == nil {
-			m.applyOptimisticAction()
+		// No action produced this message, so it settles no status.
+		if msg.stat == nil {
+			if len(msg.merged) > 0 || len(msg.partial) > 0 {
+				return m, m.backgroundRefresh()
+			}
+			return m, nil
 		}
-		if msg.err == nil && m.actionStatus.refresh {
-			for _, n := range m.actionStatus.nums {
+		// Settle the action's own status, never whichever one is displayed now.
+		// Scope the error to the status line rather than m.err, which blanks the board.
+		stat := msg.stat
+		stat.settled = true
+		stat.err = msg.err
+		if msg.ok != "" {
+			stat.ok = msg.ok
+		}
+		if msg.fail != "" {
+			stat.fail = msg.fail
+		}
+		var cmds []tea.Cmd
+		// A superseded status is never displayed again, so it is owed no dwell timer.
+		if m.actionStatus == stat {
+			cmds = append(cmds, clearStatusCmd(stat))
+		}
+		if msg.err == nil {
+			m.applyOptimisticAction(stat)
+		}
+		if msg.err == nil && stat.refresh {
+			for _, n := range stat.nums {
 				delete(m.fresh, n) // force the detail/summary to revalidate
 			}
 			refetch = true
 		}
-		if msg.err != nil && (m.actionStatus.native == "merge-squash" || m.actionStatus.native == "merge-stack") {
-			for _, n := range m.actionStatus.nums {
+		if msg.err != nil && (stat.native == "merge-squash" || stat.native == "merge-stack") {
+			for _, n := range stat.nums {
 				delete(m.fresh, n)
 			}
-			cmds = append(cmds, m.batchDetailCmd(m.actionStatus.nums))
+			cmds = append(cmds, m.batchDetailCmd(stat.nums))
 		}
-		if msg.err != nil && m.actionStatus.native == "merge-stack" {
+		if msg.err != nil && stat.native == "merge-stack" {
 			// A poll that ran out of budget may still land server-side; the list
 			// refresh is what shows the layers merged once it does.
 			refetch = true
 		}
-		if msg.err == nil && m.actionStatus.rerunCI {
+		if msg.err == nil && stat.rerunCI {
 			stamp := time.Now()
-			for _, n := range m.actionStatus.nums {
+			for _, n := range stat.nums {
 				m.ciRerun[n] = stamp
 			}
 			cmds = append(cmds, delayedRefreshCmd())
@@ -2557,9 +2561,6 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A partial cascade still landed merge commits and re-triggered CI on the
 		// links that succeeded, even though the run as a whole failed — those
 		// rows need the same invalidation an all-success settle would give them.
-		// Read off msg.partial, not m.actionStatus.partial: a message delivered
-		// one Update cycle after this decision can find m.actionStatus replaced
-		// by an unrelated action started in the meantime.
 		if msg.err != nil && len(msg.partial) > 0 {
 			for _, n := range msg.partial {
 				delete(m.fresh, n) // force the detail/summary to revalidate
@@ -2662,7 +2663,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.stackMergeDispatch(m.stackMerge.onPolled(msg.res, msg.err))
 	case actionClearMsg:
-		if m.actionStatus != nil && m.actionStatus.settled {
+		if msg.stat != nil && m.actionStatus == msg.stat && m.actionStatus.settled {
 			m.actionStatus = nil
 		}
 		return m, nil
@@ -2938,7 +2939,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if ps, ok := m.section.(*PRSection); ok {
 					if err := m.mutable(ps.prAt(m.cursor)); err != nil {
 						m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
-						return m, clearStatusCmd()
+						return m, clearStatusCmd(m.actionStatus)
 					}
 				}
 				return m, m.openPicker("reviewer")
@@ -3079,7 +3080,7 @@ func (m *Model) hint(msg string) tea.Cmd {
 		return nil
 	}
 	m.actionStatus = &actionStat{err: errors.New(msg), fail: msg, settled: true}
-	return clearStatusCmd()
+	return clearStatusCmd(m.actionStatus)
 }
 
 func (m Model) View() tea.View {
@@ -3423,9 +3424,12 @@ func (m Model) actionsPanel() string {
 	return titledBox(strings.TrimRight(b.String(), "\n"), 40, len(m.actions)+3, "Actions")
 }
 
-// clearStatusCmd wipes a settled action badge after its dwell time.
-func clearStatusCmd() tea.Cmd {
-	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return actionClearMsg{} })
+// statusDwell is how long a settled action badge stays up.
+var statusDwell = 3 * time.Second
+
+// clearStatusCmd wipes stat after its dwell time, if it is still the status shown.
+func clearStatusCmd(stat *actionStat) tea.Cmd {
+	return tea.Tick(statusDwell, func(time.Time) tea.Msg { return actionClearMsg{stat: stat} })
 }
 
 // prGlyph / issueGlyph mark each board. Set to your Nerd Font's glyphs.

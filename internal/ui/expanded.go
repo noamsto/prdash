@@ -347,7 +347,7 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 	p := ps.prAt(m.cursor)
 	if err := m.mutable(p); err != nil {
 		m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
-		return m, clearStatusCmd()
+		return m, clearStatusCmd(m.actionStatus)
 	}
 	checks := p.Checks()
 	if m.checkCursor < 0 || m.checkCursor >= len(checks) {
@@ -358,13 +358,14 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 	if job == "" {
 		m.actionStatus = &actionStat{fail: "no rerun for external check", settled: true,
 			err: fmt.Errorf("external check %q has no rerunnable job", c.Label())}
-		return m, clearStatusCmd()
+		return m, clearStatusCmd(m.actionStatus)
 	}
 	native := m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
 		refresh: true, rerunCI: true, nums: []int{ps.prAt(m.cursor).Number}}
+	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{err: action.RerunCheck(native, job)}
+		return actionDoneMsg{stat: stat, err: action.RerunCheck(native, job)}
 	}, m.startSpinner())
 }
 
@@ -377,14 +378,15 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 	if ps, ok := m.section.(*PRSection); ok {
 		if err := m.mutable(ps.prAt(m.cursor)); err != nil {
 			m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
-			return m, clearStatusCmd()
+			return m, clearStatusCmd(m.actionStatus)
 		}
 	}
 	branch, native := v.HeadRefName, m.actionsSource
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
 		refresh: true, rerunCI: true, nums: []int{v.Number}}
+	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{err: action.RerunFailed(native, branch)}
+		return actionDoneMsg{stat: stat, err: action.RerunFailed(native, branch)}
 	}, m.startSpinner())
 }
 

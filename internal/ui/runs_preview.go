@@ -302,8 +302,9 @@ func (m *Model) rerunRunCmd(a action.Action) tea.Cmd {
 	if m.cache != nil {
 		m.cache.Invalidate(runsKey(m.repo))
 	}
+	stat := m.actionStatus
 	return tea.Batch(func() tea.Msg {
-		return actionDoneMsg{err: src.RerunFailedJobs(id)}
+		return actionDoneMsg{stat: stat, err: src.RerunFailedJobs(id)}
 	}, m.startSpinner())
 }
 

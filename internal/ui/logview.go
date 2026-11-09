@@ -372,13 +372,14 @@ func (m Model) copyLogText(text, ok string) (tea.Model, tea.Cmd) {
 	}
 	if argv := clipboardArgv(); argv != nil {
 		m.actionStatus = &actionStat{run: "Copying", ok: ok, fail: "Copy failed"}
+		stat := m.actionStatus
 		spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
 		return m, tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: writeClipboard(argv, text)}
+			return actionDoneMsg{stat: stat, err: writeClipboard(argv, text)}
 		}, spin)
 	}
 	m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true}
-	return m, tea.Batch(tea.SetClipboard(text), clearStatusCmd())
+	return m, tea.Batch(tea.SetClipboard(text), clearStatusCmd(m.actionStatus))
 }
 
 // openHoveredCheck opens the hovered check's details URL in the browser.
@@ -391,12 +392,13 @@ func (m Model) openHoveredCheck() (tea.Model, tea.Cmd) {
 	if url == "" {
 		m.actionStatus = &actionStat{fail: "no URL for this check", settled: true,
 			err: fmt.Errorf("check %q has no URL", c.Label())}
-		return m, clearStatusCmd()
+		return m, clearStatusCmd(m.actionStatus)
 	}
 	m.actionStatus = &actionStat{run: "Opening", ok: "Opened in browser", fail: "Open failed"}
+	stat := m.actionStatus
 	spin := m.startSpinner() // capture before the return copies m (persists m.spinning)
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{err: openURL(url)}
+		return actionDoneMsg{stat: stat, err: openURL(url)}
 	}, spin)
 }
 

@@ -242,12 +242,13 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		// it's the sole path that reaches the *local* clipboard over SSH. See #20.
 		if argv := clipboardArgv(); argv != nil {
 			m.actionStatus = &actionStat{run: "Copying", ok: ok, fail: "Copy failed"}
+			stat := m.actionStatus
 			return tea.Batch(func() tea.Msg {
-				return actionDoneMsg{err: writeClipboard(argv, text)}
+				return actionDoneMsg{stat: stat, err: writeClipboard(argv, text)}
 			}, m.startSpinner())
 		}
 		m.actionStatus = &actionStat{ok: ok, fail: "Copy failed", settled: true} // OSC 52 is fire-and-forget
-		return tea.Batch(tea.SetClipboard(text), clearStatusCmd())
+		return tea.Batch(tea.SetClipboard(text), clearStatusCmd(m.actionStatus))
 	case "cleanup-branch":
 		ps, ok := m.section.(*PRSection)
 		if !ok || m.section.Len() == 0 {
@@ -256,8 +257,9 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		p, dir := ps.prAt(m.cursor), m.dir
 		m.actionStatus = statFor(a)
 		m.actionStatus.nums = []int{p.Number}
+		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return cleanupDone(dir, p)
+			return cleanupDone(dir, p, stat)
 		}, m.startSpinner())
 	case "rerun-run":
 		return m.rerunRunCmd(a)
@@ -267,7 +269,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		if ps, ok := m.section.(*PRSection); ok {
 			if err := m.mutable(ps.prAt(m.cursor)); err != nil {
 				m.actionStatus = &actionStat{fail: err.Error(), err: err, settled: true}
-				return clearStatusCmd()
+				return clearStatusCmd(m.actionStatus)
 			}
 		}
 		branch, native := v.HeadRefName, m.actionsSource
@@ -277,8 +279,9 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		if a.Refresh {
 			m.invalidateLaunchCache(v.Number)
 		}
+		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: action.RerunFailed(native, branch)}
+			return actionDoneMsg{stat: stat, err: action.RerunFailed(native, branch)}
 		}, m.startSpinner())
 	default: // native mutation/open (merge, ready, update-branch, open-web)
 		if cmd, ok := m.singleNativeCmd(a, v); ok {
@@ -300,8 +303,9 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 		url := v.URL
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
+		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{err: openURL(url)}
+			return actionDoneMsg{stat: stat, err: openURL(url)}
 		}, m.startSpinner()), true
 	}
 	ps, ok := m.section.(*PRSection)
@@ -320,14 +324,15 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 	if a.Refresh {
 		m.invalidateLaunchCache(p.Number)
 	}
+	stat := m.actionStatus
 	return tea.Batch(func() tea.Msg {
 		if err := fn(); err != nil {
-			return actionDoneMsg{err: err}
+			return actionDoneMsg{stat: stat, err: err}
 		}
 		if merge {
-			return actionDoneMsg{merged: []gh.PR{p}}
+			return actionDoneMsg{stat: stat, merged: []gh.PR{p}}
 		}
-		return actionDoneMsg{}
+		return actionDoneMsg{stat: stat}
 	}, m.startSpinner()), true
 }
 
@@ -588,7 +593,7 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 			// would mutate PRs the user never confirmed. (A reorder alone passes:
 			// targetNumbers sorts.)
 			m.actionStatus = &actionStat{fail: "selection changed — press again", err: errors.New("selection changed"), settled: true}
-			return clearStatusCmd()
+			return clearStatusCmd(m.actionStatus)
 		}
 		return m.runBulk(*a)
 	}
@@ -778,7 +783,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	if len(calls) == 0 {
 		if noTicket > 0 || openerErr != "" {
 			m.actionStatus = openIssueStat(a, 0, noTicket, openerErr)
-			return clearStatusCmd()
+			return clearStatusCmd(m.actionStatus)
 		}
 		return nil
 	}
@@ -801,6 +806,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		openerFail = m.actionStatus.fail
 	}
 	rerunCI := rerunsCI(a)
+	stat := m.actionStatus
 	return tea.Batch(func() tea.Msg {
 		var failed int
 		var lastErr error
@@ -822,16 +828,17 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		}
 		if failed == 0 {
 			if openerFail != "" {
-				return actionDoneMsg{err: errors.New(openerFail), fail: openerFail, rerunCI: rerunCI}
+				return actionDoneMsg{stat: stat, err: errors.New(openerFail), fail: openerFail, rerunCI: rerunCI}
 			}
-			return actionDoneMsg{merged: mergedOK, rerunCI: rerunCI}
+			return actionDoneMsg{stat: stat, merged: mergedOK, rerunCI: rerunCI}
 		}
 		if n == 1 {
 			// A single-target batch's error is worth showing verbatim — "N of M
 			// failed" is opaque when N and M are both 1.
-			return actionDoneMsg{err: lastErr, fail: lastErr.Error(), rerunCI: rerunCI}
+			return actionDoneMsg{stat: stat, err: lastErr, fail: lastErr.Error(), rerunCI: rerunCI}
 		}
 		return actionDoneMsg{
+			stat:    stat,
 			err:     fmt.Errorf("%d of %d failed", failed, n),
 			fail:    fmt.Sprintf("%d of %d failed", failed, n),
 			partial: landed,

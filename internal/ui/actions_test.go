@@ -535,7 +535,7 @@ func TestUpdateBranchStampsCIRerun(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["u"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if _, ok := m.ciRerun[13]; !ok {
 		t.Error("a successful update-branch must stamp ciRerun")
@@ -547,7 +547,7 @@ func TestMergeDoesNotStampCIRerun(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["m"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if _, ok := m.ciRerun[13]; ok {
 		t.Error("merge does not re-trigger checks and must not stamp ciRerun")
@@ -559,7 +559,7 @@ func TestFailedUpdateBranchDoesNotStampCIRerun(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["u"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{err: errors.New("boom")})
+	u, _ := m.Update(withStat(m, actionDoneMsg{err: errors.New("boom")}))
 	m = u.(Model)
 	if _, ok := m.ciRerun[13]; ok {
 		t.Error("a failed update-branch must not stamp ciRerun")
@@ -613,7 +613,7 @@ func TestOptimisticAutoMergePaintsGlyph(t *testing.T) {
 	m.actionStatus.nums = []int{13}
 	m.actionStatus.refresh = true
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	ps := m.section.(*PRSection)
 	p := ps.prAt(0)
@@ -631,7 +631,7 @@ func TestFailedAutoMergeDoesNotPaintGlyph(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["A"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{err: errors.New("boom")})
+	u, _ := m.Update(withStat(m, actionDoneMsg{err: errors.New("boom")}))
 	m = u.(Model)
 	if m.section.(*PRSection).prAt(0).AutoMergeEnabled() {
 		t.Fatal("failed auto-merge must leave AutoMergeRequest unset")
@@ -648,7 +648,7 @@ func TestOptimisticDisableAutoMergeClearsGlyph(t *testing.T) {
 	m.actionStatus.nums = []int{13}
 	m.actionStatus.refresh = true
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	ps := m.section.(*PRSection)
 	p := ps.prAt(0)
@@ -666,7 +666,7 @@ func TestOptimisticMarkReadyAndConvertDraftPaintDraftState(t *testing.T) {
 	m.actionStatus = statFor(action.ReadyAction(true))
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if m.section.(*PRSection).prAt(0).IsDraft {
 		t.Fatal("successful mark-ready must clear IsDraft on the in-memory PR")
@@ -674,7 +674,7 @@ func TestOptimisticMarkReadyAndConvertDraftPaintDraftState(t *testing.T) {
 
 	m.actionStatus = statFor(action.ReadyAction(false))
 	m.actionStatus.nums = []int{13}
-	u, _ = m.Update(actionDoneMsg{})
+	u, _ = m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if !m.section.(*PRSection).prAt(0).IsDraft {
 		t.Fatal("successful convert-to-draft must set IsDraft on the in-memory PR")
@@ -692,7 +692,7 @@ func TestOptimisticApprovePaintsReviewGlyph(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["L"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "APPROVED" {
 		t.Fatalf("ReviewDecision = %q, want APPROVED", got)
@@ -722,7 +722,7 @@ func TestOptimisticApproveWithoutDetailDoesNotFabricateEntry(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["L"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "APPROVED" {
 		t.Fatalf("ReviewDecision = %q, want APPROVED", got)
@@ -739,7 +739,7 @@ func TestFailedApproveDoesNotPaint(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["L"])
 	m.actionStatus.nums = []int{13}
 
-	u, _ := m.Update(actionDoneMsg{err: errors.New("boom")})
+	u, _ := m.Update(withStat(m, actionDoneMsg{err: errors.New("boom")}))
 	m = u.(Model)
 	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "REVIEW_REQUIRED" {
 		t.Fatalf("failed approve must leave ReviewDecision, got %q", got)
@@ -754,7 +754,7 @@ func TestOptimisticAutoMergeBulkPatchesAllNums(t *testing.T) {
 	m.actionStatus = statFor(action.DefaultPRActions()["A"])
 	m.actionStatus.nums = []int{1, 2}
 
-	u, _ := m.Update(actionDoneMsg{})
+	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	ps := m.section.(*PRSection)
 	for i := 0; i < ps.Len(); i++ {

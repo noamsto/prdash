@@ -1284,7 +1284,7 @@ func TestLaunchReplaceKeepsSessionMergedRow(t *testing.T) {
 	stubBackends(&m)
 	m.SetPRSource(openListSource{open: []gh.PR{openPR(6, "bob")}})
 	m.setSections(nil, nil, []gh.PR{openPR(5, "bob"), openPR(6, "bob"), openPR(7, "bob")}, "") // #7: stale, never merged
-	u, _ := m.Update(actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 5)}})
+	u, _ := m.Update(withStat(m, actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 5)}}))
 	m = u.(Model)
 
 	for _, cmd := range m.launchFetchCmds() {
@@ -1450,7 +1450,7 @@ func TestMergeResultAfterStatusClearedStillMarksMerged(t *testing.T) {
 	m.held[9] = ""
 	m.cursor = shownIndex(m, 9)
 	m.runAction(action.DefaultPRActions()["r"]) // refused: #9 is held
-	u, _ := m.Update(actionClearMsg{})
+	u, _ := m.Update(clearFor(m))
 	m = u.(Model)
 	if m.actionStatus != nil {
 		t.Fatalf("test setup: status = %+v, want it cleared before the merge lands", m.actionStatus)
@@ -1481,7 +1481,7 @@ func TestLookupAfterSessionMergeKeepsTheRowMerged(t *testing.T) {
 	u, _ := m.Update(heldStatesMsg{gen: gen, states: map[int]gh.ItemState{7: {State: "OPEN"}}})
 	m = u.(Model)
 
-	u, _ = m.Update(actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 7)}})
+	u, _ = m.Update(withStat(m, actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 7)}}))
 	m = u.(Model)
 	u, _ = m.Update(heldStatesMsg{gen: gen, states: map[int]gh.ItemState{7: {State: "OPEN"}}})
 	m = u.(Model)
