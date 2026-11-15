@@ -10,26 +10,36 @@ import (
 	"charm.land/glamour/v2"
 )
 
-// ampSentinel picks a private-use code point that stands in for an `&` that
-// could start a control character reference. It must be absent from md and
-// from md with references decoded, or restoring it would rewrite real input.
+// ampSentinel picks the rune that stands in for an `&` that could start a
+// control character reference. It prefers punctuation so emphasis flanking
+// matches a real `&`, and must be one column wide like `&`: the range stops
+// before U+16FE2, a wide punctuation rune. It must be absent from md and from
+// md with references decoded, or restoring it would rewrite real input.
 func ampSentinel(md string) rune {
 	decoded := html.UnescapeString(md)
+	absent := func(r rune) bool {
+		return !strings.ContainsRune(md, r) && !strings.ContainsRune(decoded, r)
+	}
+	for r := rune(0x10000); r <= 0x16FDF; r++ {
+		if unicode.IsPunct(r) && absent(r) {
+			return r
+		}
+	}
 	for r := rune(0xE000); r <= 0xF8FF; r++ {
-		if !strings.ContainsRune(md, r) && !strings.ContainsRune(decoded, r) {
+		if absent(r) {
 			return r
 		}
 	}
 	return 0xE000
 }
 
-var ampToken = regexp.MustCompile(`&(?:#[0-9]+;|#[xX][0-9a-fA-F]+;|[a-zA-Z0-9=\-.%+,/])?`)
+var ampToken = regexp.MustCompile(`&(?:#[0-9]+;|#[xX][0-9a-fA-F]+;|[a-zA-Z0-9=\-.%+,/$:@])?`)
 
 // neutralizeAmp replaces every `&` that is not provably harmless with
 // sentinel. Glamour decodes character references after the sanitize
 // boundary and concatenates inline nodes before decoding, so any `&` that can
 // start a numeric reference must not reach it. An `&` before a letter, digit
-// or `=-.%+,/` stays: those are not inline markup, so nothing can be removed
+// or `=-.%+,/$:@` stays: those are not inline markup, so nothing can be removed
 // between them and a following `#` to splice a reference together.
 func neutralizeAmp(md string, sentinel rune) string {
 	return ampToken.ReplaceAllStringFunc(md, func(tok string) string {
