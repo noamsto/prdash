@@ -78,7 +78,7 @@ func TestRenderCardOmitsAutoMergeLineWhenNotArmed(t *testing.T) {
 
 func assertCardFits(t *testing.T, out string, width int) {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if w := lipgloss.Width(line); w > width {
 			t.Fatalf("line %q is %d columns, want <= %d", ansi.Strip(line), w, width)
 		}
