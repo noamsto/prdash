@@ -35,6 +35,24 @@ func TestFmtElapsedAndTook(t *testing.T) {
 	}
 }
 
+func TestTookTiming(t *testing.T) {
+	cases := []struct {
+		name, started, completed, want string
+	}{
+		{"both stamps", "2026-01-01T10:00:00Z", "2026-01-01T10:01:20Z", "took 1m 20s"},
+		{"no start", "", "2026-01-01T10:01:20Z", ""},
+		{"unparsable completed", "2026-01-01T10:00:00Z", "not-a-time", ""},
+		{"start equals completed", "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := tookTiming(c.started, c.completed); got != c.want {
+				t.Errorf("tookTiming(%q, %q) = %q, want %q", c.started, c.completed, got, c.want)
+			}
+		})
+	}
+}
+
 var timingNow = time.Date(2026, 7, 30, 9, 4, 0, 0, time.UTC)
 
 func TestRenderChecksTiming(t *testing.T) {

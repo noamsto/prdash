@@ -30,7 +30,8 @@ func renderCard(c triage.Card, width int, now time.Time) string {
 	var b strings.Builder
 	b.WriteString(cardGlyph(c.Kind) + " " + headerStyle.Render(c.Headline) + "\n")
 	for _, l := range c.Failing {
-		b.WriteString("  " + failStyle.Render("✗ "+truncate(l, width-4)) + "\n")
+		label, timing := timedLabel(l.Label, tookTiming(l.StartedAt, l.CompletedAt), width-4)
+		b.WriteString("  " + failStyle.Render("✗ "+label) + timing + "\n")
 	}
 	for _, l := range c.Running {
 		label, timing := timedLabel(l.Label, elapsedSince(l.StartedAt, now), width-4)

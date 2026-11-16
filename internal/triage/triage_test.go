@@ -116,8 +116,20 @@ func TestFailingChecksListed(t *testing.T) {
 	if card.ActionKey != "r" {
 		t.Errorf("failing-checks action = %q, want r", card.ActionKey)
 	}
-	if len(card.Failing) == 0 || card.Failing[0] != "lint" {
+	if len(card.Failing) == 0 || card.Failing[0].Label != "lint" {
 		t.Errorf("expected failing check 'lint' listed: %+v", card.Failing)
+	}
+}
+
+func TestFailingCheckCarriesTiming(t *testing.T) {
+	card := Preliminary(pr(gh.Check{State: "FAILURE", Name: "lint",
+		StartedAt: "2026-01-01T10:00:00Z", CompletedAt: "2026-01-01T10:01:20Z"}), "", 0)
+	if len(card.Failing) != 1 {
+		t.Fatalf("Failing = %+v, want one entry", card.Failing)
+	}
+	want := FailedCheck{Label: "lint", StartedAt: "2026-01-01T10:00:00Z", CompletedAt: "2026-01-01T10:01:20Z"}
+	if got := card.Failing[0]; got != want {
+		t.Fatalf("Failing[0] = %+v, want %+v", got, want)
 	}
 }
 
@@ -131,7 +143,7 @@ func TestChecksCardShowsFailingAndRunningTogether(t *testing.T) {
 	if c.Kind != KindChecksFailing {
 		t.Fatalf("Kind = %v, want KindChecksFailing", c.Kind)
 	}
-	if got := c.Failing; len(got) != 1 || got[0] != "lint" {
+	if got := c.Failing; len(got) != 1 || got[0].Label != "lint" {
 		t.Fatalf("Failing = %v, want [lint]", got)
 	}
 	if got := c.Running; len(got) != 2 {

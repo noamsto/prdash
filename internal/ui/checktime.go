@@ -63,16 +63,22 @@ func checkTiming(c gh.Check, now time.Time) string {
 	if c.Result() == "pending" {
 		return elapsedSince(c.StartedAt, now)
 	}
-	started, ok := parseCheckTime(c.StartedAt)
+	return tookTiming(c.StartedAt, c.CompletedAt)
+}
+
+// tookTiming is the "took X" suffix for a finished check, "" when either stamp is
+// missing or unparsable or the duration is not positive (skipped jobs stamp start == completion).
+func tookTiming(startedAt, completedAt string) string {
+	started, ok := parseCheckTime(startedAt)
 	if !ok {
 		return ""
 	}
-	done, ok := parseCheckTime(c.CompletedAt)
+	done, ok := parseCheckTime(completedAt)
 	if !ok {
 		return ""
 	}
 	d := done.Sub(started)
-	if d <= 0 { // skipped jobs stamp start == completion
+	if d <= 0 {
 		return ""
 	}
 	return "took " + fmtTook(d)
