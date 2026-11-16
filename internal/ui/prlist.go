@@ -1843,12 +1843,12 @@ func (m *Model) switchToFilter() tea.Cmd {
 // boardCycle is the order Tab walks the boards in.
 var boardCycle = []string{"pr", "issue", "run"}
 
-// cycleBoard moves to the next board: it saves the active board's selection,
-// restores the next one's, swaps the section + action set, resets all
-// per-item/preview view state, and re-fetches (cached → instant).
-func (m *Model) cycleBoard() tea.Cmd {
+// cycleBoard moves to the next board (step 1) or the previous one (step -1): it
+// saves the active board's selection, restores the target's, swaps the section +
+// action set, resets all per-item/preview view state, and re-fetches (cached → instant).
+func (m *Model) cycleBoard(step int) tea.Cmd {
 	m.boards[m.mode] = boardView{state: m.state, body: m.body, filter: m.filter, hideDrafts: m.hideDrafts}
-	m.mode = boardCycle[(slices.Index(boardCycle, m.mode)+1)%len(boardCycle)]
+	m.mode = boardCycle[(slices.Index(boardCycle, m.mode)+step+len(boardCycle))%len(boardCycle)]
 	next := m.boards[m.mode]
 	m.state, m.body, m.filter, m.hideDrafts = next.state, next.body, next.filter, next.hideDrafts
 
@@ -2880,7 +2880,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filter = searchFor(m.mode, m.state, body)
 			return m, m.switchToFilter()
 		case "tab":
-			return m, m.cycleBoard()
+			return m, m.cycleBoard(1)
+		case "shift+tab":
+			return m, m.cycleBoard(-1)
 		case "ctrl+r":
 			// The one refresh the user asked for by name: held rows go once its
 			// result lands. Every other refresh (post-action, CI poll) keeps them.

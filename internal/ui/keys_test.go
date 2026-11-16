@@ -145,3 +145,33 @@ func TestIssueBoardPROnlyKeysSetStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestShiftTabCyclesBoardsBackwards(t *testing.T) {
+	m := newTestModelWithRows(t)
+	if m.mode != "pr" {
+		t.Fatalf("mode = %q, want pr", m.mode)
+	}
+	m.filter = "is:open author:someone"
+
+	u, _ := m.Update(keyMsg("tab"))
+	m = u.(Model)
+	if m.mode != "issue" {
+		t.Fatalf("after tab mode = %q, want issue", m.mode)
+	}
+	u, _ = m.Update(keyMsg("shift+tab"))
+	m = u.(Model)
+	if m.mode != "pr" {
+		t.Fatalf("after shift+tab mode = %q, want pr", m.mode)
+	}
+	if m.filter != "is:open author:someone" {
+		t.Fatalf("pr filter = %q, want it restored", m.filter)
+	}
+
+	for _, want := range []string{"run", "issue", "pr"} {
+		u, _ = m.Update(keyMsg("shift+tab"))
+		m = u.(Model)
+		if m.mode != want {
+			t.Fatalf("mode = %q, want %q", m.mode, want)
+		}
+	}
+}
