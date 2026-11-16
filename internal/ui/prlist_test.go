@@ -1372,6 +1372,8 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyPressMsg{Code: 'k', Mod: tea.ModAlt}
 	case "tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	case "f1":
 		return tea.KeyPressMsg{Code: tea.KeyF1}
 	default:
