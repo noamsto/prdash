@@ -21,6 +21,13 @@ func cardGlyph(k triage.Kind) string {
 	}
 }
 
+// runningRow is one in-flight check: glyph, label and elapsed time. Shared by the
+// triage card and the Overview checks section so both read the same.
+func runningRow(label, startedAt string, width int, now time.Time) string {
+	text, timing := timedLabel(label, elapsedSince(startedAt, now), width-4)
+	return "  " + pendStyle.Render(ciRunningGlyph+" "+text) + timing
+}
+
 // renderCard renders the triage card: glyph + headline, any detail lines, and
 // the suggested action. Empty headline (fallback) renders nothing.
 func renderCard(c triage.Card, width int, now time.Time) string {
@@ -34,8 +41,7 @@ func renderCard(c triage.Card, width int, now time.Time) string {
 		b.WriteString("  " + failStyle.Render("✗ "+label) + timing + "\n")
 	}
 	for _, l := range c.Running {
-		label, timing := timedLabel(l.Label, elapsedSince(l.StartedAt, now), width-4)
-		b.WriteString("  " + pendStyle.Render(ciRunningGlyph+" "+label) + timing + "\n")
+		b.WriteString(runningRow(l.Label, l.StartedAt, width, now) + "\n")
 	}
 	if c.ActionKey != "" {
 		b.WriteString(dimStyle.Render(c.ActionLabel+" → ") + accentStyle.Render(c.ActionKey) + "\n")
