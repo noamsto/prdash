@@ -465,7 +465,7 @@ func (m Model) contentHeight(l Layout) int {
 
 // ciLine surfaces the check rollup in the quick view independent of the triage
 // card, which keys off mergeStateStatus and can mask failing CI behind a
-// review/conflict headline. Running checks are listed with their elapsed time.
+// review/conflict headline.
 func ciLine(pr gh.PR, width int, now time.Time) string {
 	switch pr.CIState() {
 	case "fail":
@@ -487,8 +487,6 @@ func ciLine(pr gh.PR, width int, now time.Time) string {
 	}
 }
 
-// runningRows lists each in-flight check of pr on its own line, each prefixed
-// with a newline.
 func runningRows(pr gh.PR, width int, now time.Time) string {
 	var b strings.Builder
 	for _, c := range pr.Checks() {
