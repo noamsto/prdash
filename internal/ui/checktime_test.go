@@ -113,6 +113,55 @@ func TestRenderCardRunningShowsElapsed(t *testing.T) {
 	}
 }
 
+func TestOverviewChecksListsRunningWhenBlockerOwnsCard(t *testing.T) {
+	writeState(t, "")
+	m := NewModel("/repo", "is:open", nil)
+	m.width, m.height = 120, 30
+	m.now = func() time.Time { return timingNow }
+	p := gh.PR{Number: 1, StatusCheckRollup: []gh.Check{
+		{State: "IN_PROGRESS", Name: "build", StartedAt: "2026-07-30T09:00:00Z"},
+		{State: "IN_PROGRESS", Name: "deploy", StartedAt: "2026-07-30T09:03:00Z"},
+	}}
+	m.setPRs([]gh.PR{p})
+	m.detail[1] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	out := ansi.Strip(m.renderOverview(60))
+	if !strings.Contains(out, "Blocked by branch protection") {
+		t.Fatalf("blocker card missing:\n%s", out)
+	}
+	for _, want := range []string{"build · 4m", "deploy · 1m"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("overview missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCILineFailingWithRunningListsElapsed(t *testing.T) {
+	pr := gh.PR{StatusCheckRollup: []gh.Check{
+		{Conclusion: "FAILURE", Name: "lint"},
+		{State: "IN_PROGRESS", Name: "build", StartedAt: "2026-07-30T09:00:00Z"},
+	}}
+	out := ansi.Strip(ciLine(pr, 40, timingNow))
+	if !strings.Contains(out, "✗ checks failing: lint") {
+		t.Errorf("failing line missing: %q", out)
+	}
+	if !strings.Contains(out, ciRunningGlyph+" build · 4m") {
+		t.Errorf("running row with elapsed missing: %q", out)
+	}
+}
+
+func TestCILineFrozenRowsShowLabelsWithoutElapsed(t *testing.T) {
+	pr := gh.PR{StatusCheckRollup: []gh.Check{
+		{State: "IN_PROGRESS", Name: "build", StartedAt: "2026-07-30T09:00:00Z"},
+	}}
+	out := ansi.Strip(ciLine(pr, 40, time.Time{}))
+	if !strings.Contains(out, ciRunningGlyph+" build") {
+		t.Errorf("running label missing: %q", out)
+	}
+	if strings.Contains(out, "·") {
+		t.Errorf("frozen row must carry no elapsed: %q", out)
+	}
+}
+
 // The elapsed time advances on the existing 1s tick with no refetch: the
 // expanded body is stored viewport content, so the tick must re-render it.
 func TestElapsedAdvancesOnTickWithoutRefetch(t *testing.T) {

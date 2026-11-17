@@ -367,7 +367,7 @@ func (m Model) renderOverview(w int) string {
 			blocks = append(blocks, section(blockerGlyph, "blocker", card))
 		}
 		if tc.Kind != triage.KindChecksFailing && tc.Kind != triage.KindChecksRunning {
-			if ci := ciLine(pr); ci != "" {
+			if ci := ciLine(pr, bw, m.liveClock(pr)); ci != "" {
 				blocks = append(blocks, section(checksGlyph, "checks", ci))
 			}
 		}
@@ -465,8 +465,8 @@ func (m Model) contentHeight(l Layout) int {
 
 // ciLine surfaces the check rollup in the quick view independent of the triage
 // card, which keys off mergeStateStatus and can mask failing CI behind a
-// review/conflict headline.
-func ciLine(pr gh.PR) string {
+// review/conflict headline. Running checks are listed with their elapsed time.
+func ciLine(pr gh.PR, width int, now time.Time) string {
 	switch pr.CIState() {
 	case "fail":
 		var names []string
@@ -479,12 +479,24 @@ func ciLine(pr gh.PR) string {
 		if len(names) > 0 {
 			s += dimStyle.Render(": " + strings.Join(names, ", "))
 		}
-		return s
+		return s + runningRows(pr, width, now)
 	case "pending":
-		return pendStyle.Render(ciRunningGlyph + " checks running")
+		return pendStyle.Render(ciRunningGlyph+" checks running") + runningRows(pr, width, now)
 	default: // pass / none — the row glyph carries it; keep the quick view calm
 		return ""
 	}
+}
+
+// runningRows lists each in-flight check of pr on its own line, each prefixed
+// with a newline.
+func runningRows(pr gh.PR, width int, now time.Time) string {
+	var b strings.Builder
+	for _, c := range pr.Checks() {
+		if c.Result() == "pending" {
+			b.WriteString("\n" + runningRow(c.Label(), c.StartedAt, width, now))
+		}
+	}
+	return b.String()
 }
 
 // reviewState maps a review state to its roster glyph, label, style, and sort
