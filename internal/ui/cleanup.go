@@ -14,8 +14,8 @@ import (
 // a single-target bulk failure does: the action's own "Cleanup failed" wording
 // doesn't say whether the branch was already gone, the worktree had uncommitted
 // work, or prdash is sitting in the worktree it was asked to remove.
-func cleanupDone(dir string, p gh.PR, stat *actionStat) tea.Msg {
-	if err := cleanupBranch(dir, p); err != nil {
+func cleanupDone(gitDir, cwd string, p gh.PR, stat *actionStat) tea.Msg {
+	if err := cleanupBranch(gitDir, cwd, p); err != nil {
 		return actionDoneMsg{stat: stat, err: err, fail: err.Error()}
 	}
 	return actionDoneMsg{stat: stat}
@@ -25,22 +25,22 @@ func cleanupDone(dir string, p gh.PR, stat *actionStat) tea.Msg {
 // its worktree. Every precondition is checked before anything is removed, and the
 // worktree goes first — git refuses to delete a branch that is checked out, and an
 // aborted removal must not leave the branch already gone.
-func cleanupBranch(dir string, p gh.PR) error {
+func cleanupBranch(gitDir, cwd string, p gh.PR) error {
 	if !p.IsMerged() {
 		return fmt.Errorf("#%d is not merged", p.Number)
 	}
-	if !gh.BranchExists(dir, p.HeadRefName) {
+	if !gh.BranchExists(gitDir, p.HeadRefName) {
 		return fmt.Errorf("no local branch %s", p.HeadRefName)
 	}
-	if wt, ok := gh.WorktreeForBranch(dir, p.HeadRefName); ok {
-		if under(dir, wt) {
+	if wt, ok := gh.WorktreeForBranch(gitDir, p.HeadRefName); ok {
+		if under(cwd, wt) {
 			return fmt.Errorf("can't remove the worktree prdash is running in (%s)", wt)
 		}
-		if err := gh.RemoveWorktree(dir, wt); err != nil {
+		if err := gh.RemoveWorktree(gitDir, wt); err != nil {
 			return err
 		}
 	}
-	return gh.DeleteBranch(dir, p.HeadRefName)
+	return gh.DeleteBranch(gitDir, p.HeadRefName)
 }
 
 // under reports whether dir is root or sits inside it. Both sides are resolved

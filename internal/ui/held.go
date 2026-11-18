@@ -233,7 +233,7 @@ func (m *Model) refAt(i int) (gh.PRRef, bool) {
 	return gh.PRRef{}, false
 }
 
-func (s *PRSection) refAt(i int) gh.PRRef { return s.prs[s.shown[i]].Ref() }
+func (s *PRSection) refAt(i int) gh.PRRef { return s.prAt(i).Ref() }
 
 // cursorRef is refAt for the cursor row; ok is false off the board's range.
 func (m *Model) cursorRef() (gh.PRRef, bool) {

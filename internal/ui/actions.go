@@ -38,11 +38,28 @@ func (m *Model) varsAt(i int) action.Vars {
 // withSwitchRef resolves what `wt switch` can open for the PR row at i. It
 // shells out to git, so it stays off cursorVars — the render paths call that
 // every frame.
-func (m *Model) withSwitchRef(v action.Vars, i int) action.Vars {
+func (m *Model) withSwitchRef(v action.Vars, i int, dir string) action.Vars {
 	if ps, ok := m.section.(*PRSection); ok && i >= 0 && i < ps.Len() {
-		v.SwitchRef = gh.SwitchRef(m.dir, ps.prAt(i))
+		v.SwitchRef = gh.SwitchRef(dir, ps.prAt(i))
 	}
 	return v
+}
+
+var checkoutForFn = gh.CheckoutFor
+
+// checkoutDir is the local checkout git and wt run in for a row of repo: the
+// launch directory for the launch repo, the sibling checkout under reposRoot
+// for any other.
+func (m Model) checkoutDir(repo string) (string, error) {
+	if repo == "" || repo == m.repo {
+		return m.dir, nil
+	}
+	return checkoutForFn(m.reposRoot, repo)
+}
+
+// otherRepoSwitchArgv points a `wt switch` argv at the other repo's checkout.
+func otherRepoSwitchArgv(argv []string, dir string) []string {
+	return append([]string{"wt", "-C", dir}, argv[1:]...)
 }
 
 // clipboardText is the payload a copy action writes for one PR.
@@ -81,11 +98,14 @@ func copiedLabel(builtin string, n int, kind string) string {
 }
 
 // selectedOrCursor returns the selected row indices (sorted), or the cursor row
-// when nothing is selected.
+// when nothing is selected. A fold stop is never a target.
 func (m *Model) selectedOrCursor() []int {
 	idx := m.sel.indices()
 	if len(idx) == 0 {
-		return []int{m.cursor}
+		idx = []int{m.cursor}
+	}
+	if ps, ok := m.section.(*PRSection); ok {
+		idx = slices.DeleteFunc(idx, ps.isFoldStop)
 	}
 	slices.Sort(idx)
 	return idx
@@ -141,6 +161,9 @@ func (m *Model) queueExit(key string, argv []string) {
 }
 
 func isWorktreeSwitch(argv []string) bool {
+	if len(argv) >= 4 && argv[0] == "wt" && argv[1] == "-C" {
+		return argv[3] == "switch"
+	}
 	return len(argv) >= 2 && argv[0] == "wt" && argv[1] == "switch"
 }
 
@@ -150,15 +173,16 @@ var preflightSwitchFn = gh.PreflightSwitch
 type switchItem struct {
 	argv   []string
 	branch string
+	dir    string
 }
 
 // switchPreflightCmd runs the (potentially slow) wt-list + git inspection for
 // each item in order off the Update goroutine, stopping at the first
 // collision. This is what keeps `enter`/`W` from freezing the TUI.
-func switchPreflightCmd(dir, key string, items []switchItem, exitsTUI bool) tea.Cmd {
+func switchPreflightCmd(key string, items []switchItem, exitsTUI bool) tea.Cmd {
 	return func() tea.Msg {
 		for i, it := range items {
-			r, err := preflightSwitchFn(dir, it.branch)
+			r, err := preflightSwitchFn(it.dir, it.branch)
 			if err != nil {
 				return switchPreflightMsg{notice: "Pre-flight could not inspect worktrunk or Git state:\n" + err.Error()}
 			}
@@ -213,10 +237,22 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	}
 
 	if a.ExitsTUI {
-		argv, err := a.ExpandArgv(m.withSwitchRef(v, m.cursor))
+		dir, err := m.checkoutDir(v.Repo)
+		if err != nil {
+			m.switchNotice = err.Error()
+			return nil
+		}
+		argv, err := a.ExpandArgv(m.withSwitchRef(v, m.cursor, dir))
 		if err != nil {
 			m.err = err
 			return nil
+		}
+		if dir != m.dir {
+			if !isWorktreeSwitch(argv) {
+				m.switchNotice = fmt.Sprintf("%s runs only on %s rows", a.Key, m.repo)
+				return nil
+			}
+			argv = otherRepoSwitchArgv(argv, dir)
 		}
 		if !isWorktreeSwitch(argv) {
 			m.queueExit(a.Key, argv)
@@ -224,7 +260,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		// Test doubles and callers constructing a model before selecting a repo do
 		// not have a working directory yet; preserve the existing handoff behavior.
-		if _, err := os.Stat(m.dir); err != nil {
+		if _, err := os.Stat(dir); err != nil {
 			m.queueExit(a.Key, argv)
 			return tea.Quit
 		}
@@ -232,7 +268,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			return nil // a preflight is already in flight; ignore the repeat keypress
 		}
 		m.switchChecking = true
-		return tea.Batch(switchPreflightCmd(m.dir, a.Key, []switchItem{{argv: argv, branch: v.Branch}}, true), m.startSpinner())
+		return tea.Batch(switchPreflightCmd(a.Key, []switchItem{{argv: argv, branch: v.Branch, dir: dir}}, true), m.startSpinner())
 	}
 
 	switch a.Command.Builtin {
@@ -260,12 +296,17 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		if !ok || m.section.Len() == 0 {
 			return nil // issue board, or an empty one: no PR branch to clean up
 		}
-		p, dir := ps.prAt(m.cursor), m.dir
+		p, cwd := ps.prAt(m.cursor), m.dir
+		gitDir, err := m.checkoutDir(p.Repo)
+		if err != nil {
+			m.switchNotice = err.Error()
+			return nil
+		}
 		m.actionStatus = statFor(a)
 		m.actionStatus.refs = []gh.PRRef{p.Ref()}
 		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return cleanupDone(dir, p, stat)
+			return cleanupDone(gitDir, cwd, p, stat)
 		}, m.startSpinner())
 	case "rerun-run":
 		return m.rerunRunCmd(a)
@@ -675,17 +716,34 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 	}
 	// The only non-native bulk actions are exits-TUI worktree fan-outs.
 	var items []switchItem
+	var unresolved []string
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
 		v := m.varsAt(i)
-		argv, err := a.ExpandArgv(m.withSwitchRef(v, i))
+		dir, err := m.checkoutDir(v.Repo)
+		if err != nil {
+			unresolved = append(unresolved, err.Error())
+			continue
+		}
+		argv, err := a.ExpandArgv(m.withSwitchRef(v, i, dir))
 		if err != nil {
 			m.err = err
 			continue
 		}
-		items = append(items, switchItem{argv: argv, branch: v.Branch})
+		if dir != m.dir {
+			if a.ExitsTUI && !isWorktreeSwitch(argv) {
+				m.switchNotice = fmt.Sprintf("%s runs only on %s rows. No actions were queued.", a.Key, m.repo)
+				return nil
+			}
+			argv = otherRepoSwitchArgv(argv, dir)
+		}
+		items = append(items, switchItem{argv: argv, branch: v.Branch, dir: dir})
+	}
+	if len(unresolved) > 0 {
+		m.switchNotice = "No switches were queued.\n" + strings.Join(unresolved, "\n")
+		return nil
 	}
 	if len(items) == 0 {
 		return nil
@@ -707,7 +765,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return nil
 	}
 	m.switchChecking = true
-	return tea.Batch(switchPreflightCmd(m.dir, a.Key, items, a.ExitsTUI), m.startSpinner())
+	return tea.Batch(switchPreflightCmd(a.Key, items, a.ExitsTUI), m.startSpinner())
 }
 
 func (m Model) resolvePRAction(a action.Action) action.Action {
@@ -869,10 +927,7 @@ func statForBulk(a action.Action, n int) *actionStat {
 // the same way runBulkNative is, since prAt indexes s.shown unguarded — and
 // walks each seed's stack via the package-level buildCascadePlan.
 func (m *Model) buildCascadePlan(ps *PRSection) *cascadePlan {
-	shown := make([]gh.PR, ps.Len())
-	for i := range shown {
-		shown[i] = ps.prAt(i)
-	}
+	shown := slices.Collect(ps.shownPRs())
 	var seeds []gh.PR
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= ps.Len() {

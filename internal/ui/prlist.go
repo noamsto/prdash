@@ -141,6 +141,8 @@ type Model struct {
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
 	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
+	repoFold          map[string]bool      // explicit per-repo fold state; an absent repo is folded iff not the launch repo
+	crossPRs          []gh.PR              // other repos' open PRs the default board groups below the launch repo's
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
@@ -149,6 +151,7 @@ type Model struct {
 	membersErr        error                  // last member-fetch failure; hints the picker/omni dropdown
 	viewerLogin       string                 // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string             // exits-TUI commands to run after quit when no orchestrator sink is set
+	reposRoot         string                 // parent of the sibling checkouts other-repo rows run git/wt in
 	switchNotice      string                 // read-only wt preflight failure; held until a keypress
 	switchChecking    bool                   // a switchPreflightCmd is in flight; blocks a second dispatch
 	themeMode         string                 // "light"|"dark"; active palette mode
@@ -184,6 +187,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		reviewRequested: map[gh.PRRef]bool{}, reviewedSet: map[gh.PRRef]bool{},
 		ciRerun: map[gh.PRRef]time.Time{},
 		held:    map[gh.PRRef]string{}, sessionMerged: map[gh.PRRef]time.Time{},
+		repoFold:    map[string]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:        2,
 		logCache:        map[string][]logStep{},
@@ -270,6 +274,9 @@ func (m *Model) stampRepo(prs []gh.PR) []gh.PR {
 }
 
 func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo = repo, repo }
+
+// SetReposRoot sets where other repos' local checkouts are looked up.
+func (m *Model) SetReposRoot(root string) { m.reposRoot = root }
 
 // ciRerunWindow is how long a PR keeps its optimistic checks-in-progress state
 // after an update-branch or rerun. Long enough for GitHub to queue the new runs,
@@ -448,7 +455,7 @@ func (m *Model) setPRs(prs []gh.PR) { m.paintPRs(prs, false) }
 func (m *Model) setIssues(is []gh.Issue) { m.paintIssues(is, false) }
 
 func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
-	m.paintSections(review, reviewed, open, viewer, false, false)
+	m.paintSections(review, reviewed, open, m.crossPRs, viewer, false, false)
 }
 
 func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer string) {
@@ -512,14 +519,17 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 // and carry the ◐ marker (see commentedByMe) instead of sinking into Others.
 // A held row keeps the category it had; replace as in paintPRs, except that a
 // launch replace still carries the rows merged this session: search already
-// omits them, and the cached rows being dropped predate this session.
-func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, replace, launch bool) {
+// omits them, and the cached rows being dropped predate this session. cross
+// rows are categorized like open ones; the section groups other repos' rows
+// below the launch repo's.
+func (m *Model) paintSections(review, reviewed, open, cross []gh.PR, viewer string, replace, launch bool) {
 	num, order := m.paintAnchor(true)
 	selNums, wasHeld := m.selectedRows()
 	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit
 	review = m.overlaySessionMerged(m.stampRepo(review))
 	reviewed = m.overlaySessionMerged(m.stampRepo(reviewed))
 	open = m.overlaySessionMerged(m.stampRepo(open))
+	cross = m.overlaySessionMerged(m.stampRepo(cross))
 	m.reviewRequested = make(map[gh.PRRef]bool, len(review))
 	m.reviewedSet = make(map[gh.PRRef]bool, len(reviewed))
 	cats := make(map[gh.PRRef]string, len(open)+len(review)+len(reviewed))
@@ -537,7 +547,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		cats[p.Ref()] = "Review requested"
 		all = append(all, p)
 	}
-	for _, p := range open {
+	for _, p := range slices.Concat(open, cross) {
 		if _, dup := cats[p.Ref()]; dup {
 			continue // already Review requested; precedence wins
 		}
@@ -569,6 +579,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		}
 		s.SetState(m.state)
 		s.SetByAuthor(m.byAuthor)
+		s.SetRepoGrouping(m.repo, viewer, m.repoFold)
 		s.SetCategorized(m.mergeHeldPRs(prev, prevCats, all, cats), cats, []string{"Review requested", "Mine", "Others"})
 	}
 	m.applyFilter()
@@ -725,16 +736,24 @@ func (m Model) groupRange() (lo, hi int) {
 	if !ok || !g.isGrouped() {
 		return 0, n - 1
 	}
-	return spanOf(n, m.cursor, g.groupLabelAt)
+	return spanOf(n, m.cursor, g.groupKeyAt)
 }
 
 // unitRange is the cursor's tightest selectable unit — its author cluster, or
-// (once #89 lands) its stack. Falls back to the whole shown set off a grouper.
+// its stack. Falls back to the whole shown set off a grouper, and on an
+// ungrouped board unless the cursor is on a stack: a flat board keeps each
+// stack contiguous, so the stack is still a unit there.
 func (m Model) unitRange() (lo, hi int) {
 	n := m.section.Len()
 	g, ok := m.section.(grouper)
-	if !ok || !g.isGrouped() {
+	if !ok {
 		return 0, n - 1
+	}
+	if !g.isGrouped() {
+		ps, isPR := m.section.(*PRSection)
+		if !isPR || n == 0 || ps.prAt(min(max(m.cursor, 0), n-1)).Stack == nil {
+			return 0, n - 1
+		}
 	}
 	return spanOf(n, m.cursor, g.unitLabelAt)
 }
@@ -1293,6 +1312,9 @@ func (m *Model) hydrateDetail() {
 		return
 	}
 	for i := 0; i < ps.Len(); i++ {
+		if ps.isFoldStop(i) {
+			continue
+		}
 		r := ps.refAt(i)
 		if _, ok := m.detail[r]; ok {
 			continue
@@ -2186,7 +2208,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.paintSections(msg.review, msg.reviewed, msg.open, m.viewerLogin, msg.replace, msg.launch)
+		m.paintSections(msg.review, msg.reviewed, msg.open, m.crossPRs, m.viewerLogin, msg.replace, msg.launch)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}

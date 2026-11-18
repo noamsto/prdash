@@ -49,6 +49,11 @@ func main() {
 
 	m := ui.NewModel(dir, "is:open", c)
 	m.SetRepo(repo)
+	root := os.Getenv("PRDASH_REPOS_ROOT")
+	if root == "" {
+		root = gh.DefaultReposRoot()
+	}
+	m.SetReposRoot(root)
 	if os.Getenv("PRDASH_FRAME") == "1" {
 		m.SetOuterFrame(true)
 	}

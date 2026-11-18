@@ -70,6 +70,9 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		}
 		return m.fetchIssueDetailCmd(v.Number)
 	case "pr":
+		if m.section.(*PRSection).isFoldStop(m.cursor) {
+			return nil
+		}
 		r := gh.PRRef{Repo: v.Repo, Number: v.Number}
 		if m.fresh[r] || m.cacheFresh(detailKey(r.Repo, r.Number)) {
 			return nil
@@ -168,7 +171,7 @@ func prefetchRefs(ps *PRSection, cursor int, fresh map[gh.PRRef]bool, window int
 			candidates = append(candidates, cursor-d)
 		}
 		for _, i := range candidates {
-			if i < 0 || i >= n {
+			if i < 0 || i >= n || ps.isFoldStop(i) {
 				continue
 			}
 			r := ps.refAt(i)

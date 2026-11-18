@@ -318,7 +318,7 @@ func (m *Model) startStackMerge(a action.Action) tea.Cmd {
 	board := make(map[int]stackBoardRow, ps.Len())
 	for i := range ps.Len() {
 		p := ps.prAt(i)
-		if p.Repo != t.Repo {
+		if ps.isFoldStop(i) || p.Repo != t.Repo {
 			continue
 		}
 		d, hasDetail := m.detail[p.Ref()]

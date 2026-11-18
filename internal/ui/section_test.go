@@ -522,7 +522,7 @@ func TestPRStackUnitLabelSelectsWholeChain(t *testing.T) {
 	s := NewPRSection("")
 	s.SetForceGroup(true)
 	s.SetPRs(prs)
-	if s.unitLabel(1) != "stack:900" {
+	if s.unitLabel(1) != "stack:#900" {
 		t.Fatalf("middle stack unit = %q, want stack identity", s.unitLabel(1))
 	}
 }

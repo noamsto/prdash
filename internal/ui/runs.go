@@ -103,6 +103,7 @@ func (s *RunSection) groupLabelAt(i int) string {
 	return "Recent"
 }
 
+func (s *RunSection) groupKeyAt(i int) string  { return s.groupLabelAt(i) }
 func (s *RunSection) unitLabelAt(i int) string { return s.groupLabelAt(i) }
 
 func (s *RunSection) SetShown(idx []int) {
