@@ -22,8 +22,7 @@ const detailFields = "comments(last:100){nodes{author{login __typename}body crea
 	"reviewRequests(first:100){nodes{requestedReviewer{__typename ... on User{login} ... on Bot{login} ... on Team{name}}}}" +
 	"files(first:100){nodes{path additions deletions}}" + threadsFields
 
-// FetchDetails fetches per-PR detail with one aliased GraphQL request per repo,
-// replacing the N `gh pr view` subprocesses the prefetch window used to spawn.
+// FetchDetails fetches per-PR detail with one aliased GraphQL request per repo.
 // It returns the mapped details plus, per ref, the JSON bytes to cache
 // (marshalled PRDetail, so the hydrate path round-trips). A failing repo leaves
 // the others' results in the maps and joins its error into err.

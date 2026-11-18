@@ -20,9 +20,7 @@ type CrossRepoPRSource interface {
 
 // DetailSource fetches per-PR detail for a set of PRs in one shot, returning
 // the mapped details plus the JSON bytes to cache per PR (which must round-trip
-// through the detail hydrate path). A batched backend collapses the prefetch
-// window's N `gh pr view` subprocesses into one request per repo. When a repo
-// fails, the maps still hold the repos that succeeded and err is non-nil.
+// through the detail hydrate path). When a repo fails, the maps still hold the repos that succeeded and err is non-nil.
 type DetailSource interface {
 	FetchDetails(refs []PRRef) (details map[PRRef]PRDetail, raw map[PRRef][]byte, err error)
 }
