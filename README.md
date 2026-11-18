@@ -52,6 +52,7 @@ go build -o prdash . && ./prdash
 | `R` | assign reviewers (PR only) |
 | `D` | toggle drafts (PR only) |
 | `g` | group the default board by author instead of Review requested / Mine / Others (PR only) |
+| `e` | fold / unfold the focused repo group (default PR board) |
 | `/` | fuzzy find · `space` select · `V` select cluster → category → all → none |
 | `a` | actions menu · `?` legend · `q` quit · `ctrl+c` quits from anywhere, prompts and overlays included |
 
@@ -103,6 +104,46 @@ preview shows beside the list, with the footer under it.
 Scroll the preview with `alt+j` / `alt+k`, or with the mouse wheel while the
 pointer is over the visible preview pane.
 
+## Repo groups
+
+The default PR board (state `open`, no typed qualifier) groups PRs by
+repository. The current repo's group comes first, expanded, with its Review
+requested / Mine / Others sections (or by author under `g`). Below it is one
+folded group per other repo where you have an open PR that `involves:@me`
+(author, reviewer, assignee, commenter, mentioned), newest activity first.
+
+A folded group is one line: `owner/repo  N · <stage counts>`. The stage glyphs:
+
+| Glyph | Bucket |
+|-------|--------|
+| `✗` | failing checks or changes requested |
+| the running-checks clock | checks running |
+| `●` | awaiting review |
+| `⧉` | blocked on its stack parent |
+| `◌` | draft |
+| `✓` | approved with no failing or running checks (merge state isn't known until you focus a PR) |
+| `•` | anything else |
+
+Counts come from the list rows alone. prdash fetches a PR's detail and checks
+only when you focus it or unfold its group.
+
+- `e` folds or unfolds the focused group; `enter` on a folded header unfolds it.
+  Other actions on a folded header do nothing. Folding drops that group's
+  selection.
+- `/` matches PRs inside folded groups, and reveals the group when you clear or
+  leave the filter on a match.
+- **Worktrees on another repo:** `enter`, `W` and `X` use the checkout at
+  `$PRDASH_REPOS_ROOT/<owner>/<repo>` (default `~/git`), only if its `origin` is
+  that repo. Otherwise prdash shows a notice with the path it tried and does
+  nothing.
+- **Scope:** the grouped view is the default open board only. The state cycle
+  `s` (merged, closed…) and typed qualifiers (`@login`, `is:`, `author:`…) show
+  the current repo only, as before. The Issues and Runs boards are current-repo
+  only.
+- **Search:** the cross-repo search is one GraphQL search per refresh, cached
+  and painted on launch like the main list. It takes the 100 most recently
+  updated matching PRs, so repos past that are not shown.
+
 ## Worktree handoff
 
 `enter` and `W` (bulk) open git worktrees, which must run in the parent shell so
@@ -114,6 +155,9 @@ the tmux window can switch. prdash supports two modes:
 - **Orchestrated** — when `PRDASH_ACTION_FILE` is set, prdash appends the chosen
   command to that file and quits; a wrapper (e.g. the lazytmux popup binding)
   reads and runs it. This is how the `prefix + p` popup integration works.
+
+On another repo's PR, `enter` and `W` run `wt -C <checkout> switch …` in that
+repo's local checkout (see [Repo groups](#repo-groups)).
 
 ## Opening URLs
 
