@@ -38,9 +38,10 @@ type sectionsFetchedMsg struct {
 	reviewRaw, reviewedRaw, openRaw []byte
 	cross                           []gh.PR // other repos' open PRs; meaningful only when crossOK
 	crossRaw                        []byte
-	crossOK                         bool // the cross search ran and succeeded; false keeps the painted cross rows
-	replace                         bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
-	launch                          bool // the startup reconcile; see launchFetchCmds
+	crossOK                         bool  // the cross search ran and succeeded; false keeps the painted cross rows
+	crossErr                        error // the cross search's failure, surfaced as a hint rather than a board error
+	replace                         bool  // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
+	launch                          bool  // the startup reconcile; see launchFetchCmds
 }
 
 // issueSectionsFetchedMsg carries the three halves of the issue sections view
@@ -213,6 +214,7 @@ type checksPollMsg struct{}
 // removed or reordered by a beat.
 type checksFetchedMsg struct {
 	checks map[gh.PRRef][]gh.Check
+	err    error // a failed repo's error when checks holds the others' rollups
 }
 
 // runsFetchedMsg carries one ListRuns result. poll marks an unrequested beat,

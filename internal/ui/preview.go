@@ -130,7 +130,8 @@ func (m Model) detailFreshTTL(ps *PRSection, r gh.PRRef) time.Duration {
 }
 
 // batchDetailCmd fetches detail for refs in a single request via the batched
-// source, emitting one detailsBatchMsg for the whole window.
+// source, emitting one detailsBatchMsg for the whole window. A partial result
+// (one repo failed) also emits detailFailedMsg for just the refs it lacks.
 func (m Model) batchDetailCmd(refs []gh.PRRef) tea.Cmd {
 	src := m.detailSource
 	if src == nil || len(refs) == 0 {
@@ -138,10 +139,23 @@ func (m Model) batchDetailCmd(refs []gh.PRRef) tea.Cmd {
 	}
 	return func() tea.Msg {
 		details, raws, err := src.FetchDetails(refs)
-		if err != nil {
-			return detailFailedMsg{err: err, refs: refs}
+		if err == nil {
+			return detailsBatchMsg{details: details, raws: raws}
 		}
-		return detailsBatchMsg{details: details, raws: raws}
+		var missing []gh.PRRef
+		for _, r := range refs {
+			if _, ok := details[r]; !ok {
+				missing = append(missing, r)
+			}
+		}
+		failed := detailFailedMsg{err: err, refs: missing}
+		if len(missing) == len(refs) {
+			return failed
+		}
+		return tea.BatchMsg{
+			func() tea.Msg { return detailsBatchMsg{details: details, raws: raws} },
+			func() tea.Msg { return failed },
+		}
 	}
 }
 

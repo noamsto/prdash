@@ -144,6 +144,7 @@ type Model struct {
 	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
 	repoFold          map[string]bool      // explicit per-repo fold state; an absent repo is folded iff not the launch repo
 	crossPRs          []gh.PR              // other repos' open PRs the default board groups below the launch repo's
+	crossErr          error                // last cross search failure; cleared by the next success
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
@@ -259,12 +260,14 @@ func (m *Model) SetRateSource(s gh.RateSource) { m.rateSource = s }
 func (m Model) launchRef(n int) gh.PRRef { return gh.PRRef{Repo: m.repo, Number: n} }
 
 // stampRepo fills the launch repo on rows that carry none (fixtures and rows
-// cached before PR.Repo existed). Copy-on-write, like applyCIRerun: fetched
-// slices may share the cache's backing array.
+// cached before PR.Repo existed), and rewrites a case-only mismatch to m.repo:
+// m.repo keeps the origin URL's casing while rows carry GitHub's
+// nameWithOwner. Copy-on-write, like applyCIRerun: fetched slices may share
+// the cache's backing array.
 func (m *Model) stampRepo(prs []gh.PR) []gh.PR {
 	var out []gh.PR
 	for i, p := range prs {
-		if p.Repo != "" {
+		if p.Repo == m.repo || (p.Repo != "" && !strings.EqualFold(p.Repo, m.repo)) {
 			continue
 		}
 		if out == nil {
@@ -530,7 +533,7 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 func (m *Model) paintSections(review, reviewed, open, cross []gh.PR, viewer string, replace, launch bool) {
 	num, order := m.paintAnchor(true)
 	selNums, wasHeld := m.selectedRows()
-	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit
+	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit || len(cross) >= crossRepoLimit
 	review = m.overlaySessionMerged(m.stampRepo(review))
 	reviewed = m.overlaySessionMerged(m.stampRepo(reviewed))
 	open = m.overlaySessionMerged(m.stampRepo(open))
@@ -875,12 +878,13 @@ func (m *Model) renderList() {
 	}
 	var b strings.Builder
 	line, prevGroup, prevRepo := 0, "", ""
+	prevStop := false
 	for i := range n {
 		headerLine := -1 // this row's group header line, when it opens a new group
 		stop := repoGrouped && ps.isFoldStop(i)
 		if repoGrouped {
 			if repo := ps.repoAt(i); repo != prevRepo {
-				if prevRepo != "" { // blank line between repo groups, not above the first
+				if prevRepo != "" && (!stop || !prevStop) { // blank line between repo groups, not above the first or between two stops
 					b.WriteString("\n")
 					line++
 				}
@@ -943,6 +947,7 @@ func (m *Model) renderList() {
 		b.WriteString(row)
 		b.WriteString("\n")
 		line += rowH
+		prevStop = stop
 	}
 	content := b.String()
 	if m.section.Len() == 0 {
@@ -985,8 +990,10 @@ func (m *Model) renderList() {
 // display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
 	rows := max(m.cursorRows, 1)
-	top := m.cursorTop // reveal the group header above the row, when it has one
 	bottom := m.cursorLine + rows - 1
+	// Reveal the group header above the row when it has one, but never at the
+	// cost of the row itself in a viewport too short for both.
+	top := max(m.cursorTop, bottom-m.vp.Height()+1)
 	off := m.vp.YOffset()
 	switch {
 	case top < off:
@@ -1550,7 +1557,7 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 			review: review.prs, reviewRaw: review.raw,
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
 			open: open.prs, openRaw: open.raw, replace: replace,
-			cross: cross.prs, crossRaw: cross.raw, crossOK: crossSrc != nil && cross.err == nil}
+			cross: cross.prs, crossRaw: cross.raw, crossOK: crossSrc != nil && cross.err == nil, crossErr: cross.err}
 	}
 }
 
@@ -1841,10 +1848,10 @@ func (m Model) pollChecksCmd() tea.Cmd {
 	src := m.checksSource
 	return func() tea.Msg {
 		checks, err := src.FetchChecks(refs)
-		if err != nil {
+		if err != nil && len(checks) == 0 {
 			return fetchFailedMsg{err: err}
 		}
-		return checksFetchedMsg{checks: checks}
+		return checksFetchedMsg{checks: checks, err: err}
 	}
 }
 
@@ -2254,7 +2261,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a server qualifier became active, or state changed: cache only
 		}
 		if msg.crossOK {
-			m.crossPRs = msg.cross
+			m.crossPRs, m.crossErr = msg.cross, nil
 		}
 		m.refreshing = false
 		m.err = nil
@@ -2265,6 +2272,10 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repaintActive()
 		cmds := []tea.Cmd{m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll()}
+		if msg.crossErr != nil {
+			m.crossErr = msg.crossErr
+			cmds = append(cmds, m.hint("Other repos: "+msg.crossErr.Error()))
+		}
 		if !msg.replace {
 			cmds = append(cmds, m.heldStatesCmd())
 		}
@@ -2368,9 +2379,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			slog.Debug("held-state lookup failed", "err", msg.err)
-		} else {
-			m.applyHeldStates(msg.states)
 		}
+		m.applyHeldStates(msg.states)
 		m.rowGen++
 		m.repaintActive()
 		return m, nil
@@ -2555,6 +2565,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive()
 		// No reschedule: the tick armed alongside this fetch is still in flight, and
 		// it retires the loop itself once nothing is pending.
+		if msg.err != nil {
+			return m, m.hint("Checks: " + msg.err.Error())
+		}
 		return m, nil
 	case themePollMsg:
 		// This is the only tick that runs for the whole session, so the header's

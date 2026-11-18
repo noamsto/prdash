@@ -446,7 +446,7 @@ func (m Model) logViewRender() string {
 		repo = m.repo
 	}
 	bw := m.expandedBoxWidth()
-	head := headerStyle.Render(fmt.Sprintf("  %s #%d", repo, n))
+	head := headerStyle.Render(expandedHeader(repo, n, bw))
 	head += m.statusBadge(bw - lipgloss.Width(head))
 	box := titledBox(m.vp.View(), bw, m.logBoxHeight(), m.logLabel)
 	parts := []string{head, box}

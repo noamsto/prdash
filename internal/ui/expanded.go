@@ -291,16 +291,12 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vp.ScrollUp(1)
 		return m, nil
 	case "J":
-		if m.cursor < m.section.Len()-1 {
-			m.cursor++
-		}
+		m.stepRealRow(1)
 		m.checkCursor = 0
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
 	case "K":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.stepRealRow(-1)
 		m.checkCursor = 0
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
@@ -503,7 +499,7 @@ func (m Model) expandedView() string {
 		blockW = l.RailW + expandedColGap + l.ContentW
 	}
 
-	head := headerStyle.Render(fmt.Sprintf("  %s #%d", repo, n))
+	head := headerStyle.Render(expandedHeader(repo, n, blockW))
 	if isPR {
 		if title := ps.prAt(m.cursor).Title; title != "" {
 			if avail := blockW - lipgloss.Width(head) - 4; avail > 12 { // truncate vs FULL block width, not ContentW
@@ -538,4 +534,23 @@ func (m Model) expandedView() string {
 		out = indentLines(out, (m.width-blockW)/2)
 	}
 	return out
+}
+
+// stepRealRow moves the cursor one row in dir, skipping fold stops; it stays
+// put when no real row lies that way.
+func (m *Model) stepRealRow(dir int) {
+	ps, _ := m.section.(*PRSection)
+	for i := m.cursor + dir; i >= 0 && i < m.section.Len(); i += dir {
+		if ps == nil || !ps.isFoldStop(i) {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+// expandedHeader is the "repo #N" line, shortening the repo from the left so
+// the PR number always survives within w cells.
+func expandedHeader(repo string, n, w int) string {
+	suffix := fmt.Sprintf(" #%d", n)
+	return "  " + truncateLeft(repo, max(0, w-2-lipgloss.Width(suffix))) + suffix
 }

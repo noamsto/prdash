@@ -70,10 +70,21 @@ func TestCheckoutFor(t *testing.T) {
 		if !errors.As(err, &ce) {
 			t.Fatalf("err = %v, want *CheckoutError", err)
 		}
-		if ce.Path != path || ce.Origin != "" || ce.Repo != "lab/proj" {
+		if ce.Path != path || ce.Origin != "" || ce.Repo != "lab/proj" || ce.Err != nil {
 			t.Fatalf("err = %+v", ce)
 		}
 	})
+}
+
+func TestCheckoutErrorCause(t *testing.T) {
+	cause := errors.New("git remote get-url origin timed out")
+	err := error(&CheckoutError{Repo: "a/b", Path: "/r/a/b", Err: cause})
+	if want := "cannot read origin of /r/a/b: git remote get-url origin timed out"; err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("errors.Is does not reach the cause")
+	}
 }
 
 func TestDefaultReposRoot(t *testing.T) {

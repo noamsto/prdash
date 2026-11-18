@@ -233,4 +233,24 @@ func TestOtherRepoWorktree(t *testing.T) {
 			t.Errorf("preflight ran: %+v", *calls)
 		}
 	})
+
+	t.Run("enter on a checkout of another repo shows path and origin and queues nothing", func(t *testing.T) {
+		m, handoff, calls := worktreeRepoModel(t, t.TempDir(), "OPEN")
+		p := t.TempDir()
+		checkoutForFn = func(_, repo string) (string, error) {
+			return "", &gh.CheckoutError{Repo: repo, Path: p, Origin: "someone/else"}
+		}
+		m, cmd := pressEnter(t, m, repoRowIndex(t, m, "other/x", 2))
+
+		if !strings.Contains(m.switchNotice, p) || !strings.Contains(m.switchNotice, "someone/else") {
+			t.Errorf("switchNotice = %q, want the path %s and someone/else", m.switchNotice, p)
+		}
+		notQuit(t, cmd)
+		if got := handoffLines(t, handoff); len(got) != 0 {
+			t.Errorf("handoff written: %v", got)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("preflight ran: %+v", *calls)
+		}
+	})
 }

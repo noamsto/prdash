@@ -51,7 +51,7 @@ var checkoutForFn = gh.CheckoutFor
 // launch directory for the launch repo, the sibling checkout under reposRoot
 // for any other.
 func (m Model) checkoutDir(repo string) (string, error) {
-	if repo == "" || repo == m.repo {
+	if repo == "" || strings.EqualFold(repo, m.repo) {
 		return m.dir, nil
 	}
 	return checkoutForFn(m.reposRoot, repo)
@@ -222,6 +222,9 @@ func switchNoticeBody(r gh.SwitchPreflight, branch string) string {
 // runAction executes a single-scope action against the cursor row. exits-tui
 // actions hand off (or queue) the command and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
+	if repo, stop := m.foldStop(); stop {
+		return m.hint("unfold " + repo + " with e first")
+	}
 	if m.cascade != nil && !a.ExitsTUI {
 		// A live cascade owns the mutation sequence; interleaving a second one
 		// would break the sequencing guarantee the whole feature exists for.
@@ -656,6 +659,9 @@ const bulkWarnThreshold = 4
 // targets a PR the viewer didn't author or fans out across a bulk selection, would
 // cascade up a stack, or when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
+	if repo, stop := m.foldStop(); stop {
+		return m.hint("unfold " + repo + " with e first")
+	}
 	if m.cascade != nil && !a.ExitsTUI {
 		return nil // a live cascade owns the mutation sequence
 	}
@@ -689,6 +695,9 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 		return false
 	}
 	targets := m.selectedOrCursor()
+	if len(targets) == 0 {
+		return false
+	}
 	if len(targets) > 1 {
 		return true
 	}

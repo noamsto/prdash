@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -183,6 +184,20 @@ func TestCrossFetchFailureKeepsBoard(t *testing.T) {
 	if got := boardLayout(m); !slices.Contains(got, "stop:c/d") || !slices.Contains(got, "stop:a/b") {
 		t.Errorf("layout after failed cross fetch = %v, want the c/d and a/b stops kept", got)
 	}
+	if m.crossErr == nil {
+		t.Error("m.crossErr = nil after a failed cross search")
+	}
+	if m.actionStatus == nil || !strings.Contains(m.actionStatus.fail, "Other repos: search down") {
+		t.Errorf("status = %+v, want an \"Other repos: search down\" hint", m.actionStatus)
+	}
+
+	fake.err = nil
+	fake.prs = cross
+	u, _ = m.Update(m.sectionsFetchCmd(true)())
+	m = u.(Model)
+	if m.crossErr != nil {
+		t.Errorf("m.crossErr = %v after a successful cross search, want nil", m.crossErr)
+	}
 }
 
 func TestNoCrossOnNonDefaultBoard(t *testing.T) {
@@ -195,5 +210,22 @@ func TestNoCrossOnNonDefaultBoard(t *testing.T) {
 	invokeCmdTree(t, m.sectionsFetchCmd(true))
 	if n := fake.callCount(); n != 0 {
 		t.Fatalf("cross search ran %d times on the merged board, want 0", n)
+	}
+}
+
+// A full cross page means a cross PR missing from the next fetch may only have
+// been pushed past the limit, so it must not be tagged "left filter".
+func TestFullCrossPageMarksHeldPageFull(t *testing.T) {
+	m := NewModel("/repo", "is:open", nil)
+	m.SetRepo(launchRepo)
+	m.width, m.height = 100, 40
+	review, open, _ := repoGroupFixture()
+	cross := make([]gh.PR, crossRepoLimit)
+	for i := range cross {
+		cross[i] = repoPR("a/b", i+1, "zed", "2026-01-01")
+	}
+	m.paintSections(review, nil, open, cross, "me", true, false)
+	if !m.heldPageFull {
+		t.Error("heldPageFull = false with a full cross page")
 	}
 }

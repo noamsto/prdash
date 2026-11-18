@@ -337,3 +337,16 @@ func TestUnitLabelIsRepoScoped(t *testing.T) {
 		t.Fatalf("V once on other/x#21 selected %v, want %v", got, want)
 	}
 }
+
+func TestOtherRepoRowsRenderNewestFirstWhenArrivingOldestFirst(t *testing.T) {
+	_, _, cross := repoGroupFixture()
+	slices.SortFunc(cross, func(a, b gh.PR) int { return a.UpdatedAt.Compare(b.UpdatedAt) })
+	m := repoGroupModel(t, cross)
+	m.repoFold["c/d"] = false
+	review, open, _ := repoGroupFixture()
+	m.paintSections(review, nil, open, cross, "me", true, false)
+	want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "c/d#09", "c/d#08", "stop:a/b"}
+	if got := boardLayout(m); !slices.Equal(got, want) {
+		t.Fatalf("layout = %v, want %v", got, want)
+	}
+}
