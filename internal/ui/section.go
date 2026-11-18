@@ -34,6 +34,7 @@ type RowOpts struct {
 	AuthorWidth  int       // fixed cell width for the author column; 0 = natural width (no padding)
 	CompactDiff  bool      // render ±N instead of +N -N
 	Initials     bool      // 2-char author initials instead of the login
+	TitlePrefix  string    // plain label rendered dim before the title, inside its budget (the short repo on a flattened other-repo row)
 	Now          time.Time // clock for live run elapsed times; zero shows age instead
 }
 
@@ -316,6 +317,10 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 		o.Tree = tree
 	}
 	o.StackMissing = s.stackMissing[p.Ref()]
+	if s.forceFlat && p.Repo != "" && p.Repo != s.launch {
+		_, short, _ := strings.Cut(p.Repo, "/")
+		o.TitlePrefix = short
+	}
 	// A terminal PR's cell-1 glyph reflects how it ended, not its frozen CI rollup:
 	// merged → mauve merge mark, closed → dim ✗. The age column likewise shows the
 	// event that ended it (merge/close time) rather than the last update.
@@ -1008,7 +1013,11 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	if tag != "" {
 		tags = dimStyle.Render(tag)
 	}
-	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
+	prefix := ""
+	if pw := lipgloss.Width(o.TitlePrefix) + 1; o.TitlePrefix != "" && titleRoom-pw >= 1 {
+		prefix, titleRoom = dimStyle.Render(o.TitlePrefix+" "), titleRoom-pw
+	}
+	titleTxt := prefix + titleSt.Render(truncate(title, titleRoom)) + tags
 
 	gap := max(w-leftW-lipgloss.Width(titleTxt)-rightW, 1)
 	line := left + titleTxt + strings.Repeat(" ", gap) + right

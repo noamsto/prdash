@@ -133,6 +133,7 @@ type Model struct {
 	pendingCascade    *cascadePlan         // plan awaiting the y/n prompt
 	cascadeReport     []string             // settled cascade's per-PR report; nil when none
 	stackSource       gh.StackSource       // stack-membership + merge-queue lookup backend
+	crossSource       gh.CrossRepoPRSource // other-repo open PRs for the default board; nil disables the cross-repo search
 	stackLoadSeq      int                  // bumped per stack-merge load; a stackPlanLoadedMsg from another load is dropped
 	stackLoad         *actionStat          // the in-flight stack load's badge; nil when no load is in flight
 	pendingStackMerge *stackMergePlan      // loaded stack plan awaiting the y/n prompt
@@ -214,6 +215,10 @@ func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 // SetStackSource installs the stack-membership backend the stack merge loads
 // its plan from.
 func (m *Model) SetStackSource(s gh.StackSource) { m.stackSource = s }
+
+// SetCrossRepoSource installs the backend for the default board's cross-repo
+// open-PR search.
+func (m *Model) SetCrossRepoSource(s gh.CrossRepoPRSource) { m.crossSource = s }
 
 // SetChecksSource installs the rollup-only backend the live-checks poll uses
 // instead of refetching the whole list.
@@ -862,22 +867,42 @@ func (m *Model) renderList() {
 	ps, isPR := m.section.(*PRSection)
 	g, isGrouper := m.section.(grouper)
 	grouped := isGrouper && g.isGrouped()
+	repoGrouped := isPR && ps.repoGrouped()
 	n := m.section.Len()
 	if len(m.rowText) != n { // shown set resized (or first paint): reset the cache
 		m.rowText = make([]string, n)
 		m.rowSig = make([]rowKey, n)
 	}
 	var b strings.Builder
-	line, prevGroup := 0, ""
+	line, prevGroup, prevRepo := 0, "", ""
 	for i := range n {
 		headerLine := -1 // this row's group header line, when it opens a new group
-		if grouped {
-			if lbl := g.groupLabelAt(i); lbl != prevGroup {
-				if prevGroup != "" { // blank line between groups, not above the first
+		stop := repoGrouped && ps.isFoldStop(i)
+		if repoGrouped {
+			if repo := ps.repoAt(i); repo != prevRepo {
+				if prevRepo != "" { // blank line between repo groups, not above the first
 					b.WriteString("\n")
 					line++
 				}
 				headerLine = line
+				prevRepo, prevGroup = repo, ""
+				if !stop { // a stop is its own header line
+					b.WriteString(renderRepoHeader(repo, ps.groupStages(repo), innerW, false) + "\n")
+					line++
+				}
+			}
+		}
+		if grouped {
+			// Under repo grouping only the launch group has sub-sections: other
+			// repos' rows and stops carry no label.
+			if lbl := g.groupLabelAt(i); lbl != prevGroup && (lbl != "" || !repoGrouped) {
+				if prevGroup != "" { // blank line between groups, not above the first
+					b.WriteString("\n")
+					line++
+				}
+				if headerLine < 0 {
+					headerLine = line
+				}
 				b.WriteString(groupHeader(lbl, innerW) + "\n")
 				line++
 				prevGroup = lbl
@@ -893,7 +918,10 @@ func (m *Model) renderList() {
 		held, tag := m.heldTag(i)
 		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.refAt(i))
 		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, authorW: authorW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, held: held, tag: tag, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
-		if m.rowSig[i] != key || m.rowText[i] == "" {
+		if stop { // uncached: its counts follow the group's rows, which the row key doesn't cover
+			m.rowText[i] = renderRepoHeader(ps.repoAt(i), ps.groupStages(ps.repoAt(i)), innerW, key.focused)
+			m.rowSig[i] = rowKey{}
+		} else if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
 				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Held: held, Tag: tag, Commented: commented,
 				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor, Now: m.clock(),
@@ -1287,6 +1315,9 @@ func (m *Model) hydrate() bool {
 		if !ok1 && !ok2 {
 			return false
 		}
+		if m.crossSource != nil {
+			m.crossPRs, _ = m.cachedPRs(crossRepoFilter, crossRepoLimit)
+		}
 		m.setSections(rev, revd, open, m.viewerLogin)
 		m.hydrateDetail()
 		return true
@@ -1470,6 +1501,10 @@ func (m Model) issueFetchCmd(filter string, replace bool) tea.Cmd {
 func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 	src := m.prSource
 	state := m.state
+	crossSrc := m.crossSource
+	if state != "open" {
+		crossSrc = nil
+	}
 	reviewF := searchFor("pr", state, reviewBody)
 	reviewedF := searchFor("pr", state, reviewedBody)
 	return func() tea.Msg {
@@ -1478,9 +1513,16 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 			raw []byte
 			err error
 		}
-		var review, reviewed, open half
+		var review, reviewed, open, cross half
 		var wg sync.WaitGroup
 		wg.Add(3)
+		if crossSrc != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cross.prs, cross.raw, cross.err = crossSrc.FetchCrossRepoPRs(crossRepoFilter, crossRepoLimit)
+			}()
+		}
 		go func() {
 			defer wg.Done()
 			review.prs, review.raw, review.err = src.FetchPRs(reviewF, defaultLimit)
@@ -1509,7 +1551,8 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 		return sectionsFetchedMsg{state: state,
 			review: review.prs, reviewRaw: review.raw,
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
-			open: open.prs, openRaw: open.raw, replace: replace}
+			open: open.prs, openRaw: open.raw, replace: replace,
+			cross: cross.prs, crossRaw: cross.raw, crossOK: crossSrc != nil && cross.err == nil}
 	}
 }
 
@@ -2041,11 +2084,15 @@ func (m Model) Init() tea.Cmd {
 // invalidateLaunchCache marks these same keys Stale at mutation dispatch, so
 // the gate can never trust a snapshot a mutation has since made questionable.
 func (m Model) launchGateKeys() []string {
-	return []string{
+	keys := []string{
 		prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit),
 		prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit),
 		prKey(m.repo, "is:open", openListLimit),
 	}
+	if m.crossSource != nil {
+		keys = append(keys, prKey(m.repo, crossRepoFilter, crossRepoLimit))
+	}
+	return keys
 }
 
 // issueLaunchGateKeys are launchGateKeys' issue-side counterpart. Kept
@@ -2201,9 +2248,15 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewedBody), defaultLimit), msg.reviewedRaw)
 			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
+			if msg.crossOK {
+				m.cache.Set(prKey(m.repo, crossRepoFilter, crossRepoLimit), msg.crossRaw)
+			}
 		}
 		if !m.sectionsDefault() || msg.state != m.state {
 			return m, nil // a server qualifier became active, or state changed: cache only
+		}
+		if msg.crossOK {
+			m.crossPRs = msg.cross
 		}
 		m.refreshing = false
 		m.err = nil
@@ -2795,6 +2848,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.filtering = false
 				m.filterInput.Blur() // keep the query applied so actions work on the filtered set
+				m.revealCursorRepo()
 				if m.omniServer != "" {
 					return m, m.switchToFilter() // reconcile in case the debounce never fired
 				}
@@ -2812,6 +2866,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// itself, so accepting a suggestion here would trap the user.
 				m.filtering = false
 				m.filterInput.Blur()
+				m.revealCursorRepo()
 				if m.omniServer != "" {
 					return m, m.switchToFilter() // committed a server query: reconcile now, in case the debounce never fired
 				}
@@ -2935,8 +2990,20 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "a":
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.showActions = true
 			return m, m.actionFilter.Focus()
+		case "e":
+			if m.mode != "pr" {
+				return m.prOnly("Folding", "e")
+			}
+			if ps, ok := m.section.(*PRSection); !ok || !ps.repoGrouped() {
+				return m.statusHint("Repo groups only fold on the default board")
+			}
+			m.toggleFold()
+			return m, nil
 		case "s":
 			if m.mode == "run" {
 				cmd := m.cycleRunState()
@@ -3006,6 +3073,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode != "pr" {
 				return m.prOnly("Assigning reviewers", "R")
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			if _, ok := m.cursorVars(); ok {
 				if ps, ok := m.section.(*PRSection); ok {
 					if err := m.mutable(ps.prAt(m.cursor)); err != nil {
@@ -3035,6 +3105,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.filterInput.SetValue("")
 			m.sel.clear()
+			anchor, order := m.cursorAnchor()
+			m.revealCursorRepo()
 			if m.mode == "pr" && m.omniServer != "" {
 				m.omniServer = ""
 				m.omniSuggestCursor = 0
@@ -3042,6 +3114,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchToFilter() // restore the sections default
 			}
 			m.applyFilter()
+			m.restoreCursor(anchor, order)
+			m.repaintActive()
 			if m.mode == "run" {
 				m.detailSeq++
 				return m, m.debounceDetailCmd()
@@ -3053,6 +3127,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == "run" {
 				return m.statusHint("Runs can't be multi-selected")
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.sel.toggle(m.cursor)
 			m.renderList()
 			return m, nil
@@ -3060,12 +3137,18 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == "run" {
 				return m.statusHint("Runs can't be multi-selected")
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.advanceSelection()
 			m.renderList()
 			return m, nil
 		case "p":
 			if m.mode != "pr" {
 				return m, nil // the fold is only read by the PR Overview timeline
+			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
 			}
 			m.previewExpanded = !m.previewExpanded
 			m.detailSeq++
@@ -3091,6 +3174,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checkCursor = 0
 				return m, nil
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.enterExpanded() // narrow: no pane, open full-screen tabs
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
@@ -3114,6 +3200,13 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
+				if repo, stop := m.foldStop(); stop {
+					if msg.String() == "enter" {
+						m.toggleFold()
+						return m, nil
+					}
+					return m.stopHint(repo)
+				}
 				if a.Scope == "per-selected" {
 					return m, m.startBulk(a)
 				}
@@ -3140,6 +3233,56 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // status instead of a silent no-op. An in-flight action keeps its badge.
 func (m Model) prOnly(label, key string) (tea.Model, tea.Cmd) {
 	return m.statusHint(fmt.Sprintf("%s is PR-only (%s)", label, key))
+}
+
+// foldStop reports whether the cursor sits on a folded group's header stop,
+// which has no PR behind it, and that group's repo.
+func (m *Model) foldStop() (repo string, ok bool) {
+	ps, isPR := m.section.(*PRSection)
+	if !isPR || m.mode != "pr" || !ps.isFoldStop(m.cursor) {
+		return "", false
+	}
+	return ps.repoAt(m.cursor), true
+}
+
+// stopHint is the answer to a row key pressed on a fold stop.
+func (m Model) stopHint(repo string) (tea.Model, tea.Cmd) {
+	return m.statusHint("unfold " + repo + " with e first")
+}
+
+// toggleFold folds or unfolds the cursor's repo group. Folding drops that
+// repo's selected rows (they leave the shown set); the cursor lands on the
+// group's stop when folding and on its first row when unfolding.
+func (m *Model) toggleFold() {
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.repoGrouped() || m.cursor < 0 || m.cursor >= ps.Len() {
+		return
+	}
+	repo := ps.repoAt(m.cursor)
+	fold := !ps.isFolded(repo)
+	m.repoFold[repo] = fold
+	refs, wasHeld := m.selectedRows()
+	refs = slices.DeleteFunc(refs, func(r gh.PRRef) bool { return r.Repo == repo })
+	m.applyFilter()
+	m.restoreSelection(refs, wasHeld)
+	if i, found := ps.stopIndex(repo); fold && found {
+		m.cursor = i
+	} else if i, found := ps.firstRowIndex(repo); !fold && found {
+		m.cursor = i
+	}
+	m.repaintActive() // the cursor and marks moved after applyFilter rendered
+}
+
+// revealCursorRepo unfolds the repo of the row under the cursor, so a board
+// that regroups after a filter keeps the matched row visible.
+func (m *Model) revealCursorRepo() {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.mode != "pr" || m.cursor < 0 || m.cursor >= ps.Len() || ps.isFoldStop(m.cursor) {
+		return
+	}
+	if repo := ps.repoAt(m.cursor); ps.isFolded(repo) {
+		m.repoFold[repo] = false
+	}
 }
 
 // statusHint shows msg as a transient status. An in-flight action keeps its badge.
@@ -3812,7 +3955,7 @@ func (m Model) keyPanes() []legendGroup {
 
 	nav := []keyHint{{"↑↓/jk", "move", nil}}
 	if m.mode == "pr" {
-		nav = append(nav, keyHint{"→/l", "expand", nil})
+		nav = append(nav, keyHint{"→/l", "expand", nil}, keyHint{"e", "fold repo group", nil})
 	}
 	nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
@@ -4296,3 +4439,10 @@ const defaultLimit = 20
 // openListLimit is the tail depth for the empty-default open list; the 3-section
 // partition needs more than the focused review/terminal boards' defaultLimit.
 const openListLimit = 100
+
+// crossRepoFilter and crossRepoLimit are the default board's one cross-repo
+// search; the fetch, cache write, hydrate and launch gate all key on them.
+const (
+	crossRepoFilter = "is:open involves:@me archived:false sort:updated-desc"
+	crossRepoLimit  = 100
+)

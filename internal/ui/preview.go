@@ -314,11 +314,30 @@ func (m Model) previewParts() (head, body string) {
 	if !ok {
 		return "", ""
 	}
+	if ps.isFoldStop(m.cursor) {
+		return m.groupSummary(ps, w)
+	}
 	head = identityHeader(ps.prAt(m.cursor), w-2) + "\n\n" + renderTabBar(expandedTabs, m.expandedTab, w)
 	if m.expandedTab == tabOverview {
 		return head, m.renderOverview(w)
 	}
 	return head, m.expandedBody(w)
+}
+
+// groupSummary is the preview of a fold stop: the group's repo and its stage
+// buckets, from rows already on the board.
+func (m Model) groupSummary(ps *PRSection, w int) (head, body string) {
+	repo := ps.repoAt(m.cursor)
+	counts := ps.groupStages(repo)
+	head = truncate(sectionLabelStyle.Render(repo)+dimStyle.Render(fmt.Sprintf("  %d", counts.total())), w-2)
+	var lines []string
+	for b := stageBucket(0); b < stageBucketCount; b++ {
+		if counts[b] > 0 {
+			lines = append(lines, fmt.Sprintf("%s %d %s", stageGlyph(b), counts[b], stageLabel(b)))
+		}
+	}
+	lines = append(lines, "", dimStyle.Render("e to unfold"))
+	return head, strings.Join(lines, "\n")
 }
 
 // previewPane is the whole side pane, head and body together — the measurement

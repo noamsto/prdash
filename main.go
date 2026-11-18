@@ -61,6 +61,7 @@ func main() {
 	m.SetPRSource(gs)
 	m.SetDetailSource(gs)
 	m.SetStackSource(gs)
+	m.SetCrossRepoSource(gs)
 	m.SetChecksSource(gs)
 	m.SetStateSource(gs)
 	m.SetIssueSource(gs)

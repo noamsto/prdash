@@ -36,6 +36,9 @@ type sectionsFetchedMsg struct {
 	state                           string // the PR state (open/merged/closed) this result is for
 	review, reviewed, open          []gh.PR
 	reviewRaw, reviewedRaw, openRaw []byte
+	cross                           []gh.PR // other repos' open PRs; meaningful only when crossOK
+	crossRaw                        []byte
+	crossOK                         bool // the cross search ran and succeeded; false keeps the painted cross rows
 	replace                         bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
 	launch                          bool // the startup reconcile; see launchFetchCmds
 }

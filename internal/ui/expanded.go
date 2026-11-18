@@ -491,9 +491,9 @@ func (m Model) expandedLegendGroups() []legendGroup {
 // active tab's content framed in a tabbed box — the same rounded chrome as the
 // board's titled boxes — with the keys hint beneath.
 func (m Model) expandedView() string {
-	n := 0
+	n, repo := 0, m.repo
 	if v, ok := m.cursorVars(); ok {
-		n = v.Number
+		n, repo = v.Number, v.Repo
 	}
 	ps, isPR := m.section.(*PRSection)
 	l := computeExpandedLayout(m.width, m.height, isPR)
@@ -503,7 +503,7 @@ func (m Model) expandedView() string {
 		blockW = l.RailW + expandedColGap + l.ContentW
 	}
 
-	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
+	head := headerStyle.Render(fmt.Sprintf("  %s #%d", repo, n))
 	if isPR {
 		if title := ps.prAt(m.cursor).Title; title != "" {
 			if avail := blockW - lipgloss.Width(head) - 4; avail > 12 { // truncate vs FULL block width, not ContentW
