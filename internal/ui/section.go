@@ -434,25 +434,33 @@ func (s *PRSection) setShownOrdered(idx []int) {
 		s.setShownRepoGroups(idx)
 		return
 	}
-	s.groupRepos, s.groupRows = s.groupRepos[:0], map[string][]int{}
-	shown, grouped := s.orderUnits(idx)
-	s.grouped = grouped
-	s.setShownStacks(shown)
+	s.groupRepos, s.groupRows = []string{}, map[string][]int{}
+	s.grouped = s.rendersHeaders(idx)
+	s.setShownStacks(s.orderUnits(idx))
 }
 
-// orderUnits lays out idx as one unpartitioned board and reports whether it
+// rendersHeaders reports whether idx, laid out as one unpartitioned board,
 // renders group headers.
-func (s *PRSection) orderUnits(idx []int) (shown []int, grouped bool) {
-	units := stackUnits(s.prs, idx)
+func (s *PRSection) rendersHeaders(idx []int) bool {
 	switch {
 	case s.forceFlat:
-		return flattenUnits(units), false
+		return false
 	case s.categorized():
-		return groupStackUnits(s.prs, units, s.cats, s.catOrder, s.state), true
-	case s.forceGroup || s.byAuthor || distinctAuthors(s.prs, idx) >= 2:
-		return groupStackUnits(s.prs, units, nil, nil, s.state), true
+		return true
 	}
-	return flattenUnits(units), false
+	return s.forceGroup || s.byAuthor || distinctAuthors(s.prs, idx) >= 2
+}
+
+// orderUnits lays out idx as one unpartitioned board.
+func (s *PRSection) orderUnits(idx []int) []int {
+	units := stackUnits(s.prs, idx)
+	switch {
+	case !s.rendersHeaders(idx):
+		return flattenUnits(units)
+	case s.categorized():
+		return groupStackUnits(s.prs, units, s.cats, s.catOrder, s.state)
+	}
+	return groupStackUnits(s.prs, units, nil, nil, s.state)
 }
 
 // setShownRepoGroups lays out the launch repo's group as orderUnits would the
@@ -474,7 +482,7 @@ func (s *PRSection) setShownRepoGroups(idx []int) {
 		}
 		return strings.Compare(a, b)
 	})
-	var shown []int
+	shown := make([]int, 0, len(idx))
 	for g, repo := range s.groupRepos {
 		rows := s.groupRows[repo]
 		switch {
@@ -482,8 +490,7 @@ func (s *PRSection) setShownRepoGroups(idx []int) {
 		case s.isFolded(repo):
 			shown = append(shown, -(g + 1))
 		case repo == s.launch:
-			launchShown, _ := s.orderUnits(rows)
-			shown = append(shown, launchShown...)
+			shown = append(shown, s.orderUnits(rows)...)
 		default:
 			units := stackUnits(s.prs, rows)
 			slices.SortStableFunc(units, func(a, b []int) int {

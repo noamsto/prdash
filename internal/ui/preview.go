@@ -345,9 +345,10 @@ func (m Model) groupSummary(ps *PRSection, w int) (head, body string) {
 	counts := ps.groupStages(repo)
 	head = truncate(sectionLabelStyle.Render(repo)+dimStyle.Render(fmt.Sprintf("  %d", counts.total())), w-2)
 	var lines []string
-	for b := range stageBucketCount {
-		if counts[b] > 0 {
-			lines = append(lines, fmt.Sprintf("%s %d %s", stageGlyph(b), counts[b], stageLabel(b)))
+	for i, n := range counts {
+		if n > 0 {
+			b := stageBucket(i)
+			lines = append(lines, fmt.Sprintf("%s %d %s", stageGlyph(b), n, stageLabel(b)))
 		}
 	}
 	lines = append(lines, "", dimStyle.Render("e to unfold"))

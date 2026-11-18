@@ -235,8 +235,8 @@ func TestLegendListsFoldKey(t *testing.T) {
 
 func TestGroupedBoardFitsWidths(t *testing.T) {
 	glyphs := make([]string, 0, int(stageBucketCount))
-	for b := range stageBucketCount {
-		glyphs = append(glyphs, ansi.Strip(stageGlyph(b)))
+	for i := range len(stageCounts{}) {
+		glyphs = append(glyphs, ansi.Strip(stageGlyph(stageBucket(i))))
 	}
 	for _, w := range []int{120, 80} {
 		for _, framed := range []bool{false, true} {

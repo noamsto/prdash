@@ -112,9 +112,9 @@ func renderRepoHeader(repo string, c stageCounts, width int, focused bool) strin
 		return ""
 	}
 	parts := make([]string, 0, stageBucketCount)
-	for b := range stageBucketCount {
-		if c[b] > 0 {
-			parts = append(parts, stageGlyph(b)+strconv.Itoa(c[b]))
+	for i, n := range c {
+		if n > 0 {
+			parts = append(parts, stageGlyph(stageBucket(i))+strconv.Itoa(n))
 		}
 	}
 	total := "  " + strconv.Itoa(c.total())
