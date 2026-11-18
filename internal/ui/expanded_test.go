@@ -200,7 +200,7 @@ func TestEnterExpandedKeepsTab(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}})
-	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.detail[m.launchRef(7)] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 
 	m.enterExpanded()
 	if !m.expanded {
@@ -217,7 +217,7 @@ func TestChecksTabCursorNavigates(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
 		{State: "FAILURE", Name: "lint"}, {State: "SUCCESS", Name: "build"},
 	}}})
-	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.detail[m.launchRef(7)] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	m.expandedTab = tabChecks
 	m.enterExpanded()
 	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'j', Text: "j"})
@@ -234,7 +234,7 @@ func TestRerunExternalCheckReportsNoJob(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 7, StatusCheckRollup: []gh.Check{
 		{State: "FAILURE", Context: "buildkite", DetailsUrl: "https://buildkite.com/x/42"},
 	}}})
-	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.detail[m.launchRef(7)] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	m.expandedTab = tabChecks
 	m.enterExpanded()
 	updated, _ := m.updateExpanded(tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -282,7 +282,7 @@ func TestExpandedViewShowsTabStrip(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	m.detail[7] = gh.PRDetail{}
+	m.detail[m.launchRef(7)] = gh.PRDetail{}
 	m.enterExpanded()
 	out := m.expandedView()
 	if !strings.Contains(out, "Conversation") || !strings.Contains(out, "Checks") {
@@ -313,7 +313,7 @@ func TestRenderOverviewShowsBlockerAndLatest(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	m.renderList()
 	out := ansi.Strip(m.renderOverview(60))
 	if !strings.Contains(out, latestGlyph+" Latest") {
@@ -331,7 +331,7 @@ func TestStackedPRTriageUsesImmediateVisibleParent(t *testing.T) {
 		{Number: 102, Title: "tip", Stack: stack, StackPosition: 3},
 	})
 	m.cursor = 2
-	m.detail[102] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(102)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 
 	card, ok := m.cursorCard()
 	if !ok || card.Headline != "Blocked on #101" {
@@ -359,7 +359,7 @@ func TestConversationOpensAtMostRecent(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 12 // short enough that the timeline overflows
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	m.detail[7] = gh.PRDetail{Comments: manyComments(40)}
+	m.detail[m.launchRef(7)] = gh.PRDetail{Comments: manyComments(40)}
 
 	m.expandedTab = tabConversation
 	m.enterExpanded()
@@ -375,13 +375,13 @@ func TestReflowKeepsScrollPosition(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.width, m.height = 120, 12
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	m.detail[7] = gh.PRDetail{Comments: manyComments(40)}
+	m.detail[m.launchRef(7)] = gh.PRDetail{Comments: manyComments(40)}
 	m.enterExpanded()
 
 	m.vp.ScrollUp(3) // reader scrolls back through the history
 	want := m.vp.YOffset()
 
-	updated, _ := m.Update(prDetailMsg{number: 7, detail: gh.PRDetail{Comments: manyComments(40)}})
+	updated, _ := m.Update(prDetailMsg{ref: m.launchRef(7), detail: gh.PRDetail{Comments: manyComments(40)}})
 	m = updated.(Model)
 	if got := m.vp.YOffset(); got != want {
 		t.Fatalf("refresh moved the scroll: got %d, want %d", got, want)
@@ -425,7 +425,7 @@ func TestExpandedTwoColStaysWithinBounds(t *testing.T) {
 	// (the zero-PRDetail path) goes unexercised.
 	ps, _ := m.section.(*PRSection)
 	n0 := ps.prAt(0).Number
-	m.detail[n0] = gh.PRDetail{
+	m.detail[m.launchRef(n0)] = gh.PRDetail{
 		ReviewRequests: []gh.ReviewRequest{{Login: "octocat"}},
 		Files:          []gh.DiffFile{{Path: "internal/ui/expanded.go", Additions: 40, Deletions: 5}},
 	}
@@ -453,7 +453,7 @@ func TestExpandedSurvivesResizeAcrossTwoColBoundary(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	m.SetRepo("owner/repo")
 	m.setPRs(sweepPRs())
-	m.detail[7] = gh.PRDetail{Files: []gh.DiffFile{{Path: "a.go", Additions: 1, Deletions: 1}}}
+	m.detail[m.launchRef(7)] = gh.PRDetail{Files: []gh.DiffFile{{Path: "a.go", Additions: 1, Deletions: 1}}}
 	m.loaded = true
 	u, _ := m.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
 	m = u.(Model)
@@ -500,7 +500,7 @@ func TestExpandedTwoColRailFrameStaysWithinBounds(t *testing.T) {
 		{Name: "priority-high", Color: "5319e7"}, {Name: "documentation", Color: "0075ca"},
 	}
 	m.setPRs([]gh.PR{pr})
-	m.detail[n0] = gh.PRDetail{ReviewRequests: reviewers, Files: []gh.DiffFile{{Path: "x.go", Additions: 9, Deletions: 9}}}
+	m.detail[m.launchRef(n0)] = gh.PRDetail{ReviewRequests: reviewers, Files: []gh.DiffFile{{Path: "x.go", Additions: 9, Deletions: 9}}}
 
 	// Short, wide terminals: two-col engages but RailH is small, so any wrap shows.
 	for _, sz := range [][2]int{{150, 12}, {144, 10}, {200, 14}, {160, 20}} {

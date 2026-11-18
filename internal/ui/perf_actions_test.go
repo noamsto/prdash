@@ -130,13 +130,13 @@ func TestMutatingActionRefetchesAndRevalidates(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 42}})
 	m.renderList()
 	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
-	m.fresh[42] = true
-	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
+	m.fresh[m.launchRef(42)] = true
+	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, refs: []gh.PRRef{m.launchRef(42)}}
 
 	u, cmd := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 
-	if m.fresh[42] {
+	if m.fresh[m.launchRef(42)] {
 		t.Fatal("successful mutating action should clear detail freshness for #42")
 	}
 	if !m.refreshing {
@@ -154,13 +154,13 @@ func TestFailedMutatingActionDoesNotRefetch(t *testing.T) {
 	m.width, m.height = 120, 30
 	m.setPRs([]gh.PR{{Number: 42}})
 	m.refreshing = false // NewModel starts true; clear so the assertion is meaningful
-	m.fresh[42] = true
-	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, nums: []int{42}}
+	m.fresh[m.launchRef(42)] = true
+	m.actionStatus = &actionStat{run: "Updating", ok: "Updated", fail: "Failed", refresh: true, refs: []gh.PRRef{m.launchRef(42)}}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{err: fmt.Errorf("boom")}))
 	m = u.(Model)
 
-	if !m.fresh[42] {
+	if !m.fresh[m.launchRef(42)] {
 		t.Fatal("failed action must not clear freshness")
 	}
 	if m.refreshing {
@@ -467,7 +467,7 @@ func TestDetailHydratesFromCacheOnLaunch(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
 	m.hydrateDetail()
 
-	if _, ok := m.detail[7]; !ok {
+	if _, ok := m.detail[m.launchRef(7)]; !ok {
 		t.Fatal("launch hydrate did not paint cached detail — preview would show Loading…")
 	}
 }
@@ -477,7 +477,7 @@ func TestCachedDetailStillTriggersRefetch(t *testing.T) {
 	m.SetRepo("noamsto/prdash")
 	m.SetDetailSource(stubSource{})
 	m.setPRs([]gh.PR{{Number: 7}})
-	m.detail[7] = gh.PRDetail{} // painted from disk cache, but not refreshed this session
+	m.detail[m.launchRef(7)] = gh.PRDetail{} // painted from disk cache, but not refreshed this session
 
 	if cmd := m.detailCmdForCursor(); cmd == nil {
 		t.Fatal("stale (non-fresh) cursor detail must still refetch to revalidate")

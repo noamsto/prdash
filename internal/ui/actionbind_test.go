@@ -99,7 +99,7 @@ func TestActionDoneSideEffectsUseOwnAction(t *testing.T) {
 		cmdA, _ := startOn(t, &m, 1, action.ReadyAction(true))
 		msgA := result(t, cmdA)
 		startOn(t, &m, 2, action.ReadyAction(false))
-		m.fresh[1], m.fresh[2] = true, true
+		m.fresh[m.launchRef(1)], m.fresh[m.launchRef(2)] = true, true
 
 		m, _ = deliver(t, m, msgA)
 
@@ -110,10 +110,10 @@ func TestActionDoneSideEffectsUseOwnAction(t *testing.T) {
 		if findPR(t, ps, 2).IsDraft {
 			t.Error("#2 became a draft, want B's rows untouched by A's result")
 		}
-		if m.fresh[1] {
+		if m.fresh[m.launchRef(1)] {
 			t.Error("#1 kept its freshness, want A's own rows invalidated")
 		}
-		if !m.fresh[2] {
+		if !m.fresh[m.launchRef(2)] {
 			t.Error("#2 lost its freshness, want B's rows left alone")
 		}
 	})
@@ -128,10 +128,10 @@ func TestActionDoneSideEffectsUseOwnAction(t *testing.T) {
 
 		m, _ = deliver(t, m, msgA)
 
-		if _, ok := m.ciRerun[1]; !ok {
+		if _, ok := m.ciRerun[m.launchRef(1)]; !ok {
 			t.Error("ciRerun[1] missing, want A's update-branch stamped")
 		}
-		if _, ok := m.ciRerun[2]; ok {
+		if _, ok := m.ciRerun[m.launchRef(2)]; ok {
 			t.Error("ciRerun[2] set, want B's rows left alone")
 		}
 	})
@@ -149,16 +149,16 @@ func TestActionDoneSupersededMergeFailureInvalidatesOwnNums(t *testing.T) {
 		t.Fatal("setup: A's merge should have failed")
 	}
 	startOn(t, &m, 2, merge)
-	m.fresh[1], m.fresh[2] = true, true
+	m.fresh[m.launchRef(1)], m.fresh[m.launchRef(2)] = true, true
 	fetched := len(fd.got)
 
 	m, cmd := deliver(t, m, msgA)
 	collectMsgs(t, cmd)
 
-	if m.fresh[1] {
+	if m.fresh[m.launchRef(1)] {
 		t.Error("#1 kept its freshness, want A's failed merge to invalidate it")
 	}
-	if !m.fresh[2] {
+	if !m.fresh[m.launchRef(2)] {
 		t.Error("#2 lost its freshness, want B's rows left alone")
 	}
 	if got := fd.got[fetched:]; len(got) != 1 || !slices.Equal(got[0], refsIn("owner/repo", 1)) {
@@ -217,7 +217,7 @@ func cascadeAtSettle(t *testing.T) (Model, actionDoneMsg) {
 		t.Fatalf("expected a stacked cascade prompt, got cmd=%v plan=%+v", cmd, m.pendingCascade)
 	}
 	m, done := driveCascadeToSettle(t, m, m.confirmAnswer(true))
-	if done.err == nil || !slices.Equal(done.partial, []int{1}) || done.stat != m.cascade.stat {
+	if done.err == nil || !slices.Equal(done.partial, []gh.PRRef{m.launchRef(1)}) || done.stat != m.cascade.stat {
 		t.Fatalf("setup: settle = %+v, want a failed run that landed #1, carrying its own stat", done)
 	}
 	return m, done
@@ -227,7 +227,7 @@ func TestCascadeSettleForeignStatusShown(t *testing.T) {
 	m, done := cascadeAtSettle(t)
 	foreign := &actionStat{run: "Copying", ok: "Copied", fail: "Copy failed"}
 	m.actionStatus = foreign
-	m.fresh[1] = true
+	m.fresh[m.launchRef(1)] = true
 
 	m, _ = deliver(t, m, done)
 
@@ -240,7 +240,7 @@ func TestCascadeSettleForeignStatusShown(t *testing.T) {
 	if !done.stat.settled {
 		t.Error("the cascade's own status is not settled")
 	}
-	if m.fresh[1] {
+	if m.fresh[m.launchRef(1)] {
 		t.Error("#1 kept its freshness, want the landed link invalidated")
 	}
 }
@@ -302,7 +302,7 @@ func TestStackMergeSettleFailedWhileStatusNil(t *testing.T) {
 	}
 	layers := []int{140, 141, 142}
 	for _, n := range layers {
-		m.fresh[n] = true
+		m.fresh[m.launchRef(n)] = true
 	}
 	m.actionStatus = Model{}.actionStatus
 	fetched := len(details.calls)
@@ -314,7 +314,7 @@ func TestStackMergeSettleFailedWhileStatusNil(t *testing.T) {
 		t.Error("m.stackMerge still set, want the settle to free the run")
 	}
 	for _, n := range layers {
-		if m.fresh[n] {
+		if m.fresh[m.launchRef(n)] {
 			t.Errorf("#%d kept its freshness, want the run's layers invalidated", n)
 		}
 	}
@@ -331,7 +331,7 @@ func TestActionDoneUncorrelatedLeavesStatusAlone(t *testing.T) {
 		pr1.IsDraft = true
 		m, _ := mutationModel(t, []gh.PR{pr1, mergeablePR(2, "alice")})
 		_, stat := startOn(t, &m, 1, action.ReadyAction(true))
-		m.fresh[1] = true
+		m.fresh[m.launchRef(1)] = true
 		return m, stat
 	}
 
@@ -343,7 +343,7 @@ func TestActionDoneUncorrelatedLeavesStatusAlone(t *testing.T) {
 		if m.actionStatus != stat || stat.settled || stat.err != nil || stat.fail == "other failure" {
 			t.Errorf("status = %+v, want it still running and untouched", stat)
 		}
-		if !findPR(t, m.section.(*PRSection), 1).IsDraft || !m.fresh[1] {
+		if !findPR(t, m.section.(*PRSection), 1).IsDraft || !m.fresh[m.launchRef(1)] {
 			t.Error("the running action's side effects ran for a message that is not its own")
 		}
 		if cmd != nil {
@@ -367,14 +367,14 @@ func TestActionDoneUncorrelatedLeavesStatusAlone(t *testing.T) {
 
 	t.Run("reconciles merged rows", func(t *testing.T) {
 		m, stat := running(t)
-		m.fresh[2] = true
+		m.fresh[m.launchRef(2)] = true
 
 		m, cmd := deliver(t, m, actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 2)}})
 
-		if _, ok := m.sessionMerged[2]; !ok {
+		if _, ok := m.sessionMerged[m.launchRef(2)]; !ok {
 			t.Error("#2 not marked session-merged")
 		}
-		if m.fresh[2] {
+		if m.fresh[m.launchRef(2)] {
 			t.Error("#2 kept its freshness, want the merged row invalidated")
 		}
 		if _, ok := listFetchMsg(t, cmd).(sectionsFetchedMsg); !ok {

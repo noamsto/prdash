@@ -14,7 +14,7 @@ import (
 )
 
 // RunSection is the Runs board: repo-wide workflow runs, live ones first.
-// It is deliberately not `numbered`: run IDs are int64, far past the int-keyed
+// Its rows have no Model.refAt: run IDs are int64, far past the PR-ref-keyed
 // held and selection maps, so the board anchors on run IDs itself.
 type RunSection struct {
 	filter, state string

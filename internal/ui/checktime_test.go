@@ -123,7 +123,7 @@ func TestOverviewChecksListsRunningWhenBlockerOwnsCard(t *testing.T) {
 		{State: "IN_PROGRESS", Name: "deploy", StartedAt: "2026-07-30T09:03:00Z"},
 	}}
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	out := ansi.Strip(m.renderOverview(60))
 	if !strings.Contains(out, "Blocked by branch protection") {
 		t.Fatalf("blocker card missing:\n%s", out)
@@ -173,7 +173,7 @@ func TestElapsedAdvancesOnTickWithoutRefetch(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 1, StatusCheckRollup: []gh.Check{
 		{State: "IN_PROGRESS", Name: "build", StartedAt: "2026-07-30T09:00:00Z"},
 	}}})
-	m.detail[1] = gh.PRDetail{}
+	m.detail[m.launchRef(1)] = gh.PRDetail{}
 	m.expandedTab = tabChecks
 	m.enterExpanded()
 	if !strings.Contains(ansi.Strip(m.expandedView()), "build · 4m") {
@@ -209,9 +209,9 @@ func TestFrozenRowsShowNoElapsed(t *testing.T) {
 			m.width, m.height = 120, 30
 			m.now = func() time.Time { return timingNow }
 			m.setPRs([]gh.PR{c.pr})
-			m.detail[1] = gh.PRDetail{MergeStateStatus: "UNSTABLE"}
+			m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "UNSTABLE"}
 			if c.held {
-				m.held[1] = "merged"
+				m.held[m.launchRef(1)] = "merged"
 			}
 			m.expandedTab = tabChecks
 			checks := ansi.Strip(m.expandedBody(60))

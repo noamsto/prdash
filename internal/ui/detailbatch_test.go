@@ -49,16 +49,16 @@ func TestBatchDetailCmdPopulatesDetail(t *testing.T) {
 	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{5: {MergeStateStatus: "CLEAN"}}}
 	m := batchModel(t, fd, []gh.PR{{Number: 5}})
 
-	cmd := m.batchDetailCmd([]int{5})
+	cmd := m.batchDetailCmd([]gh.PRRef{m.launchRef(5)})
 	if cmd == nil {
 		t.Fatal("batchDetailCmd should return a command for uncached PRs")
 	}
 	u, _ := m.Update(cmd())
 	got := u.(Model)
-	if got.detail[5].MergeStateStatus != "CLEAN" {
-		t.Errorf("detail[5] = %+v, want MergeStateStatus=CLEAN", got.detail[5])
+	if got.detail[got.launchRef(5)].MergeStateStatus != "CLEAN" {
+		t.Errorf("detail[5] = %+v, want MergeStateStatus=CLEAN", got.detail[got.launchRef(5)])
 	}
-	if !got.fresh[5] {
+	if !got.fresh[got.launchRef(5)] {
 		t.Error("PR 5 should be marked fresh after the batch lands")
 	}
 	if len(fd.got) != 1 || !slices.Equal(fd.got[0], refsIn("owner/repo", 5)) {
@@ -71,13 +71,13 @@ func TestBatchDetailCmdPopulatesDetail(t *testing.T) {
 func TestDetailWindowSkipsFresh(t *testing.T) {
 	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{}}
 	m := batchModel(t, fd, []gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
-	m.fresh[2] = true
+	m.fresh[m.launchRef(2)] = true
 
 	ps := m.section.(*PRSection)
 	got := m.detailWindow(ps)
 	// Shown order is number descending: 3, 2, 1. PR 2 is fresh, so it's skipped.
-	want := []int{3, 1}
-	if len(got) != len(want) || got[0] != 3 || got[1] != 1 {
+	want := []gh.PRRef{m.launchRef(3), m.launchRef(1)}
+	if !slices.Equal(got, want) {
 		t.Errorf("detailWindow = %v, want %v (PR 2 is fresh)", got, want)
 	}
 }

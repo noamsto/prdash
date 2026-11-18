@@ -61,17 +61,18 @@ func (p *cascadePlan) count() int {
 // buildCascadePlan walks each seed's stack upward from its own position,
 // stopping at the first position absent from shown or not OPEN. A walk
 // that reaches another seed absorbs it into the same chain rather than
-// starting a second one — dedupe by PR.Number across the whole plan.
+// starting a second one — dedupe by PR across the whole plan.
 func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss string)) *cascadePlan {
-	byStack := make(map[int]map[int]gh.PR)
+	byStack := make(map[string]map[int]gh.PR)
 	for _, pr := range shown {
-		if pr.Stack == nil {
+		k, ok := stackKey(pr)
+		if !ok {
 			continue
 		}
-		positions := byStack[pr.Stack.Number]
+		positions := byStack[k]
 		if positions == nil {
 			positions = make(map[int]gh.PR)
-			byStack[pr.Stack.Number] = positions
+			byStack[k] = positions
 		}
 		positions[pr.StackPosition] = pr
 	}
@@ -81,19 +82,19 @@ func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss st
 		return cascadeLink{pr: pr, mss: mss}
 	}
 
-	absorbed := make(map[int]bool)
+	absorbed := make(map[gh.PRRef]bool)
 	walkFrom := func(seed gh.PR) cascadeChain {
 		chain := cascadeChain{link(seed)}
-		absorbed[seed.Number] = true
-		if seed.Stack != nil {
-			positions := byStack[seed.Stack.Number]
+		absorbed[seed.Ref()] = true
+		if k, ok := stackKey(seed); ok {
+			positions := byStack[k]
 			for pos := seed.StackPosition + 1; ; pos++ {
 				next, ok := positions[pos]
 				if !ok || next.State != "OPEN" {
 					break
 				}
 				chain = append(chain, link(next))
-				absorbed[next.Number] = true
+				absorbed[next.Ref()] = true
 			}
 		}
 		return chain
@@ -106,15 +107,16 @@ func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss st
 	// lower one on the same stack must still land in the lower seed's chain,
 	// not start a redundant one of its own — dedupe cannot depend on the
 	// order seeds arrive in.
-	seenStack := make(map[int]bool)
+	seenStack := make(map[string]bool)
 	for _, seed := range seeds {
-		if seed.Stack == nil || seenStack[seed.Stack.Number] {
+		k, ok := stackKey(seed)
+		if !ok || seenStack[k] {
 			continue
 		}
-		seenStack[seed.Stack.Number] = true
+		seenStack[k] = true
 		lowest := seed
 		for _, other := range seeds {
-			if other.Stack != nil && other.Stack.Number == seed.Stack.Number && other.StackPosition < lowest.StackPosition {
+			if otherKey, _ := stackKey(other); otherKey == k && other.StackPosition < lowest.StackPosition {
 				lowest = other
 			}
 		}
@@ -126,7 +128,7 @@ func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss st
 	// in seed order, so non-stacked chains keep the relative order the final
 	// sort's stability depends on.
 	for _, seed := range seeds {
-		if absorbed[seed.Number] {
+		if absorbed[seed.Ref()] {
 			continue
 		}
 		chains = append(chains, walkFrom(seed))
@@ -161,37 +163,46 @@ func buildCascadePlan(shown, seeds []gh.PR, state func(gh.PR) (mergeable, mss st
 	// its seed, so everything above the lowest seed is in scope for this
 	// run, and anything in scope that no chain absorbed was attempted and
 	// missed, not merely out of range.
-	minSeed := make(map[int]int)
+	minSeed := make(map[string]int)
+	stackOf := make(map[string]gh.PR) // a seed per stack key, for the ordering below
 	for _, seed := range seeds {
-		if seed.Stack == nil {
+		k, ok := stackKey(seed)
+		if !ok {
 			continue
 		}
-		if cur, ok := minSeed[seed.Stack.Number]; !ok || seed.StackPosition < cur {
-			minSeed[seed.Stack.Number] = seed.StackPosition
+		if cur, ok := minSeed[k]; !ok || seed.StackPosition < cur {
+			minSeed[k] = seed.StackPosition
 		}
+		stackOf[k] = seed
 	}
-	stackNums := make([]int, 0, len(minSeed))
-	for n := range minSeed {
-		stackNums = append(stackNums, n)
+	stackKeys := make([]string, 0, len(minSeed))
+	for k := range minSeed {
+		stackKeys = append(stackKeys, k)
 	}
-	slices.Sort(stackNums)
+	slices.SortFunc(stackKeys, func(a, b string) int {
+		pa, pb := stackOf[a], stackOf[b]
+		if pa.Stack.Number != pb.Stack.Number {
+			return pa.Stack.Number - pb.Stack.Number
+		}
+		return strings.Compare(pa.Repo, pb.Repo)
+	})
 
 	// A link above the lowest seed that is OPEN and unabsorbed is what the run
 	// skipped; a MERGED or CLOSED link there is terminal, not skipped, and an
 	// absorbed one is already accounted for inside a chain.
 	var dropped []int
-	for _, num := range stackNums {
-		positions := byStack[num]
+	for _, k := range stackKeys {
+		positions := byStack[k]
 		posKeys := make([]int, 0, len(positions))
 		for pos := range positions {
-			if pos > minSeed[num] {
+			if pos > minSeed[k] {
 				posKeys = append(posKeys, pos)
 			}
 		}
 		slices.Sort(posKeys)
 		for _, pos := range posKeys {
 			pr := positions[pos]
-			if pr.State == "OPEN" && !absorbed[pr.Number] {
+			if pr.State == "OPEN" && !absorbed[pr.Ref()] {
 				dropped = append(dropped, pr.Number)
 			}
 		}
@@ -221,8 +232,8 @@ const (
 // successfully; a non-nil one is either that error, or the conflict or timeout
 // the wait before the link's own mutation resolved to.
 type cascadeOutcome struct {
-	number int
-	err    error
+	ref gh.PRRef
+	err error
 }
 
 // cascadeRun is the sequential driver: it advances by consuming one outcome —
@@ -272,7 +283,7 @@ func (r *cascadeRun) start() cascadeStep {
 func (r *cascadeRun) onUpdated(err error) cascadeStep {
 	chain := r.plan.chains[r.chain]
 	cur := chain[r.link]
-	r.done = append(r.done, cascadeOutcome{number: cur.pr.Number, err: err})
+	r.done = append(r.done, cascadeOutcome{ref: cur.pr.Ref(), err: err})
 
 	var step cascadeStep
 	switch {
@@ -351,7 +362,7 @@ func (r *cascadeRun) onProbed(mergeable, mss string, err error) cascadeStep {
 // chain.
 func (r *cascadeRun) failLink(err error) cascadeStep {
 	cur := r.plan.chains[r.chain][r.link]
-	r.done = append(r.done, cascadeOutcome{number: cur.pr.Number, err: err})
+	r.done = append(r.done, cascadeOutcome{ref: cur.pr.Ref(), err: err})
 	return r.setStep(r.nextChain())
 }
 
@@ -401,17 +412,17 @@ func (r *cascadeRun) badge() string {
 	return fmt.Sprintf("Stack update failed · %d/%d updated", len(r.updated()), total)
 }
 
-// updated returns the numbers of links whose mutation succeeded, feeding
+// updated returns the links whose mutation succeeded, feeding
 // actionStat.partial so a partial cascade's landed links get the same
 // refresh and CI-rerun treatment a full success would have given them.
-func (r *cascadeRun) updated() []int {
-	var nums []int
+func (r *cascadeRun) updated() []gh.PRRef {
+	var refs []gh.PRRef
 	for _, o := range r.done {
 		if o.err == nil {
-			nums = append(nums, o.number)
+			refs = append(refs, o.ref)
 		}
 	}
-	return nums
+	return refs
 }
 
 // report renders the overlay body: one line per non-empty group, in
@@ -427,14 +438,18 @@ func (r *cascadeRun) report() []string {
 
 	var lines []string
 
-	if nums := r.updated(); len(nums) > 0 {
+	if refs := r.updated(); len(refs) > 0 {
+		nums := make([]int, len(refs))
+		for i, ref := range refs {
+			nums[i] = ref.Number
+		}
 		lines = append(lines, "updated "+numList(nums))
 	}
 
 	var failures []string
 	for _, o := range r.done {
 		if o.err != nil {
-			failures = append(failures, fmt.Sprintf("#%d — %s", o.number, o.err))
+			failures = append(failures, fmt.Sprintf("#%d — %s", o.ref.Number, o.err))
 		}
 	}
 	if len(failures) > 0 {

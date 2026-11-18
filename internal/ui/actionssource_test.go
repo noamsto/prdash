@@ -13,6 +13,7 @@ import (
 // GitHub.
 type fakeActionsSource struct {
 	repos            []string // repo passed to each call, in order
+	branches         []string // branch passed to each ListRunsForBranch call
 	runs             []gh.WorkflowRun
 	rerunFailedCalls []int64
 	jobLogCalls      []struct {
@@ -22,8 +23,9 @@ type fakeActionsSource struct {
 	jobLogOut []byte
 }
 
-func (f *fakeActionsSource) ListRunsForBranch(repo, _ string) ([]gh.WorkflowRun, error) {
+func (f *fakeActionsSource) ListRunsForBranch(repo, branch string) ([]gh.WorkflowRun, error) {
 	f.repos = append(f.repos, repo)
+	f.branches = append(f.branches, branch)
 	return f.runs, nil
 }
 

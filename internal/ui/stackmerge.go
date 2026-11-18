@@ -99,6 +99,7 @@ func checkStackLayers(members []gh.StackMember, board map[int]stackBoardRow, fre
 // stackMergePlan is the snapshot a confirmed prompt promises: later refreshes
 // cannot change what it names or what is reported merged.
 type stackMergePlan struct {
+	repo       string // the stack's repo; target and layers are numbered within it
 	target     int
 	layers     []gh.PR // bottom to top, merged layers already dropped
 	mergeQueue bool
@@ -118,6 +119,14 @@ func (p *stackMergePlan) numbers() []int {
 		nums[i] = l.Number
 	}
 	return nums
+}
+
+func (p *stackMergePlan) refs() []gh.PRRef {
+	refs := make([]gh.PRRef, len(p.layers))
+	for i, l := range p.layers {
+		refs[i] = gh.PRRef{Repo: p.repo, Number: l.Number}
+	}
+	return refs
 }
 
 func (p *stackMergePlan) question() string {
@@ -154,11 +163,17 @@ func loadStackPlan(t gh.PRRef, board map[int]stackBoardRow, stacks gh.StackSourc
 		if err != nil {
 			return nil, fmt.Errorf("%s: fetch layer state: %w", stackMergeFailedText, err)
 		}
-		fresh = byNumber(got)
+		fresh = make(map[int]gh.PRDetail, len(got))
+		for r, d := range got {
+			fresh[r.Number] = d
+		}
 	}
 	layers, err := checkStackLayers(members, board, fresh)
 	if err != nil {
 		return nil, err
+	}
+	for i := range layers {
+		layers[i].Repo = t.Repo // an off-board layer is built from its member number alone
 	}
 
 	// Detection failure refuses rather than guessing: a direct merge onto a base
@@ -167,7 +182,7 @@ func loadStackPlan(t gh.PRRef, board map[int]stackBoardRow, stacks gh.StackSourc
 	if err != nil {
 		return nil, fmt.Errorf("%s: couldn't check the base branch's merge queue: %w", stackMergeFailedText, err)
 	}
-	return &stackMergePlan{target: t.Number, layers: layers, mergeQueue: queue}, nil
+	return &stackMergePlan{repo: t.Repo, target: t.Number, layers: layers, mergeQueue: queue}, nil
 }
 
 const (
@@ -299,17 +314,21 @@ func (m *Model) startStackMerge(a action.Action) tea.Cmd {
 		return m.hint("Stack merge unavailable")
 	}
 
+	// Stack members are numbered within one repo, so the board names only t's.
 	board := make(map[int]stackBoardRow, ps.Len())
 	for i := range ps.Len() {
 		p := ps.prAt(i)
-		d, hasDetail := m.detail[p.Number]
+		if p.Repo != t.Repo {
+			continue
+		}
+		d, hasDetail := m.detail[p.Ref()]
 		mergeable, mss := mergeState(p, d, hasDetail)
 		board[p.Number] = stackBoardRow{pr: p, mergeable: mergeable, mss: mss, mutableErr: m.mutable(p)}
 	}
 	m.stackLoadSeq++
 	m.stackLoad = &actionStat{run: "Loading stack"}
 	m.actionStatus = m.stackLoad
-	seq, keys, stacks, details, ref := m.stackLoadSeq, m.keyPresses, m.stackSource, m.detailSource, m.launchRef(t.Number)
+	seq, keys, stacks, details, ref := m.stackLoadSeq, m.keyPresses, m.stackSource, m.detailSource, t.Ref()
 	return tea.Batch(func() tea.Msg {
 		plan, err := loadStackPlan(ref, board, stacks, details)
 		return stackPlanLoadedMsg{seq: seq, keys: keys, a: a, plan: plan, err: err}
@@ -327,21 +346,21 @@ func (m *Model) settleStackLoad(load *actionStat, text string) tea.Cmd {
 }
 
 // runStackMerge submits a confirmed plan. The run owns its stat for the reason
-// cascadeRun.stat gives; nums and refresh cover every layer. The membership is
+// cascadeRun.stat gives; refs and refresh cover every layer. The membership is
 // re-read first: the prompt may have sat open while the stack changed, and the
 // server merges whatever is below target now, not what the prompt named.
 func (m *Model) runStackMerge(a action.Action, plan *stackMergePlan) tea.Cmd {
 	nums := plan.numbers()
 	stat := statForBulk(a, len(plan.layers))
 	stat.refresh = true
-	stat.nums = nums
+	stat.refs = plan.refs()
 	m.stackRunID++
 	m.stackMerge = &stackMergeRun{id: m.stackRunID, plan: plan, stat: stat}
 	m.actionStatus = stat
-	m.invalidateLaunchCache(nums...)
+	m.invalidateLaunchCache(stat.refs...)
 	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
 	id, src, stacks, target, queue := m.stackRunID, m.mutationSource, m.stackSource, plan.target, plan.mergeQueue
-	ref := m.launchRef(target)
+	ref := gh.PRRef{Repo: plan.repo, Number: target}
 	return tea.Batch(func() tea.Msg {
 		st, ok, err := stacks.FetchStackForPR(ref)
 		if err != nil {
@@ -377,7 +396,7 @@ func (m *Model) stackMergeDispatch(step stackMergeStep) tea.Cmd {
 // stackMergeProbeCmd fires the beat's single StackMergeStatus call.
 func (m *Model) stackMergeProbeCmd() tea.Cmd {
 	r := m.stackMerge
-	id, src, ref, uuid := r.id, m.mutationSource, m.launchRef(r.plan.target), r.uuid
+	id, src, ref, uuid := r.id, m.mutationSource, gh.PRRef{Repo: r.plan.repo, Number: r.plan.target}, r.uuid
 	return func() tea.Msg {
 		res, err := src.StackMergeStatus(ref, uuid)
 		return stackMergePolledMsg{id: id, res: res, err: err}

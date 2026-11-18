@@ -50,21 +50,21 @@ type issueSectionsFetchedMsg struct {
 	replace                           bool // requested (ctrl+r, filter/tab switch) vs. an unrequested background reconcile
 }
 
-// heldStatesMsg carries one batched by-number state lookup for the rows
+// heldStatesMsg carries one batched by-ref state lookup for the rows
 // currently held on the board. gen ties it to the held generation it was
 // issued under, so a lookup for an already-cleared hold (ctrl+r, filter
 // switch) in flight when the response lands is dropped.
 type heldStatesMsg struct {
 	gen    int
-	states map[int]gh.ItemState
+	states map[gh.PRRef]gh.ItemState
 	err    error
 }
 
 // detailsBatchMsg carries one batched detail fetch — the whole prefetch window
 // resolved in a single request (githubv4 aliased query).
 type detailsBatchMsg struct {
-	details map[int]gh.PRDetail
-	raws    map[int][]byte
+	details map[gh.PRRef]gh.PRDetail
+	raws    map[gh.PRRef][]byte
 }
 
 // fetchFailedMsg's mode discriminates which board a filter belongs to:
@@ -85,19 +85,23 @@ type fetchFailedMsg struct {
 // membersFailedMsg reports a failed assignable-users fetch. It is surfaced
 // inside the picker rather than through the board-level error, so a dead member
 // query never leaves the modal on "Loading…" with nothing to read or retry.
-type membersFailedMsg struct{ err error }
+type membersFailedMsg struct {
+	repo string
+	err  error
+}
 
 // detailFailedMsg reports a failed background detail fetch. It is deliberately
 // not a fetchFailedMsg: a detail failure is not a board failure, so it is kept
 // out of m.err and surfaced beside the detail it failed to load.
 type detailFailedMsg struct {
-	err     error
-	numbers []int
+	err  error
+	refs []gh.PRRef
 }
 
 // membersFetchedMsg carries the assignable-users list; raw is the marshaled
 // []User for the members cache (see hydrateMembers/membersKey).
 type membersFetchedMsg struct {
+	repo  string
 	users []gh.User
 	raw   []byte
 }
@@ -135,11 +139,11 @@ type actionDoneMsg struct {
 	stat       *actionStat
 	err        error
 	ok, fail   string
-	cascade    bool    // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
-	partial    []int   // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
-	merged     []gh.PR // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
-	stackMerge bool    // this settle is the stack merge's own, distinguishing it from any other action reachable mid-run
-	rerunCI    bool    // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
+	cascade    bool       // this settle is the cascade's own, distinguishing it from any other action reachable mid-run
+	partial    []gh.PRRef // PRs that succeeded even though the run as a whole failed; carried here so a foreign message replacing m.actionStatus between decision and delivery can't blank it (see cascadeSettleCmd)
+	merged     []gh.PR    // PRs whose merge call actually succeeded, snapshotted pre-merge; carried here for the same reason as partial
+	stackMerge bool       // this settle is the stack merge's own, distinguishing it from any other action reachable mid-run
+	rerunCI    bool       // this settle re-triggers CI on its partial numbers (e.g. the cascade's update-branch); carried here for the same reason as partial
 }
 
 // cascadeUpdatedMsg carries one link's UpdateBranch result back to the run.
@@ -149,11 +153,11 @@ type cascadeUpdatedMsg struct{ err error }
 type cascadeProbeMsg struct{}
 
 // cascadeProbedMsg carries one probe's mergeable/mss read for the link the run
-// is waiting on. ok reports whether number was present in the returned map, so
+// is waiting on. ok reports whether ref was present in the returned map, so
 // a probe that came back without an answer for it can be told apart from one
 // that came back with a real, if unresolved, state.
 type cascadeProbedMsg struct {
-	number int
+	ref    gh.PRRef
 	detail gh.PRDetail
 	raw    []byte
 	err    error
@@ -201,11 +205,11 @@ type delayedRefreshMsg struct{}
 // shown PR has a running check.
 type checksPollMsg struct{}
 
-// checksFetchedMsg carries one poll beat's rollups, keyed by PR number. It
+// checksFetchedMsg carries one poll beat's rollups, keyed by PR. It
 // replaces the rollup on rows the board already holds — no row is added,
 // removed or reordered by a beat.
 type checksFetchedMsg struct {
-	checks map[int][]gh.Check
+	checks map[gh.PRRef][]gh.Check
 }
 
 // runsFetchedMsg carries one ListRuns result. poll marks an unrequested beat,

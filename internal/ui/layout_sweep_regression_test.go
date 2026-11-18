@@ -213,8 +213,8 @@ func TestBoardFitsWidthAndSurvivesResize(t *testing.T) {
 	if got := m.section.Len(); got != len(sweepPRs()) {
 		t.Fatalf("board is empty: section Len() = %d, want %d (bounds checks would pass vacuously)", got, len(sweepPRs()))
 	}
-	m.detail[7] = gh.PRDetail{MergeStateStatus: "BEHIND"}
-	m.detail[4321] = gh.PRDetail{MergeStateStatus: "DIRTY"}
+	m.detail[m.launchRef(7)] = gh.PRDetail{MergeStateStatus: "BEHIND"}
+	m.detail[m.launchRef(4321)] = gh.PRDetail{MergeStateStatus: "DIRTY"}
 	m.loaded = true
 
 	sizes := [][2]int{{200, 40}, {160, 50}, {121, 30}, {120, 24}, {119, 45}, {90, 30}, {70, 40}, {200, 16}}

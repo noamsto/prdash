@@ -72,7 +72,7 @@ func TestFetchMembersCmdUsesNativeSource(t *testing.T) {
 	m := viewerSourceModel(t)
 	m.SetMembersSource(fs)
 
-	cmd := m.fetchMembersCmd()
+	cmd := m.fetchMembersCmd(m.repo)
 	if cmd == nil {
 		t.Fatal("fetchMembersCmd should return a command")
 	}

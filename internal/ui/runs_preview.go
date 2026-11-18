@@ -332,5 +332,5 @@ func (m *Model) openRunJobLog() tea.Cmd {
 	if job.Status != "completed" {
 		return m.hint("Job hasn't finished — GitHub serves logs only for finished jobs")
 	}
-	return m.openJobLog(strconv.FormatInt(job.ID, 10), job.Name, job.Conclusion != "failure")
+	return m.openJobLog(m.repo, strconv.FormatInt(job.ID, 10), job.Name, job.Conclusion != "failure")
 }

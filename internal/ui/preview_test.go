@@ -284,13 +284,26 @@ func TestSectionHeaderHasNoRuleAndNoUppercasing(t *testing.T) {
 	}
 }
 
+// prefetchNums is prefetchRefs over repo-less fixtures, in numbers.
+func prefetchNums(ps *PRSection, cursor int, fresh map[int]bool, window int) []int {
+	freshRefs := make(map[gh.PRRef]bool, len(fresh))
+	for n, ok := range fresh {
+		freshRefs[gh.PRRef{Number: n}] = ok
+	}
+	var out []int
+	for _, r := range prefetchRefs(ps, cursor, freshRefs, window) {
+		out = append(out, r.Number)
+	}
+	return out
+}
+
 func TestPrefetchNumbers(t *testing.T) {
 	ps := NewPRSection("is:open")
 	// Board order is number descending, so the fixture is given already sorted.
 	ps.SetPRs([]gh.PR{{Number: 5}, {Number: 4}, {Number: 3}, {Number: 2}, {Number: 1}})
 	fresh := map[int]bool{4: true} // #4 already refreshed this session
 
-	got := prefetchNumbers(ps, 0, fresh, 3)
+	got := prefetchNums(ps, 0, fresh, 3)
 	want := []int{5, 3, 2} // skips fresh #4, capped at window=3; cursor at top → only downward
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -302,7 +315,7 @@ func TestPrefetchNumbers(t *testing.T) {
 	}
 
 	all := map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true}
-	if n := prefetchNumbers(ps, 0, all, 3); n != nil {
+	if n := prefetchNums(ps, 0, all, 3); n != nil {
 		t.Fatalf("all fresh should yield nil, got %v", n)
 	}
 }
@@ -319,7 +332,7 @@ func TestPrefetchNumbersBidirectional(t *testing.T) {
 	}
 	ps.SetPRs(prs)
 
-	got := prefetchNumbers(ps, 4, nil, 5) // cursor on #5 (index 4)
+	got := prefetchNums(ps, 4, nil, 5) // cursor on #5 (index 4)
 	// distances: 0→#5, 1→below #4 then above #6, 2→below #3 then above #7
 	want := []int{5, 4, 6, 3, 7}
 	if len(got) != len(want) {
@@ -343,7 +356,7 @@ func TestPrefetchNumbersSkipsFreshAndFillsFarther(t *testing.T) {
 	ps.SetPRs(prs)
 	// Cursor #4 (index 3). Mark nearest neighbors fresh so the window reaches farther.
 	fresh := map[int]bool{4: true, 5: true, 3: true}
-	got := prefetchNumbers(ps, 3, fresh, 3)
+	got := prefetchNums(ps, 3, fresh, 3)
 	want := []int{2, 6, 1} // dist 2 below, 2 above, 3 below
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -360,8 +373,8 @@ func TestPrefetchNumbersAtEndGoesUp(t *testing.T) {
 	// Numbers 1..4 given ascending; reversed by the sort, so the last shown row
 	// (index 3) holds #1.
 	ps.SetPRs([]gh.PR{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4}})
-	got := prefetchNumbers(ps, 3, nil, 3) // cursor on last row (#1)
-	want := []int{1, 2, 3}                // only upward (toward higher numbers) after cursor
+	got := prefetchNums(ps, 3, nil, 3) // cursor on last row (#1)
+	want := []int{1, 2, 3}             // only upward (toward higher numbers) after cursor
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -417,7 +430,7 @@ func TestPreviewChecksSectionShownOnlyWhenBlockerMasksCI(t *testing.T) {
 		p := gh.PR{Number: 1, Title: "x", StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}}}
 		p.Author.Login = "a"
 		m.setPRs([]gh.PR{p})
-		m.detail[1] = d
+		m.detail[m.launchRef(1)] = d
 		m.renderList()
 		return ansi.ReplaceAllString(m.previewPane(), "")
 	}
@@ -467,7 +480,7 @@ func TestRenderMainWideLayoutFitsAndBordersBoth(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "hello"}
 	p.Author.Login = "al"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 	out := m.renderMain()
 	if n := strings.Count(out, "╭"); n < 2 {
@@ -487,7 +500,7 @@ func TestPreviewScrollClampsAndResets(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "x"}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 
 	// Only the body scrolls: the pinned head (identity + tab bar) and the blank
@@ -521,7 +534,7 @@ func TestPreviewHeadStaysPinned(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "x"}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 
 	head, body := m.previewParts()
@@ -549,7 +562,7 @@ func TestPreviewScrollNoOpWhenContentFits(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "x"}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 	m.previewScrollBy(1) // must not blank the preview by scrolling past the end
 	if m.previewOffset != 0 {
@@ -566,7 +579,7 @@ func mouseScrollablePreview(t *testing.T, previewMax bool) Model {
 	p := gh.PR{Number: 1, Title: "x", Body: strings.Repeat("A long preview body. ", 80)}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 	return m
 }
@@ -766,7 +779,7 @@ func TestPreviewPaneShowsTabBar(t *testing.T) {
 	p := gh.PR{Number: 1, Title: "x"}
 	p.Author.Login = "a"
 	m.setPRs([]gh.PR{p})
-	m.detail[1] = gh.PRDetail{MergeStateStatus: "CLEAN"}
+	m.detail[m.launchRef(1)] = gh.PRDetail{MergeStateStatus: "CLEAN"}
 	m.renderList()
 	out := m.previewPane()
 	for _, label := range []string{"Overview", "Diff", "Reviews"} {
@@ -839,9 +852,9 @@ func TestDetailKeyIsRepoScoped(t *testing.T) {
 func TestDetailMsgStoresReviewThreads(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	d := gh.PRDetail{ReviewThreads: []gh.ReviewThread{{Path: "main.go", Line: 10}}}
-	out, _ := m.Update(prDetailMsg{number: 7, detail: d})
+	out, _ := m.Update(prDetailMsg{ref: m.launchRef(7), detail: d})
 	got := out.(Model)
-	if len(got.detail[7].ReviewThreads) != 1 || !got.fresh[7] {
+	if len(got.detail[got.launchRef(7)].ReviewThreads) != 1 || !got.fresh[got.launchRef(7)] {
 		t.Error("review threads not stored with the detail / not marked fresh")
 	}
 }

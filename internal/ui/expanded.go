@@ -147,9 +147,10 @@ func (m Model) expandedBody(w int) string {
 		}
 		return ""
 	}
-	d, cached := m.detail[v.Number]
+	ref := gh.PRRef{Repo: v.Repo, Number: v.Number}
+	d, cached := m.detail[ref]
 	if !cached {
-		if err := m.detailErr[v.Number]; err != nil {
+		if err := m.detailErr[ref]; err != nil {
 			return failStyle.Render("  details failed: " + err.Error())
 		}
 		return dimStyle.Render("  Loading…")
@@ -360,9 +361,9 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 			err: fmt.Errorf("external check %q has no rerunnable job", c.Label())}
 		return m, clearStatusCmd(m.actionStatus)
 	}
-	native, repo := m.actionsSource, m.repo
+	native, repo := m.actionsSource, p.Repo
 	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
-		refresh: true, rerunCI: true, nums: []int{ps.prAt(m.cursor).Number}}
+		refresh: true, rerunCI: true, refs: []gh.PRRef{p.Ref()}}
 	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{stat: stat, err: action.RerunCheck(native, repo, job)}
@@ -381,9 +382,9 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 			return m, clearStatusCmd(m.actionStatus)
 		}
 	}
-	branch, native, repo := v.HeadRefName, m.actionsSource, m.repo
+	branch, native, repo := v.HeadRefName, m.actionsSource, v.Repo
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
-		refresh: true, rerunCI: true, nums: []int{v.Number}}
+		refresh: true, rerunCI: true, refs: []gh.PRRef{{Repo: v.Repo, Number: v.Number}}}
 	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
 		return actionDoneMsg{stat: stat, err: action.RerunFailed(native, repo, branch)}
@@ -516,7 +517,7 @@ func (m Model) expandedView() string {
 
 	var mid string
 	if l.TwoCol {
-		rail := m.renderExpandedRail(ps.prAt(m.cursor), m.detail[n], l)
+		rail := m.renderExpandedRail(ps.prAt(m.cursor), m.detail[ps.refAt(m.cursor)], l)
 		gap := lipgloss.NewStyle().Width(expandedColGap).Render("")
 		mid = lipgloss.JoinHorizontal(lipgloss.Top, rail, gap, contentBox)
 	} else {

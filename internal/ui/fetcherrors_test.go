@@ -98,7 +98,7 @@ func TestDetailPrefetchFailureNotBoardError(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 1, Title: "one"}})
 	m.SetDetailSource(failDetailSource{err: errors.New("detail boom")})
 
-	msg := m.batchDetailCmd([]int{1})()
+	msg := m.batchDetailCmd([]gh.PRRef{m.launchRef(1)})()
 	got, _ := m.Update(msg)
 	out := got.(Model)
 	if out.err != nil {
@@ -124,7 +124,7 @@ func TestExpandedBodyShowsDetailFailure(t *testing.T) {
 	m.expandedTab = tabReviews
 	m.SetDetailSource(failDetailSource{err: errors.New("detail boom")})
 
-	got, _ := m.Update(m.batchDetailCmd([]int{1})())
+	got, _ := m.Update(m.batchDetailCmd([]gh.PRRef{m.launchRef(1)})())
 	out := got.(Model)
 	body := out.expandedBody(80)
 	if strings.Contains(body, "Loading") {
@@ -144,7 +144,7 @@ func TestOmniDropdownShowsMembersFailureWhenPickerClosed(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
 
-	got, _ := m.Update(membersFailedMsg{err: errors.New("members boom")})
+	got, _ := m.Update(membersFailedMsg{repo: m.repo, err: errors.New("members boom")})
 	m = got.(Model)
 	if m.membersErr == nil {
 		t.Fatal("members failure should be recorded on the model")
@@ -170,9 +170,9 @@ func TestPickerKeepsValidMembersOnStaleError(t *testing.T) {
 	m.SetRepo("noamsto/prdash")
 	m.width, m.height = 100, 30
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	u, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	u, _ := m.Update(membersFetchedMsg{repo: m.repo, users: []gh.User{{Login: "alice"}}})
 	m = u.(Model)
-	u, _ = m.Update(membersFailedMsg{err: errors.New("members boom")})
+	u, _ = m.Update(membersFailedMsg{repo: m.repo, err: errors.New("members boom")})
 	m = u.(Model)
 
 	_ = m.openPicker("reviewer")
@@ -195,9 +195,9 @@ func TestPickerRetryableAfterStaleError(t *testing.T) {
 	m.SetRepo("noamsto/prdash")
 	m.width, m.height = 100, 30
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	u, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	u, _ := m.Update(membersFetchedMsg{repo: m.repo, users: []gh.User{{Login: "alice"}}})
 	m = u.(Model)
-	u, _ = m.Update(membersFailedMsg{err: errors.New("members boom")})
+	u, _ = m.Update(membersFailedMsg{repo: m.repo, err: errors.New("members boom")})
 	m = u.(Model)
 
 	if cmd := m.openPicker("reviewer"); cmd == nil {
@@ -212,9 +212,9 @@ func TestOmniDropdownKeepsValidMembersOnStaleError(t *testing.T) {
 	m.SetRepo("noamsto/prdash")
 	m.width, m.height = 100, 30
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	u, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	u, _ := m.Update(membersFetchedMsg{repo: m.repo, users: []gh.User{{Login: "alice"}}})
 	m = u.(Model)
-	u, _ = m.Update(membersFailedMsg{err: errors.New("members boom")})
+	u, _ = m.Update(membersFailedMsg{repo: m.repo, err: errors.New("members boom")})
 	m = u.(Model)
 	m.filtering = true
 	m.filterInput.Focus()

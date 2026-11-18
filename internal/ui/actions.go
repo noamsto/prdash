@@ -16,15 +16,23 @@ import (
 )
 
 // cursorVars returns the template vars for the row under the cursor, or
-// false if the cursor is out of range. Repo is injected from the model.
+// false if the cursor is out of range.
 func (m *Model) cursorVars() (action.Vars, bool) {
 	i := m.cursor
 	if i < 0 || i >= m.section.Len() {
 		return action.Vars{}, false
 	}
+	return m.varsAt(i), true
+}
+
+// varsAt is the section's VarsAt with the launch repo filled in for rows that
+// carry none (issue and run rows); a PR row keeps its own repo.
+func (m *Model) varsAt(i int) action.Vars {
 	v := m.section.VarsAt(i)
-	v.Repo = m.repo
-	return v, true
+	if v.Repo == "" {
+		v.Repo = m.repo
+	}
+	return v
 }
 
 // withSwitchRef resolves what `wt switch` can open for the PR row at i. It
@@ -83,24 +91,24 @@ func (m *Model) selectedOrCursor() []int {
 	return idx
 }
 
-// targetNumbers returns the PR/issue numbers of selectedOrCursor's rows,
-// sorted, so confirmAnswer can tell whether the target set changed while a
-// confirm prompt was open.
-func (m *Model) targetNumbers() []int {
-	n, ok := m.section.(numbered)
-	if !ok {
-		return nil
-	}
+// targetRefs returns the PRs/issues of selectedOrCursor's rows, sorted, so
+// confirmAnswer can tell whether the target set changed while a confirm prompt
+// was open.
+func (m *Model) targetRefs() []gh.PRRef {
 	l := m.section.Len()
-	var nums []int
+	var refs []gh.PRRef
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= l {
 			continue
 		}
-		nums = append(nums, n.numberAt(i))
+		r, ok := m.refAt(i)
+		if !ok {
+			return nil
+		}
+		refs = append(refs, r)
 	}
-	slices.Sort(nums)
-	return nums
+	slices.SortFunc(refs, compareRefs)
+	return refs
 }
 
 // copyPayload joins the clipboard text for every selected row (or the cursor),
@@ -111,9 +119,7 @@ func (m *Model) copyPayload(builtin string) string {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
-		v := m.section.VarsAt(i)
-		v.Repo = m.repo
-		if s := clipboardText(builtin, v); s != "" {
+		if s := clipboardText(builtin, m.varsAt(i)); s != "" {
 			lines = append(lines, s)
 		}
 	}
@@ -256,7 +262,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		p, dir := ps.prAt(m.cursor), m.dir
 		m.actionStatus = statFor(a)
-		m.actionStatus.nums = []int{p.Number}
+		m.actionStatus.refs = []gh.PRRef{p.Ref()}
 		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
 			return cleanupDone(dir, p, stat)
@@ -272,12 +278,13 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 				return clearStatusCmd(m.actionStatus)
 			}
 		}
-		branch, native, repo := v.HeadRefName, m.actionsSource, m.repo
+		branch, native, repo := v.HeadRefName, m.actionsSource, v.Repo
+		ref := gh.PRRef{Repo: v.Repo, Number: v.Number}
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
-		m.actionStatus.nums = []int{v.Number}
+		m.actionStatus.refs = []gh.PRRef{ref}
 		if a.Refresh {
-			m.invalidateLaunchCache(v.Number)
+			m.invalidateLaunchCache(ref)
 		}
 		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
@@ -319,10 +326,10 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 	}
 	m.actionStatus = statFor(a)
 	m.actionStatus.refresh = a.Refresh
-	m.actionStatus.nums = []int{p.Number}
+	m.actionStatus.refs = []gh.PRRef{p.Ref()}
 	merge := a.Command.Native == "merge-squash"
 	if a.Refresh {
-		m.invalidateLaunchCache(p.Number)
+		m.invalidateLaunchCache(p.Ref())
 	}
 	stat := m.actionStatus
 	return tea.Batch(func() tea.Msg {
@@ -370,9 +377,9 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 			err := fmt.Errorf("PR #%d is not open", p.Number)
 			return func() error { return err }, true
 		}
-		d, hasDetail := m.detail[p.Number]
+		d, hasDetail := m.detail[p.Ref()]
 		mergeable, mss := mergeState(p, d, hasDetail)
-		detailSrc, ref := m.detailSource, m.launchRef(p.Number)
+		detailSrc, ref := m.detailSource, p.Ref()
 		return func() error {
 			if mergeUnresolved(mergeable) && detailSrc != nil {
 				if details, _, err := detailSrc.FetchDetails([]gh.PRRef{ref}); err == nil {
@@ -465,7 +472,7 @@ func (m *Model) mergePreCheck(p gh.PR) error {
 	if p.State != "OPEN" {
 		return fmt.Errorf("PR #%d is not open", p.Number)
 	}
-	d, hasDetail := m.detail[p.Number]
+	d, hasDetail := m.detail[p.Ref()]
 	mergeable, mss := mergeState(p, d, hasDetail)
 	if mergeConflicted(mergeable, mss) {
 		return fmt.Errorf("PR #%d has conflicts", p.Number)
@@ -481,11 +488,11 @@ type actionStat struct {
 	fail    string // shown on failure
 	settled bool
 	err     error
-	refresh bool   // true when the action mutated the PR(s) → refetch on success
-	rerunCI bool   // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
-	nums    []int  // PR numbers the action touched, for detail-freshness invalidation
-	native  string // a.Command.Native — drives optimistic row patches on success
-	partial []int  // PRs that succeeded even though the run as a whole failed
+	refresh bool       // true when the action mutated the PR(s) → refetch on success
+	rerunCI bool       // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
+	refs    []gh.PRRef // PRs the action touched, for detail-freshness invalidation
+	native  string     // a.Command.Native — drives optimistic row patches on success
+	partial []gh.PRRef // PRs that succeeded even though the run as a whole failed
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -543,15 +550,15 @@ func reviewerDiff(current []string, picked map[string]bool) (add, remove []strin
 // prID is guarded the same way as nativeMutationFn's p.ID: a stale gh-CLI-era
 // cache entry can carry an empty node id, which would otherwise reach
 // RequestReviews and surface as a confusing raw GraphQL error.
-func (m Model) assignReviewersCmd(number int, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
+func (m Model) assignReviewersCmd(ref gh.PRRef, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
 	if prID == "" {
-		err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", number)
+		err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", ref.Number)
 		return func() tea.Msg { return fetchFailedMsg{err: err} }
 	}
-	delete(m.fresh, number) // reviewer set changed → summary must revalidate
+	delete(m.fresh, ref) // reviewer set changed → summary must revalidate
 	fetch := m.listFetchCmd(false)
 	src := m.mutationSource
 	var logins []string
@@ -587,11 +594,11 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 		return m.runCascade(*a, p)
 	}
 	if a.Scope == "per-selected" {
-		if !slices.Equal(m.targetNumbers(), targets) {
+		if !slices.Equal(m.targetRefs(), targets) {
 			// A refetch held rows out from under the prompt or emptied the
 			// selection — firing on whatever selectedOrCursor falls back to now
 			// would mutate PRs the user never confirmed. (A reorder alone passes:
-			// targetNumbers sorts.)
+			// targetRefs sorts.)
 			m.actionStatus = &actionStat{fail: "selection changed — press again", err: errors.New("selection changed"), settled: true}
 			return clearStatusCmd(m.actionStatus)
 		}
@@ -626,7 +633,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
 	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
 		m.pending = &a
-		m.pendingTargets = m.targetNumbers()
+		m.pendingTargets = m.targetRefs()
 		m.pendingStackMerge = nil
 		return nil
 	}
@@ -672,8 +679,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
-		v := m.section.VarsAt(i)
-		v.Repo = m.repo
+		v := m.varsAt(i)
 		argv, err := a.ExpandArgv(m.withSwitchRef(v, i))
 		if err != nil {
 			m.err = err
@@ -728,9 +734,9 @@ func (m Model) resolvePRAction(a action.Action) action.Action {
 // skipped when the active board isn't the PR section.
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
-	var callNums []int // parallel to calls; 0 for open-web/open-issue entries
-	var nums []int
-	merging := map[int]gh.PR{}
+	var callRefs []gh.PRRef // parallel to calls; the zero ref for open-web/open-issue entries
+	var refs []gh.PRRef
+	merging := map[gh.PRRef]gh.PR{}
 	var noTicket int
 	var openerErr string
 	for _, i := range m.selectedOrCursor() {
@@ -740,7 +746,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		if a.Command.Native == "open-web" {
 			url := m.section.VarsAt(i).URL
 			calls = append(calls, func() error { return openURL(url) })
-			callNums = append(callNums, 0)
+			callRefs = append(callRefs, gh.PRRef{})
 			continue
 		}
 		if a.Command.Native == "open-issue" {
@@ -759,7 +765,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				continue
 			}
 			calls = append(calls, func() error { return openLinkedIssue(argv) })
-			callNums = append(callNums, 0)
+			callRefs = append(callRefs, gh.PRRef{})
 			continue
 		}
 		ps, ok := m.section.(*PRSection)
@@ -772,12 +778,12 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			continue
 		}
 		calls = append(calls, fn)
-		callNums = append(callNums, p.Number)
-		nums = append(nums, p.Number)
+		callRefs = append(callRefs, p.Ref())
+		refs = append(refs, p.Ref())
 		if a.Command.Native == "merge-squash" {
 			// Snapshot now: once the merge lands, the refetch drops the PR from the
 			// open list and there is nothing left to keep showing.
-			merging[p.Number] = p
+			merging[p.Ref()] = p
 		}
 	}
 	if len(calls) == 0 {
@@ -794,9 +800,9 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		m.actionStatus = statForBulk(a, n)
 	}
 	m.actionStatus.refresh = a.Refresh
-	m.actionStatus.nums = nums
+	m.actionStatus.refs = refs
 	if a.Refresh {
-		m.invalidateLaunchCache(nums...)
+		m.invalidateLaunchCache(refs...)
 	}
 	m.clearSelection() // the batch op consumes the selection
 	// The actionDoneMsg arm assigns err unconditionally, so a spawn that works
@@ -810,7 +816,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	return tea.Batch(func() tea.Msg {
 		var failed int
 		var lastErr error
-		var landed []int
+		var landed []gh.PRRef
 		var mergedOK []gh.PR
 		for idx, fn := range calls {
 			if err := fn(); err != nil {
@@ -818,11 +824,11 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				lastErr = err
 				continue
 			}
-			if callNums[idx] == 0 {
+			if callRefs[idx] == (gh.PRRef{}) {
 				continue
 			}
-			landed = append(landed, callNums[idx])
-			if p, ok := merging[callNums[idx]]; ok {
+			landed = append(landed, callRefs[idx])
+			if p, ok := merging[callRefs[idx]]; ok {
 				mergedOK = append(mergedOK, p)
 			}
 		}
@@ -875,7 +881,7 @@ func (m *Model) buildCascadePlan(ps *PRSection) *cascadePlan {
 		seeds = append(seeds, ps.prAt(i))
 	}
 	state := func(p gh.PR) (mergeable, mss string) {
-		d, hasDetail := m.detail[p.Number]
+		d, hasDetail := m.detail[p.Ref()]
 		return mergeState(p, d, hasDetail)
 	}
 	return buildCascadePlan(shown, seeds, state)
@@ -889,18 +895,18 @@ func (m *Model) runCascade(a action.Action, p *cascadePlan) tea.Cmd {
 	if p == nil {
 		return nil
 	}
-	nums := make([]int, 0, p.count())
+	refs := make([]gh.PRRef, 0, p.count())
 	for _, c := range p.chains {
 		for _, l := range c {
-			nums = append(nums, l.pr.Number)
+			refs = append(refs, l.pr.Ref())
 		}
 	}
 	stat := statForBulk(a, p.count())
 	stat.refresh = a.Refresh
-	stat.nums = nums
+	stat.refs = refs
 	m.cascade = &cascadeRun{plan: p, stat: stat, skipped: p.dropped} // plan.dropped seeds skipped — cascadeRun.failed() depends on it
 	m.actionStatus = stat
-	m.invalidateLaunchCache(nums...)
+	m.invalidateLaunchCache(refs...)
 	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
 	return tea.Batch(m.cascadeMutateCmd(), m.startSpinner())
 }

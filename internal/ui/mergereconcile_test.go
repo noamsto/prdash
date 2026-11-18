@@ -48,18 +48,18 @@ func TestMergeResultUnderAnotherActionsStatusReconciles(t *testing.T) {
 	m.cursor = shownIndex(m, 11)
 	done := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
 
-	m.held[9] = ""
+	m.held[m.launchRef(9)] = ""
 	m.cursor = shownIndex(m, 9)
 	m.runAction(action.DefaultPRActions()["r"]) // refused: #9 is held
 	if m.actionStatus == nil {
 		t.Fatal("test setup: want the refused rerun's status showing when the merge lands")
 	}
-	m.fresh[11] = true
+	m.fresh[m.launchRef(11)] = true
 
 	u, cmd := m.Update(done)
 	m = u.(Model)
 
-	if m.fresh[11] {
+	if m.fresh[m.launchRef(11)] {
 		t.Error("merged #11 kept its detail freshness, want it invalidated")
 	}
 	if got := countListFetches(cmd); got != 1 {
@@ -80,12 +80,12 @@ func TestMergeResultWithOwnStatusRefetchesOnce(t *testing.T) {
 	if m.actionStatus == nil || !m.actionStatus.refresh {
 		t.Fatalf("test setup: status = %+v, want the merge's own status with refresh", m.actionStatus)
 	}
-	m.fresh[11] = true
+	m.fresh[m.launchRef(11)] = true
 
 	u, cmd := m.Update(done)
 	m = u.(Model)
 
-	if m.fresh[11] {
+	if m.fresh[m.launchRef(11)] {
 		t.Error("merged #11 kept its detail freshness, want it invalidated")
 	}
 	if got := countListFetches(cmd); got != 1 {

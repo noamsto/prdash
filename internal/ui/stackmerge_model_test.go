@@ -160,7 +160,7 @@ func TestStackMergeConfirmMergesEveryLayer(t *testing.T) {
 
 	m, _ = update(m, done)
 	for _, n := range []int{140, 141, 142} {
-		if _, ok := m.sessionMerged[n]; !ok {
+		if _, ok := m.sessionMerged[m.launchRef(n)]; !ok {
 			t.Errorf("PR #%d not marked session-merged", n)
 		}
 	}

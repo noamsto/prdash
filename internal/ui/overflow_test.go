@@ -51,7 +51,7 @@ func TestExpandedViewNeverExceedsHeight(t *testing.T) {
 		w, h := sz[0], sz[1]
 		m := NewModel(".", "is:open author:@me", nil)
 		m.setPRs([]gh.PR{{Number: 1, Title: "a pr"}})
-		m.detail[1] = gh.PRDetail{Comments: []gh.Comment{{Body: longBody}}}
+		m.detail[m.launchRef(1)] = gh.PRDetail{Comments: []gh.Comment{{Body: longBody}}}
 		m.loaded = true
 		m.width, m.height = w, h
 		m.enterExpanded()
@@ -83,7 +83,7 @@ func TestRenderNeverExceedsWidth(t *testing.T) {
 						m.issueDetail[20] = gh.IssueDetail{Body: longBody}
 					} else {
 						m.setPRs([]gh.PR{{Number: 1, Title: "a long PR title that keeps going for a while yet", Author: author("me"), HeadRefName: "a-long-feature-branch-name"}})
-						m.detail[1] = gh.PRDetail{Comments: []gh.Comment{{Body: longBody}}}
+						m.detail[m.launchRef(1)] = gh.PRDetail{Comments: []gh.Comment{{Body: longBody}}}
 					}
 					m.loaded = true
 					m.width, m.height = w, h

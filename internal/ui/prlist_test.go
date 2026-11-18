@@ -230,7 +230,7 @@ func TestStatusBarSurfacesRecommendedFix(t *testing.T) {
 		Number: 7, Title: "x",
 		StatusCheckRollup: []gh.Check{{State: "FAILURE", Name: "lint"}},
 	}})
-	m.detail[7] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
+	m.detail[m.launchRef(7)] = gh.PRDetail{MergeStateStatus: "BLOCKED"}
 	m.renderList()
 	out := m.statusBar()
 	if !strings.Contains(out, "rerun checks") {
@@ -808,7 +808,7 @@ func TestThemePollWhileExpandedKeepsExpandedBody(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.themeMode = "dark"
 	m.setPRs([]gh.PR{{Number: 7, Title: "hi"}})
-	m.detail[7] = gh.PRDetail{} // empty detail -> Reviews tab renders "No reviews"
+	m.detail[m.launchRef(7)] = gh.PRDetail{} // empty detail -> Reviews tab renders "No reviews"
 	m.enterExpanded()
 	if !m.expanded {
 		t.Fatal("precondition: should be expanded")
@@ -1087,13 +1087,13 @@ func TestSetSections(t *testing.T) {
 	}
 	m.setSections(review, nil, open, me)
 	ps := m.section.(*PRSection)
-	if cat := ps.cats[1]; cat != "Review requested" {
+	if cat := ps.cats[m.launchRef(1)]; cat != "Review requested" {
 		t.Errorf("#1 = %q, want Review requested (review beats mine)", cat)
 	}
-	if cat := ps.cats[2]; cat != "Mine" {
+	if cat := ps.cats[m.launchRef(2)]; cat != "Mine" {
 		t.Errorf("#2 = %q, want Mine", cat)
 	}
-	if cat := ps.cats[3]; cat != "Others" {
+	if cat := ps.cats[m.launchRef(3)]; cat != "Others" {
 		t.Errorf("#3 = %q, want Others", cat)
 	}
 }
@@ -1111,15 +1111,15 @@ func TestSetSectionsEmptyViewerFallsBackToOthers(t *testing.T) {
 	}
 	m.setSections(review, nil, open, "")
 	ps := m.section.(*PRSection)
-	if cat := ps.cats[2]; cat != "Others" {
+	if cat := ps.cats[m.launchRef(2)]; cat != "Others" {
 		t.Errorf("#2 with empty viewer = %q, want Others", cat)
 	}
-	if cat := ps.cats[3]; cat != "Others" {
+	if cat := ps.cats[m.launchRef(3)]; cat != "Others" {
 		t.Errorf("#3 with empty viewer = %q, want Others", cat)
 	}
 
 	m.setSections(review, nil, open, "me")
-	if cat := ps.cats[2]; cat != "Mine" {
+	if cat := ps.cats[m.launchRef(2)]; cat != "Mine" {
 		t.Errorf("#2 after viewer resolves = %q, want Mine", cat)
 	}
 }
@@ -1136,7 +1136,7 @@ func TestViewerFetchedMsgResplitsSections(t *testing.T) {
 		{Number: 3, Author: author("someone")},
 	}, "")
 	ps := m.section.(*PRSection)
-	if cat := ps.cats[2]; cat != "Others" {
+	if cat := ps.cats[m.launchRef(2)]; cat != "Others" {
 		t.Fatalf("#2 pre-login = %q, want Others", cat)
 	}
 
@@ -1149,10 +1149,10 @@ func TestViewerFetchedMsgResplitsSections(t *testing.T) {
 	u, _ := m.Update(viewerFetchedMsg{login: "me"})
 	m = u.(Model)
 	ps = m.section.(*PRSection)
-	if cat := ps.cats[2]; cat != "Mine" {
+	if cat := ps.cats[m.launchRef(2)]; cat != "Mine" {
 		t.Fatalf("#2 after viewerFetchedMsg = %q, want Mine", cat)
 	}
-	if cat := ps.cats[3]; cat != "Others" {
+	if cat := ps.cats[m.launchRef(3)]; cat != "Others" {
 		t.Fatalf("#3 after viewerFetchedMsg = %q, want Others", cat)
 	}
 }
@@ -1187,10 +1187,10 @@ func TestSectionsReviewedByMeStaysTop(t *testing.T) {
 		"me",
 	)
 	ps := m.section.(*PRSection)
-	if cat := ps.cats[5]; cat != "Review requested" {
+	if cat := ps.cats[m.launchRef(5)]; cat != "Review requested" {
 		t.Errorf("#5 = %q, want Review requested via the reviewed half", cat)
 	}
-	if cat := ps.cats[6]; cat != "Others" {
+	if cat := ps.cats[m.launchRef(6)]; cat != "Others" {
 		t.Errorf("#6 = %q, want Others", cat)
 	}
 	if ps.Len() != 2 {
@@ -1208,7 +1208,7 @@ func TestSectionsReRequestedWinsOverReviewed(t *testing.T) {
 	if n := m.section.Len(); n != 1 {
 		t.Fatalf("shown = %d, want 1 (deduped across halves)", n)
 	}
-	if !m.reviewRequested[5] {
+	if !m.reviewRequested[m.launchRef(5)] {
 		t.Fatal("re-requested PR must sit in reviewRequested so the ◐ marker clears")
 	}
 }
@@ -1222,31 +1222,31 @@ func TestCommentedByMeMarker(t *testing.T) {
 			var r gh.Review
 			r.Author.Login = "me"
 			r.State = state
-			m.detail[5] = gh.PRDetail{LatestReviews: []gh.Review{r}}
+			m.detail[m.launchRef(5)] = gh.PRDetail{LatestReviews: []gh.Review{r}}
 		}
 		return m
 	}
-	if m := setup("COMMENTED"); !m.commentedByMe(5) {
+	if m := setup("COMMENTED"); !m.commentedByMe(m.launchRef(5)) {
 		t.Error("viewer whose latest review is a comment should mark the row")
 	}
 	for _, state := range []string{"APPROVED", "CHANGES_REQUESTED", "DISMISSED"} {
-		if m := setup(state); m.commentedByMe(5) {
+		if m := setup(state); m.commentedByMe(m.launchRef(5)) {
 			t.Errorf("latest review %q is final — the PR should leave unmarked", state)
 		}
 	}
-	if m := setup(""); m.commentedByMe(5) {
+	if m := setup(""); m.commentedByMe(m.launchRef(5)) {
 		t.Error("no detail cached yet: unmarked until the batch lands")
 	}
 
 	reRequested := setup("COMMENTED")
-	reRequested.reviewRequested[5] = true
-	if reRequested.commentedByMe(5) {
+	reRequested.reviewRequested[reRequested.launchRef(5)] = true
+	if reRequested.commentedByMe(reRequested.launchRef(5)) {
 		t.Error("re-requested after my comment: the marker must clear")
 	}
 
 	noViewer := setup("COMMENTED")
 	noViewer.viewerLogin = ""
-	if noViewer.commentedByMe(5) {
+	if noViewer.commentedByMe(noViewer.launchRef(5)) {
 		t.Error("unresolved viewer cannot mark anything")
 	}
 }
@@ -1263,7 +1263,7 @@ func TestCommentedRowShowsHalfDot(t *testing.T) {
 	var r gh.Review
 	r.Author.Login = "me"
 	r.State = "COMMENTED"
-	m.detail[5] = gh.PRDetail{LatestReviews: []gh.Review{r}}
+	m.detail[m.launchRef(5)] = gh.PRDetail{LatestReviews: []gh.Review{r}}
 	m.renderList()
 	row := m.rowText[0]
 	if !strings.Contains(row, reviewCommentedGlyph) {
@@ -1287,7 +1287,7 @@ func TestReviewedDetailCmdFetchesReviewedSet(t *testing.T) {
 		nil,
 		"me",
 	)
-	m.fresh[3] = true // already refetched this session: skip
+	m.fresh[m.launchRef(3)] = true // already refetched this session: skip
 	cmd := m.reviewedDetailCmd()
 	if cmd == nil {
 		t.Fatal("reviewed set with cold detail should fetch")
@@ -1648,7 +1648,7 @@ func TestHydrateViewerBeforeSectionsPartition(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a PRSection after Hydrate")
 	}
-	if cat := ps.cats[1]; cat != "Mine" {
+	if cat := ps.cats[m.launchRef(1)]; cat != "Mine" {
 		t.Fatalf("#1 = %q, want Mine (viewer login applied on first paint)", cat)
 	}
 }
@@ -2822,7 +2822,7 @@ func TestAssignReviewersOnSectionedBoardKeepsSections(t *testing.T) {
 
 	picked := map[string]bool{"alice": true}
 	add, remove := reviewerDiff(nil, picked)
-	cmd := m.assignReviewersCmd(1, "pr1node", add, remove, picked)
+	cmd := m.assignReviewersCmd(m.launchRef(1), "pr1node", add, remove, picked)
 	if cmd == nil {
 		t.Fatal("assignReviewersCmd with changes must return a command")
 	}

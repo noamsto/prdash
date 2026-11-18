@@ -18,7 +18,7 @@ func TestInvalidateLaunchCacheMarksGateKeysAndDetail(t *testing.T) {
 	warmLaunchCache(m, c)
 	c.Set(detailKey(m.repo, 61), json.RawMessage(`{"number":61}`))
 
-	m.invalidateLaunchCache(61)
+	m.invalidateLaunchCache(m.launchRef(61))
 
 	for _, key := range m.launchGateKeys() {
 		if m.cache.Fresh(key, launchFreshTTL) {

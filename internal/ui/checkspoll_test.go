@@ -112,7 +112,7 @@ func TestChecksFetchedUpdatesRowWithoutReordering(t *testing.T) {
 	}
 
 	// #1's checks fail — the actionability sort would hoist it if a beat re-sorted.
-	u, _ := m.Update(checksFetchedMsg{checks: map[int][]gh.Check{1: {{State: "FAILURE"}}}})
+	u, _ := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{m.launchRef(1): {{State: "FAILURE"}}}})
 	ps = u.(Model).section.(*PRSection)
 	if len(before) != ps.Len() {
 		t.Fatalf("row count changed: %d -> %d", len(before), ps.Len())
@@ -172,10 +172,10 @@ func TestDetailFreshTTLTiersByAuthor(t *testing.T) {
 	})
 	m.viewerLogin = "me"
 	ps := m.section.(*PRSection)
-	if got := m.detailFreshTTL(ps, 1); got != launchFreshTTL {
+	if got := m.detailFreshTTL(ps, m.launchRef(1)); got != launchFreshTTL {
 		t.Errorf("own PR TTL = %v, want %v", got, launchFreshTTL)
 	}
-	if got := m.detailFreshTTL(ps, 2); got != pollIntervalCold {
+	if got := m.detailFreshTTL(ps, m.launchRef(2)); got != pollIntervalCold {
 		t.Errorf("other's PR TTL = %v, want %v", got, pollIntervalCold)
 	}
 }
@@ -184,7 +184,7 @@ func TestDetailFreshTTLTiersByAuthor(t *testing.T) {
 // rather than everything being hot.
 func TestDetailFreshTTLColdWithoutViewer(t *testing.T) {
 	m := pollModel(t, &fakeChecksSource{}, []gh.PR{{Number: 1, Author: author("me")}})
-	if got := m.detailFreshTTL(m.section.(*PRSection), 1); got != pollIntervalCold {
+	if got := m.detailFreshTTL(m.section.(*PRSection), m.launchRef(1)); got != pollIntervalCold {
 		t.Errorf("unknown viewer TTL = %v, want %v", got, pollIntervalCold)
 	}
 }
@@ -210,7 +210,7 @@ func TestCursorFetchIsASingleRequest(t *testing.T) {
 	if len(fd.got) != 1 {
 		t.Fatalf("want exactly one request for the cursor row, got %d", len(fd.got))
 	}
-	if len(msg.details[7].ReviewThreads) != 1 {
+	if len(msg.details[m.launchRef(7)].ReviewThreads) != 1 {
 		t.Error("review threads should arrive with the detail, not in a second fetch")
 	}
 }
