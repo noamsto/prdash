@@ -9,12 +9,12 @@ import (
 )
 
 type fakeChecksSource struct {
-	got [][]int // numbers passed to each FetchChecks call
-	ret map[int][]gh.Check
+	got [][]gh.PRRef // refs passed to each FetchChecks call
+	ret map[gh.PRRef][]gh.Check
 }
 
-func (f *fakeChecksSource) FetchChecks(nums []int) (map[int][]gh.Check, error) {
-	f.got = append(f.got, append([]int(nil), nums...))
+func (f *fakeChecksSource) FetchChecks(refs []gh.PRRef) (map[gh.PRRef][]gh.Check, error) {
+	f.got = append(f.got, append([]gh.PRRef(nil), refs...))
 	return f.ret, nil
 }
 
@@ -81,10 +81,10 @@ func TestPollAsksOnlyForRunningRows(t *testing.T) {
 	if len(fc.got) != 1 {
 		t.Fatalf("want one call, got %d", len(fc.got))
 	}
-	want := map[int]bool{2: true, 3: true}
-	for _, n := range fc.got[0] {
-		if !want[n] {
-			t.Errorf("asked for #%d, which has no running check", n)
+	want := map[gh.PRRef]bool{{Repo: "owner/repo", Number: 2}: true, {Repo: "owner/repo", Number: 3}: true}
+	for _, r := range fc.got[0] {
+		if !want[r] {
+			t.Errorf("asked for %v, which has no running check", r)
 		}
 	}
 	if len(fc.got[0]) != 2 {

@@ -131,8 +131,8 @@ func (p *stackMergePlan) question() string {
 // loadStackPlan is the off-goroutine body of the S press: it reads only its
 // arguments. details may be nil; layers needing a reading then fall to "still
 // pending", as does a layer the refetch answers without.
-func loadStackPlan(t gh.PR, board map[int]stackBoardRow, stacks gh.StackSource, details gh.DetailSource) (*stackMergePlan, error) {
-	st, ok, err := stacks.FetchStackForPR(t.Number)
+func loadStackPlan(t gh.PRRef, board map[int]stackBoardRow, stacks gh.StackSource, details gh.DetailSource) (*stackMergePlan, error) {
+	st, ok, err := stacks.FetchStackForPR(t)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", stackMergeFailedText, err)
 	}
@@ -146,9 +146,15 @@ func loadStackPlan(t gh.PR, board map[int]stackBoardRow, stacks gh.StackSource, 
 
 	var fresh map[int]gh.PRDetail
 	if need := stackNeedsDetail(members, board); len(need) > 0 && details != nil {
-		if fresh, _, err = details.FetchDetails(need); err != nil {
+		refs := make([]gh.PRRef, len(need))
+		for i, n := range need {
+			refs[i] = gh.PRRef{Repo: t.Repo, Number: n}
+		}
+		got, _, err := details.FetchDetails(refs)
+		if err != nil {
 			return nil, fmt.Errorf("%s: fetch layer state: %w", stackMergeFailedText, err)
 		}
+		fresh = byNumber(got)
 	}
 	layers, err := checkStackLayers(members, board, fresh)
 	if err != nil {
@@ -157,7 +163,7 @@ func loadStackPlan(t gh.PR, board map[int]stackBoardRow, stacks gh.StackSource, 
 
 	// Detection failure refuses rather than guessing: a direct merge onto a base
 	// that really has a queue would bypass it.
-	queue, err := stacks.BaseUsesMergeQueue(st.BaseRefName)
+	queue, err := stacks.BaseUsesMergeQueue(t.Repo, st.BaseRefName)
 	if err != nil {
 		return nil, fmt.Errorf("%s: couldn't check the base branch's merge queue: %w", stackMergeFailedText, err)
 	}
@@ -303,9 +309,9 @@ func (m *Model) startStackMerge(a action.Action) tea.Cmd {
 	m.stackLoadSeq++
 	m.stackLoad = &actionStat{run: "Loading stack"}
 	m.actionStatus = m.stackLoad
-	seq, keys, stacks, details := m.stackLoadSeq, m.keyPresses, m.stackSource, m.detailSource
+	seq, keys, stacks, details, ref := m.stackLoadSeq, m.keyPresses, m.stackSource, m.detailSource, m.launchRef(t.Number)
 	return tea.Batch(func() tea.Msg {
-		plan, err := loadStackPlan(t, board, stacks, details)
+		plan, err := loadStackPlan(ref, board, stacks, details)
 		return stackPlanLoadedMsg{seq: seq, keys: keys, a: a, plan: plan, err: err}
 	}, m.startSpinner())
 }
@@ -335,8 +341,9 @@ func (m *Model) runStackMerge(a action.Action, plan *stackMergePlan) tea.Cmd {
 	m.invalidateLaunchCache(nums...)
 	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
 	id, src, stacks, target, queue := m.stackRunID, m.mutationSource, m.stackSource, plan.target, plan.mergeQueue
+	ref := m.launchRef(target)
 	return tea.Batch(func() tea.Msg {
-		st, ok, err := stacks.FetchStackForPR(target)
+		st, ok, err := stacks.FetchStackForPR(ref)
 		if err != nil {
 			return stackMergeSubmittedMsg{id: id, err: err}
 		}
@@ -344,7 +351,7 @@ func (m *Model) runStackMerge(a action.Action, plan *stackMergePlan) tea.Cmd {
 		if !ok || err != nil || !slices.Equal(memberNumbers(members), nums) {
 			return stackMergeSubmittedMsg{id: id, err: stackChangedError{key: a.Key}}
 		}
-		res, err := src.MergeStack(target, queue)
+		res, err := src.MergeStack(ref, queue)
 		return stackMergeSubmittedMsg{id: id, res: res, err: err}
 	}, m.startSpinner())
 }
@@ -370,9 +377,9 @@ func (m *Model) stackMergeDispatch(step stackMergeStep) tea.Cmd {
 // stackMergeProbeCmd fires the beat's single StackMergeStatus call.
 func (m *Model) stackMergeProbeCmd() tea.Cmd {
 	r := m.stackMerge
-	id, src, target, uuid := r.id, m.mutationSource, r.plan.target, r.uuid
+	id, src, ref, uuid := r.id, m.mutationSource, m.launchRef(r.plan.target), r.uuid
 	return func() tea.Msg {
-		res, err := src.StackMergeStatus(target, uuid)
+		res, err := src.StackMergeStatus(ref, uuid)
 		return stackMergePolledMsg{id: id, res: res, err: err}
 	}
 }

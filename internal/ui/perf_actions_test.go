@@ -416,15 +416,15 @@ func TestActionPaneHeightIsConstantWhileFiltering(t *testing.T) {
 type stubSource struct{}
 
 func (stubSource) FetchPRs(string, int) ([]gh.PR, []byte, error) { return nil, nil, nil }
-func (stubSource) FetchDetails([]int) (map[int]gh.PRDetail, map[int][]byte, error) {
-	return map[int]gh.PRDetail{}, map[int][]byte{}, nil
+func (stubSource) FetchDetails([]gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
+	return map[gh.PRRef]gh.PRDetail{}, map[gh.PRRef][]byte{}, nil
 }
 func (stubSource) FetchIssues(string, int) ([]gh.Issue, []byte, error) { return nil, nil, nil }
 func (stubSource) FetchIssueDetail(int) (gh.IssueDetail, []byte, error) {
 	return gh.IssueDetail{}, nil, nil
 }
-func (stubSource) FetchViewer() (string, error)                     { return "", nil }
-func (stubSource) FetchAssignableUsers() ([]gh.User, []byte, error) { return nil, nil, nil }
+func (stubSource) FetchViewer() (string, error)                           { return "", nil }
+func (stubSource) FetchAssignableUsers(string) ([]gh.User, []byte, error) { return nil, nil, nil }
 
 // stubBackends wires every read source to an empty stub, for tests that need
 // the fetch/refresh paths reachable without asserting on returned data.
@@ -452,7 +452,7 @@ func (c *countingSource) FetchIssues(string, int) ([]gh.Issue, []byte, error) {
 	return nil, nil, nil
 }
 func (c *countingSource) FetchViewer() (string, error) { c.calls.Add(1); return "", nil }
-func (c *countingSource) FetchAssignableUsers() ([]gh.User, []byte, error) {
+func (c *countingSource) FetchAssignableUsers(string) ([]gh.User, []byte, error) {
 	c.calls.Add(1)
 	return nil, nil, nil
 }

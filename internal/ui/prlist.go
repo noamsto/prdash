@@ -243,6 +243,29 @@ func (m *Model) SetRunsSource(s gh.RunsSource) { m.runsSource = s }
 // SetRateSource installs the backend the header's API-budget segment samples.
 func (m *Model) SetRateSource(s gh.RateSource) { m.rateSource = s }
 
+// launchRef qualifies a board number with the launch repo for the PR-scoped
+// sources, which take refs while the model is still keyed by number.
+func (m Model) launchRef(n int) gh.PRRef { return gh.PRRef{Repo: m.repo, Number: n} }
+
+// launchRefs is launchRef over a number list.
+func (m Model) launchRefs(nums []int) []gh.PRRef {
+	refs := make([]gh.PRRef, len(nums))
+	for i, n := range nums {
+		refs[i] = m.launchRef(n)
+	}
+	return refs
+}
+
+// byNumber drops the repo from a source result's keys, for a model still
+// keyed by number.
+func byNumber[T any](in map[gh.PRRef]T) map[int]T {
+	out := make(map[int]T, len(in))
+	for ref, v := range in {
+		out[ref.Number] = v
+	}
+	return out
+}
+
 func (m *Model) SetRepo(repo string) { m.repo = repo }
 
 // ciRerunWindow is how long a PR keeps its optimistic checks-in-progress state
@@ -1594,14 +1617,15 @@ func (m *Model) cascadeDispatch(step cascadeStep) tea.Cmd {
 func (m *Model) cascadeProbeFetchCmd() tea.Cmd {
 	r := m.cascade
 	number := r.plan.chains[r.chain][r.link].pr.Number
+	ref := m.launchRef(number)
 	src := m.detailSource
 	return func() tea.Msg {
-		details, raws, err := src.FetchDetails([]int{number})
+		details, raws, err := src.FetchDetails([]gh.PRRef{ref})
 		if err != nil {
 			return cascadeProbedMsg{number: number, err: err}
 		}
-		d, ok := details[number]
-		return cascadeProbedMsg{number: number, detail: d, raw: raws[number], ok: ok}
+		d, ok := details[ref]
+		return cascadeProbedMsg{number: number, detail: d, raw: raws[ref], ok: ok}
 	}
 }
 
@@ -1732,17 +1756,17 @@ func (m Model) pollChecksCmd() tea.Cmd {
 	if len(rows) == 0 {
 		return nil
 	}
-	nums := make([]int, 0, len(rows))
+	refs := make([]gh.PRRef, 0, len(rows))
 	for _, i := range rows {
-		nums = append(nums, ps.prAt(i).Number)
+		refs = append(refs, m.launchRef(ps.prAt(i).Number))
 	}
 	src := m.checksSource
 	return func() tea.Msg {
-		checks, err := src.FetchChecks(nums)
+		checks, err := src.FetchChecks(refs)
 		if err != nil {
 			return fetchFailedMsg{err: err}
 		}
-		return checksFetchedMsg{checks: checks}
+		return checksFetchedMsg{checks: byNumber(checks)}
 	}
 }
 
@@ -1907,9 +1931,9 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 
 // fetchMembersCmd fetches the assignable-users list through the members source.
 func (m Model) fetchMembersCmd() tea.Cmd {
-	src := m.membersSource
+	src, repo := m.membersSource, m.repo
 	return func() tea.Msg {
-		users, raw, err := src.FetchAssignableUsers()
+		users, raw, err := src.FetchAssignableUsers(repo)
 		if err != nil {
 			return membersFailedMsg{err: err}
 		}

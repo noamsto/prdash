@@ -1295,7 +1295,7 @@ func TestReviewedDetailCmdFetchesReviewedSet(t *testing.T) {
 	if _, ok := cmd().(detailsBatchMsg); !ok {
 		t.Fatal("reviewed warm should route through the batch source")
 	}
-	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 2 {
+	if len(fd.got) != 1 || !slices.Equal(fd.got[0], refsIn("o/r", 2)) {
 		t.Fatalf("FetchDetails got %v, want one call for [2] (not review-requested #1, not fresh #3)", fd.got)
 	}
 }

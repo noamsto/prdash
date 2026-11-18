@@ -135,12 +135,13 @@ func (m Model) batchDetailCmd(numbers []int) tea.Cmd {
 	if src == nil || len(numbers) == 0 {
 		return nil
 	}
+	refs := m.launchRefs(numbers)
 	return func() tea.Msg {
-		details, raws, err := src.FetchDetails(numbers)
+		details, raws, err := src.FetchDetails(refs)
 		if err != nil {
 			return detailFailedMsg{err: err, numbers: numbers}
 		}
-		return detailsBatchMsg{details: details, raws: raws}
+		return detailsBatchMsg{details: byNumber(details), raws: byNumber(raws)}
 	}
 }
 

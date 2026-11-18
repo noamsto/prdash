@@ -128,9 +128,10 @@ func (m Model) heldStatesCmd() tea.Cmd {
 	}
 	gen := m.heldGen
 	src := m.stateSource
+	refs := m.launchRefs(numbers)
 	return func() tea.Msg {
-		states, err := src.FetchStates(numbers)
-		return heldStatesMsg{gen: gen, states: states, err: err}
+		states, err := src.FetchStates(refs)
+		return heldStatesMsg{gen: gen, states: byNumber(states), err: err}
 	}
 }
 

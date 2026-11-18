@@ -1,7 +1,13 @@
 package gh
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -67,5 +73,58 @@ func TestParseDetailsSurfacesGraphQLErrors(t *testing.T) {
 	body := []byte(`{"errors":[{"message":"Field 'mergeStateStatus' needs a preview header"}]}`)
 	if _, _, err := parseDetails(body, []int{7}); err == nil {
 		t.Fatal("GraphQL errors array must surface as an error")
+	}
+}
+
+// redirectTransport sends every request to srv, so the raw GraphQL calls that
+// target githubGraphQLURL land on the test server instead of the network.
+type redirectTransport struct{ srv *url.URL }
+
+func (rt redirectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.URL.Scheme, r.URL.Host = rt.srv.Scheme, rt.srv.Host
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func TestFetchDetailsGroupsByRepoWithPartialFailure(t *testing.T) {
+	var mu sync.Mutex
+	var owners []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Variables map[string]string `json:"variables"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		owner := req.Variables["owner"]
+		mu.Lock()
+		owners = append(owners, owner+"/"+req.Variables["name"])
+		mu.Unlock()
+		if owner == "b" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"repository":{"pr1":{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","isDraft":false}}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := GraphSource{repo: "a/x", http: &http.Client{Transport: redirectTransport{u}}}
+
+	details, raws, err := s.FetchDetails([]PRRef{{"a/x", 1}, {"b/y", 1}})
+	if err == nil {
+		t.Error("the b/y failure must surface as an error")
+	}
+	if len(owners) != 2 {
+		t.Errorf("requests = %v, want one per repo", owners)
+	}
+	if len(details) != 1 || details[PRRef{"a/x", 1}].MergeStateStatus != "CLEAN" {
+		t.Errorf("details = %+v, want only a/x#1", details)
+	}
+	if _, ok := raws[PRRef{"a/x", 1}]; !ok || len(raws) != 1 {
+		t.Errorf("raws keys = %d, want only a/x#1", len(raws))
 	}
 }

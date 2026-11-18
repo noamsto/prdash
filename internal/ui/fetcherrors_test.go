@@ -26,14 +26,14 @@ func (f halfFailPRSource) FetchPRs(filter string, limit int) ([]gh.PR, []byte, e
 // failDetailSource fails every batched detail fetch.
 type failDetailSource struct{ err error }
 
-func (f failDetailSource) FetchDetails([]int) (map[int]gh.PRDetail, map[int][]byte, error) {
+func (f failDetailSource) FetchDetails([]gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
 	return nil, nil, f.err
 }
 
 // failMembersSource fails every assignable-users fetch.
 type failMembersSource struct{ err error }
 
-func (f failMembersSource) FetchAssignableUsers() ([]gh.User, []byte, error) {
+func (f failMembersSource) FetchAssignableUsers(string) ([]gh.User, []byte, error) {
 	return nil, nil, f.err
 }
 

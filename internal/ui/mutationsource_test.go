@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -30,13 +31,13 @@ type fakeMutationSource struct {
 }
 
 type stackMergeCall struct {
-	number     int
+	ref        gh.PRRef
 	mergeQueue bool
 }
 
 type stackPollCall struct {
-	number int
-	uuid   string
+	ref  gh.PRRef
+	uuid string
 }
 
 type reviewCall struct {
@@ -82,13 +83,13 @@ func (f *fakeMutationSource) RequestReviews(prID string, logins []string) error 
 	return f.err
 }
 
-func (f *fakeMutationSource) MergeStack(prNumber int, mergeQueue bool) (gh.StackMergeResult, error) {
-	f.stackMergeCalls = append(f.stackMergeCalls, stackMergeCall{number: prNumber, mergeQueue: mergeQueue})
+func (f *fakeMutationSource) MergeStack(pr gh.PRRef, mergeQueue bool) (gh.StackMergeResult, error) {
+	f.stackMergeCalls = append(f.stackMergeCalls, stackMergeCall{ref: pr, mergeQueue: mergeQueue})
 	return f.stackMergeResult, f.stackMergeErr
 }
 
-func (f *fakeMutationSource) StackMergeStatus(prNumber int, uuid string) (gh.StackMergeResult, error) {
-	f.stackPollCalls = append(f.stackPollCalls, stackPollCall{number: prNumber, uuid: uuid})
+func (f *fakeMutationSource) StackMergeStatus(pr gh.PRRef, uuid string) (gh.StackMergeResult, error) {
+	f.stackPollCalls = append(f.stackPollCalls, stackPollCall{ref: pr, uuid: uuid})
 	if f.stackPollErr != nil {
 		return gh.StackMergeResult{}, f.stackPollErr
 	}
@@ -197,7 +198,7 @@ func TestMergeFetchesDetailWhenUnknownThenBlocks(t *testing.T) {
 	if len(fs.mergeCalls) != 0 {
 		t.Errorf("mergeCalls = %v, want none — blocked before reaching GitHub", fs.mergeCalls)
 	}
-	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 7 {
+	if len(fd.got) != 1 || !slices.Equal(fd.got[0], refsIn("owner/repo", 7)) {
 		t.Errorf("detail source called with %v, want exactly one fetch for [7]", fd.got)
 	}
 }

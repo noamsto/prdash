@@ -3,6 +3,7 @@ package gh
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,16 +16,31 @@ import (
 // key need, nothing else.
 const statesFields = "__typename ... on PullRequest{state mergedAt closedAt} ... on Issue{state closedAt}"
 
-// FetchStates looks up the current state of every number in one aliased
-// request. This is the held-row lookup: a departed or stale row's real state
-// without a full list refetch.
-func (s GraphSource) FetchStates(numbers []int) (map[int]ItemState, error) {
-	if len(numbers) == 0 {
-		return map[int]ItemState{}, nil
+// FetchStates looks up the current state of every ref with one aliased request
+// per repo. This is the held-row lookup: a departed or stale row's real state
+// without a full list refetch. A failing repo leaves the others' results in the
+// map and joins its error into err.
+func (s GraphSource) FetchStates(refs []PRRef) (map[PRRef]ItemState, error) {
+	out := make(map[PRRef]ItemState, len(refs))
+	repos, numbers := groupRefs(refs)
+	var errs []error
+	for _, repo := range repos {
+		states, err := s.fetchRepoStates(repo, numbers[repo])
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for n, st := range states {
+			out[PRRef{Repo: repo, Number: n}] = st
+		}
 	}
-	owner, name, ok := strings.Cut(s.repo, "/")
-	if !ok {
-		return nil, fmt.Errorf("bad repo %q", s.repo)
+	return out, errors.Join(errs...)
+}
+
+func (s GraphSource) fetchRepoStates(repo string, numbers []int) (map[int]ItemState, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
 	}
 	reqBody, err := json.Marshal(map[string]any{
 		"query":     buildStatesQuery(numbers),

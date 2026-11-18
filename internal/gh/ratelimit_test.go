@@ -191,7 +191,7 @@ func TestRateLimitFromResponse(t *testing.T) {
 	if _, ok := s.RateLimit(); ok {
 		t.Fatal("RateLimit() reported a snapshot before any call")
 	}
-	if _, err := s.ListRunsForBranch("feat/x"); err != nil {
+	if _, err := s.ListRunsForBranch("owner/repo", "feat/x"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -221,7 +221,7 @@ func TestRateLimitSharedAcrossCopies(t *testing.T) {
 
 	s := testRateSource(srv, "owner/repo", "tok123")
 	copyOfS := s
-	if _, err := s.ListRunsForBranch("feat/x"); err != nil {
+	if _, err := s.ListRunsForBranch("owner/repo", "feat/x"); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := copyOfS.RateLimit()
@@ -253,7 +253,7 @@ func TestJobLogRecordsAuthHopNotBlob(t *testing.T) {
 	defer api.Close()
 
 	s := testRateSource(api, "owner/repo", "tok123")
-	if _, err := s.JobLog(42, false); err != nil {
+	if _, err := s.JobLog("owner/repo", 42, false); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := s.RateLimit()

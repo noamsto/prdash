@@ -795,7 +795,7 @@ type sequencedDetailSource struct {
 	calls    int
 }
 
-func (f *sequencedDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, map[int][]byte, error) {
+func (f *sequencedDetailSource) FetchDetails(refs []gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
 	i := f.calls
 	f.calls++
 	if i < len(f.errs) && f.errs[i] != nil {
@@ -806,9 +806,9 @@ func (f *sequencedDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, m
 		ri = len(f.readings) - 1
 	}
 	d := f.readings[ri]
-	out := map[int]gh.PRDetail{}
-	for _, n := range nums {
-		out[n] = d
+	out := map[gh.PRRef]gh.PRDetail{}
+	for _, r := range refs {
+		out[r] = d
 	}
 	return out, nil, nil
 }

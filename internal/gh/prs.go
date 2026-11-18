@@ -1,6 +1,8 @@
 package gh
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -81,6 +83,30 @@ type PRStack struct {
 type PRRef struct {
 	Repo   string
 	Number int
+}
+
+// splitRepo splits an owner/name repo for building request paths and variables.
+func splitRepo(repo string) (owner, name string, err error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return "", "", fmt.Errorf("bad repo %q", repo)
+	}
+	return owner, name, nil
+}
+
+// groupRefs buckets refs by repo for the batched sources, which issue one
+// aliased request per repo; repos come back sorted so requests go out in a
+// stable order.
+func groupRefs(refs []PRRef) (repos []string, numbers map[string][]int) {
+	numbers = map[string][]int{}
+	for _, r := range refs {
+		if _, ok := numbers[r.Repo]; !ok {
+			repos = append(repos, r.Repo)
+		}
+		numbers[r.Repo] = append(numbers[r.Repo], r.Number)
+	}
+	sort.Strings(repos)
+	return repos, numbers
 }
 
 type PR struct {

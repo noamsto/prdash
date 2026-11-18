@@ -3,6 +3,7 @@ package gh
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,17 +18,32 @@ const checksFields = "commits(last:1){nodes{commit{statusCheckRollup{contexts(fi
 	" ... on CheckRun{name conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}}" +
 	" ... on StatusContext{context state targetUrl}}}}}}}"
 
-// FetchChecks fetches just the status-check rollup for every number in one
-// aliased request. This is the CI poll's query: a full list refetch costs a
-// point per 25 rows per nested connection it selects, while one aliased
-// pullRequest per PR costs one point for the whole batch.
-func (s GraphSource) FetchChecks(numbers []int) (map[int][]Check, error) {
-	if len(numbers) == 0 {
-		return map[int][]Check{}, nil
+// FetchChecks fetches just the status-check rollup with one aliased request per
+// repo. This is the CI poll's query: a full list refetch costs a point per 25
+// rows per nested connection it selects, while one aliased pullRequest per PR
+// costs one point for the whole batch. A failing repo leaves the others' results
+// in the map and joins its error into err.
+func (s GraphSource) FetchChecks(refs []PRRef) (map[PRRef][]Check, error) {
+	out := make(map[PRRef][]Check, len(refs))
+	repos, numbers := groupRefs(refs)
+	var errs []error
+	for _, repo := range repos {
+		checks, err := s.fetchRepoChecks(repo, numbers[repo])
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for n, c := range checks {
+			out[PRRef{Repo: repo, Number: n}] = c
+		}
 	}
-	owner, name, ok := strings.Cut(s.repo, "/")
-	if !ok {
-		return nil, fmt.Errorf("bad repo %q", s.repo)
+	return out, errors.Join(errs...)
+}
+
+func (s GraphSource) fetchRepoChecks(repo string, numbers []int) (map[int][]Check, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
 	}
 	reqBody, err := json.Marshal(map[string]any{
 		"query":     buildChecksQuery(numbers),

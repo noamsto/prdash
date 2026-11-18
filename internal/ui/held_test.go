@@ -84,10 +84,10 @@ func (f *partialMergeSource) ApprovePR(prID string) error {
 	return f.failFor[prID]
 }
 func (f *partialMergeSource) RequestReviews(string, []string) error { return nil }
-func (f *partialMergeSource) MergeStack(int, bool) (gh.StackMergeResult, error) {
+func (f *partialMergeSource) MergeStack(gh.PRRef, bool) (gh.StackMergeResult, error) {
 	return gh.StackMergeResult{}, nil
 }
-func (f *partialMergeSource) StackMergeStatus(int, string) (gh.StackMergeResult, error) {
+func (f *partialMergeSource) StackMergeStatus(gh.PRRef, string) (gh.StackMergeResult, error) {
 	return gh.StackMergeResult{}, nil
 }
 
@@ -962,22 +962,22 @@ func TestHeldTagIsPartOfTheRowCacheKey(t *testing.T) {
 	}
 }
 
-// fakeStateSource is a gh.StateSource that records the numbers each call
+// fakeStateSource is a gh.StateSource that records the refs each call
 // receives, so a test can assert what heldStatesCmd asked for.
 type fakeStateSource struct {
 	mu     sync.Mutex
-	calls  [][]int
-	states map[int]gh.ItemState
+	calls  [][]gh.PRRef
+	states map[gh.PRRef]gh.ItemState
 }
 
-func (f *fakeStateSource) FetchStates(numbers []int) (map[int]gh.ItemState, error) {
+func (f *fakeStateSource) FetchStates(refs []gh.PRRef) (map[gh.PRRef]gh.ItemState, error) {
 	f.mu.Lock()
-	f.calls = append(f.calls, append([]int(nil), numbers...))
+	f.calls = append(f.calls, append([]gh.PRRef(nil), refs...))
 	f.mu.Unlock()
 	return f.states, nil
 }
 
-func (f *fakeStateSource) calledWith() [][]int {
+func (f *fakeStateSource) calledWith() [][]gh.PRRef {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
@@ -999,7 +999,7 @@ func TestHeldStatesLookupIssued(t *testing.T) {
 		invokeCmdTree(t, cmd)
 
 		calls := src.calledWith()
-		if len(calls) != 1 || !slices.Contains(calls[0], 29) {
+		if len(calls) != 1 || !slices.Contains(calls[0], m.launchRef(29)) {
 			t.Fatalf("FetchStates calls = %v, want one call containing #29", calls)
 		}
 	})

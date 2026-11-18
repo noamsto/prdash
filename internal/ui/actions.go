@@ -272,7 +272,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 				return clearStatusCmd(m.actionStatus)
 			}
 		}
-		branch, native := v.HeadRefName, m.actionsSource
+		branch, native, repo := v.HeadRefName, m.actionsSource, m.repo
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
 		m.actionStatus.nums = []int{v.Number}
@@ -281,7 +281,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{stat: stat, err: action.RerunFailed(native, branch)}
+			return actionDoneMsg{stat: stat, err: action.RerunFailed(native, repo, branch)}
 		}, m.startSpinner())
 	default: // native mutation/open (merge, ready, update-branch, open-web)
 		if cmd, ok := m.singleNativeCmd(a, v); ok {
@@ -372,11 +372,11 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		}
 		d, hasDetail := m.detail[p.Number]
 		mergeable, mss := mergeState(p, d, hasDetail)
-		detailSrc := m.detailSource
+		detailSrc, ref := m.detailSource, m.launchRef(p.Number)
 		return func() error {
 			if mergeUnresolved(mergeable) && detailSrc != nil {
-				if details, _, err := detailSrc.FetchDetails([]int{p.Number}); err == nil {
-					if fresh, ok := details[p.Number]; ok {
+				if details, _, err := detailSrc.FetchDetails([]gh.PRRef{ref}); err == nil {
+					if fresh, ok := details[ref]; ok {
 						mergeable, mss = fresh.Mergeable, fresh.MergeStateStatus
 					}
 				}

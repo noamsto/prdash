@@ -23,12 +23,14 @@ func (f *fakeViewerSource) FetchViewer() (string, error) {
 // fakeMembersSource mirrors fakeIssueSource for the assignable-users seam.
 type fakeMembersSource struct {
 	calls int
+	repos []string // repo passed to each call
 	users []gh.User
 	raw   []byte
 }
 
-func (f *fakeMembersSource) FetchAssignableUsers() ([]gh.User, []byte, error) {
+func (f *fakeMembersSource) FetchAssignableUsers(repo string) ([]gh.User, []byte, error) {
 	f.calls++
+	f.repos = append(f.repos, repo)
 	return f.users, f.raw, nil
 }
 
@@ -87,5 +89,8 @@ func TestFetchMembersCmdUsesNativeSource(t *testing.T) {
 	}
 	if fs.calls != 1 {
 		t.Errorf("source called %d times, want 1", fs.calls)
+	}
+	if len(fs.repos) != 1 || fs.repos[0] != "owner/repo" {
+		t.Errorf("repos = %v, want [owner/repo]", fs.repos)
 	}
 }

@@ -3,8 +3,6 @@ package gh
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
 
 	"github.com/shurcooL/githubv4"
 )
@@ -21,10 +19,10 @@ type qlUser struct {
 // the repo. raw mirrors the shape the members cache stores (a marshaled
 // []User, per hydrateMembers) so a cache entry written by either backend
 // stays readable by the other.
-func (s GraphSource) FetchAssignableUsers() ([]User, []byte, error) {
-	owner, name, ok := strings.Cut(s.repo, "/")
-	if !ok {
-		return nil, nil, fmt.Errorf("bad repo %q", s.repo)
+func (s GraphSource) FetchAssignableUsers(repo string) ([]User, []byte, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, nil, err
 	}
 	var q struct {
 		Repository struct {

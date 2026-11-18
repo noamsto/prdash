@@ -168,35 +168,38 @@ type fakeStackSource struct {
 	err      error
 	queue    bool
 	queueErr error
+	baseRepo string
 	baseRef  string
-	calls    int // FetchStackForPR calls
+	calls    int        // FetchStackForPR calls
+	refs     []gh.PRRef // the ref each FetchStackForPR call received
 }
 
-func (f *fakeStackSource) FetchStackForPR(int) (gh.Stack, bool, error) {
+func (f *fakeStackSource) FetchStackForPR(pr gh.PRRef) (gh.Stack, bool, error) {
 	f.calls++
+	f.refs = append(f.refs, pr)
 	return f.st, f.found, f.err
 }
 
-func (f *fakeStackSource) BaseUsesMergeQueue(ref string) (bool, error) {
-	f.baseRef = ref
+func (f *fakeStackSource) BaseUsesMergeQueue(repo, ref string) (bool, error) {
+	f.baseRepo, f.baseRef = repo, ref
 	return f.queue, f.queueErr
 }
 
 type fakeStackDetails struct {
-	calls [][]int
+	calls [][]gh.PRRef
 	ret   map[int]gh.PRDetail
 	err   error
 }
 
-func (f *fakeStackDetails) FetchDetails(nums []int) (map[int]gh.PRDetail, map[int][]byte, error) {
-	f.calls = append(f.calls, slices.Clone(nums))
+func (f *fakeStackDetails) FetchDetails(refs []gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
+	f.calls = append(f.calls, slices.Clone(refs))
 	if f.err != nil {
 		return nil, nil, f.err
 	}
-	out := map[int]gh.PRDetail{}
-	for _, n := range nums {
-		if d, ok := f.ret[n]; ok {
-			out[n] = d
+	out := map[gh.PRRef]gh.PRDetail{}
+	for _, r := range refs {
+		if d, ok := f.ret[r.Number]; ok {
+			out[r] = d
 		}
 	}
 	return out, nil, nil
@@ -204,16 +207,18 @@ func (f *fakeStackDetails) FetchDetails(nums []int) (map[int]gh.PRDetail, map[in
 
 func cleanDetail() gh.PRDetail { return gh.PRDetail{Mergeable: "MERGEABLE", MergeStateStatus: "CLEAN"} }
 
+func stackRef(n int) gh.PRRef { return gh.PRRef{Repo: "owner/repo", Number: n} }
+
 func TestLoadStackPlanFetchesExactlyTheNeededDetails(t *testing.T) {
 	stacks := &fakeStackSource{found: true, st: gh.Stack{BaseRefName: "main", Members: openMembers(1, 2, 3, 4)}}
 	details := &fakeStackDetails{ret: map[int]gh.PRDetail{1: cleanDetail(), 2: cleanDetail(), 3: cleanDetail()}}
 	board := boardOf(cleanRow(3), cleanRow(4))
 
-	plan, err := loadStackPlan(gh.PR{Number: 3}, board, stacks, details)
+	plan, err := loadStackPlan(stackRef(3), board, stacks, details)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(details.calls) != 1 || !slices.Equal(details.calls[0], []int{1, 2}) {
+	if len(details.calls) != 1 || !slices.Equal(details.calls[0], refsIn("owner/repo", 1, 2)) {
 		t.Errorf("FetchDetails calls = %v, want one call with [1 2]", details.calls)
 	}
 	if plan.target != 3 || !slices.Equal(plan.numbers(), []int{1, 2, 3}) {
@@ -222,8 +227,11 @@ func TestLoadStackPlanFetchesExactlyTheNeededDetails(t *testing.T) {
 	if plan.layers[2].Number != 3 || plan.layers[0].Number != 1 || plan.layers[0].State != "OPEN" {
 		t.Errorf("layers = %+v", plan.layers)
 	}
-	if stacks.baseRef != "main" {
-		t.Errorf("queue detection asked about %q, want main", stacks.baseRef)
+	if stacks.baseRepo != "owner/repo" || stacks.baseRef != "main" {
+		t.Errorf("queue detection asked about %q %q, want owner/repo main", stacks.baseRepo, stacks.baseRef)
+	}
+	if !slices.Equal(stacks.refs, refsIn("owner/repo", 3)) {
+		t.Errorf("FetchStackForPR refs = %v, want [owner/repo#3]", stacks.refs)
 	}
 }
 
@@ -231,7 +239,7 @@ func TestLoadStackPlanSkipsFetchWhenBoardCoversEverything(t *testing.T) {
 	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1, 2)}}
 	details := &fakeStackDetails{}
 
-	if _, err := loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(1), cleanRow(2)), stacks, details); err != nil {
+	if _, err := loadStackPlan(stackRef(2), boardOf(cleanRow(1), cleanRow(2)), stacks, details); err != nil {
 		t.Fatal(err)
 	}
 	if len(details.calls) != 0 {
@@ -243,35 +251,35 @@ func TestLoadStackPlanUnknownReadingIsPending(t *testing.T) {
 	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1, 2)}}
 	const pending = "PR #1 merge state is still pending — try again shortly"
 
-	_, err := loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, &fakeStackDetails{})
+	_, err := loadStackPlan(stackRef(2), boardOf(cleanRow(2)), stacks, &fakeStackDetails{})
 	wantErr(t, err, pending)
 
-	_, err = loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, nil)
+	_, err = loadStackPlan(stackRef(2), boardOf(cleanRow(2)), stacks, nil)
 	wantErr(t, err, pending)
 }
 
 func TestLoadStackPlanDetailFetchErrorRefuses(t *testing.T) {
 	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1, 2)}}
-	_, err := loadStackPlan(gh.PR{Number: 2}, boardOf(cleanRow(2)), stacks, &fakeStackDetails{err: errors.New("boom")})
+	_, err := loadStackPlan(stackRef(2), boardOf(cleanRow(2)), stacks, &fakeStackDetails{err: errors.New("boom")})
 	wantErr(t, err, "Stack merge failed: fetch layer state: boom")
 }
 
 func TestLoadStackPlanRefusals(t *testing.T) {
 	board := boardOf(cleanRow(1))
 
-	_, err := loadStackPlan(gh.PR{Number: 1}, board, &fakeStackSource{err: errors.New("404 not found")}, nil)
+	_, err := loadStackPlan(stackRef(1), board, &fakeStackSource{err: errors.New("404 not found")}, nil)
 	wantErr(t, err, "Stack merge failed: 404 not found")
 
-	_, err = loadStackPlan(gh.PR{Number: 1}, board, &fakeStackSource{}, nil)
+	_, err = loadStackPlan(stackRef(1), board, &fakeStackSource{}, nil)
 	wantErr(t, err, "PR #1 is no longer in a stack — ctrl+r to refresh")
 
-	_, err = loadStackPlan(gh.PR{Number: 1}, board, &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(2)}}, nil)
+	_, err = loadStackPlan(stackRef(1), board, &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(2)}}, nil)
 	wantErr(t, err, "PR #1 is no longer in this stack — ctrl+r to refresh")
 }
 
 func TestLoadStackPlanMergeQueueDetectionErrorRefuses(t *testing.T) {
 	stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1)}, queueErr: errors.New("graphql down")}
-	plan, err := loadStackPlan(gh.PR{Number: 1}, boardOf(cleanRow(1)), stacks, nil)
+	plan, err := loadStackPlan(stackRef(1), boardOf(cleanRow(1)), stacks, nil)
 	wantErr(t, err, "Stack merge failed: couldn't check the base branch's merge queue: graphql down")
 	if plan != nil {
 		t.Errorf("plan = %+v, want none", plan)
@@ -290,7 +298,7 @@ func TestLoadStackPlanMergeQueueDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stacks := &fakeStackSource{found: true, st: gh.Stack{Members: openMembers(1)}, queue: tt.queue}
-			plan, err := loadStackPlan(gh.PR{Number: 1}, boardOf(cleanRow(1)), stacks, nil)
+			plan, err := loadStackPlan(stackRef(1), boardOf(cleanRow(1)), stacks, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -161,7 +161,7 @@ func TestActionDoneSupersededMergeFailureInvalidatesOwnNums(t *testing.T) {
 	if !m.fresh[2] {
 		t.Error("#2 lost its freshness, want B's rows left alone")
 	}
-	if got := fd.got[fetched:]; len(got) != 1 || !slices.Equal(got[0], []int{1}) {
+	if got := fd.got[fetched:]; len(got) != 1 || !slices.Equal(got[0], refsIn("owner/repo", 1)) {
 		t.Errorf("detail fetches = %v, want one for [1]", got)
 	}
 }
@@ -318,7 +318,7 @@ func TestStackMergeSettleFailedWhileStatusNil(t *testing.T) {
 			t.Errorf("#%d kept its freshness, want the run's layers invalidated", n)
 		}
 	}
-	if got := details.calls[fetched:]; len(got) != 1 || !slices.Equal(got[0], layers) {
+	if got := details.calls[fetched:]; len(got) != 1 || !slices.Equal(got[0], refsIn("owner/repo", layers...)) {
 		t.Errorf("detail fetches = %v, want one for %v", got, layers)
 	}
 }

@@ -54,7 +54,7 @@ func TestListRunsForBranch(t *testing.T) {
 	defer srv.Close()
 
 	s := testSource(srv, "owner/repo", "tok123")
-	runs, err := s.ListRunsForBranch("feat/x")
+	runs, err := s.ListRunsForBranch("owner/repo", "feat/x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestListRunsForBranchHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	s := testSource(srv, "owner/repo", "tok")
-	if _, err := s.ListRunsForBranch("feat/x"); err == nil {
+	if _, err := s.ListRunsForBranch("owner/repo", "feat/x"); err == nil {
 		t.Fatal("expected an error on 404")
 	}
 }
@@ -341,7 +341,7 @@ func TestRerunFailedJobs(t *testing.T) {
 	defer srv.Close()
 
 	s := testSource(srv, "owner/repo", "tok123")
-	if err := s.RerunFailedJobs(200); err != nil {
+	if err := s.RerunFailedJobs("owner/repo", 200); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPost {
@@ -362,7 +362,7 @@ func TestRerunJob(t *testing.T) {
 	defer srv.Close()
 
 	s := testSource(srv, "owner/repo", "tok123")
-	if err := s.RerunJob(555); err != nil {
+	if err := s.RerunJob("owner/repo", 555); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPost {
@@ -381,7 +381,7 @@ func TestRerunFailedJobsNon201IsError(t *testing.T) {
 	defer srv.Close()
 
 	s := testSource(srv, "owner/repo", "tok")
-	if err := s.RerunFailedJobs(1); err == nil {
+	if err := s.RerunFailedJobs("owner/repo", 1); err == nil {
 		t.Fatal("expected an error on non-201")
 	}
 }
@@ -415,7 +415,7 @@ func TestJobLogRedirectDropsAuthOnFollowup(t *testing.T) {
 	defer api.Close()
 
 	s := testSource(api, "owner/repo", "supersecrettoken")
-	raw, err := s.JobLog(42, false)
+	raw, err := s.JobLog("owner/repo", 42, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestJobLogNon302IsError(t *testing.T) {
 	defer api.Close()
 
 	s := testSource(api, "owner/repo", "tok")
-	if _, err := s.JobLog(1, false); err == nil {
+	if _, err := s.JobLog("owner/repo", 1, false); err == nil {
 		t.Fatal("expected an error on non-302 response")
 	}
 }
@@ -479,7 +479,7 @@ func TestJobLogBlobTransportFailureRedactsURL(t *testing.T) {
 	defer api.Close()
 
 	s := testSource(api, "owner/repo", "tok")
-	_, err = s.JobLog(1, false)
+	_, err = s.JobLog("owner/repo", 1, false)
 	if err == nil {
 		t.Fatal("expected a transport error")
 	}

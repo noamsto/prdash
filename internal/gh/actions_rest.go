@@ -28,15 +28,6 @@ func (s GraphSource) restBase() string {
 	return "https://api.github.com"
 }
 
-// repoParts splits s.repo ("owner/name") for building REST paths.
-func (s GraphSource) repoParts() (owner, name string, err error) {
-	owner, name, ok := strings.Cut(s.repo, "/")
-	if !ok {
-		return "", "", fmt.Errorf("bad repo %q", s.repo)
-	}
-	return owner, name, nil
-}
-
 // restRequest builds a REST API request against restBase() carrying the
 // Accept and API-version headers every endpoint in this file needs.
 // Authorization is injected by s.http's oauth2 transport on every RoundTrip,
@@ -66,8 +57,8 @@ func (s GraphSource) restRequestJSON(method, path string, payload []byte) (*http
 // ListRunsForBranch lists the 20 most recent workflow runs for branch,
 // newest-first, replacing
 // `gh run list --branch <b> -L 20 --json databaseId,conclusion,headSha`.
-func (s GraphSource) ListRunsForBranch(branch string) ([]WorkflowRun, error) {
-	owner, name, err := s.repoParts()
+func (s GraphSource) ListRunsForBranch(repo, branch string) ([]WorkflowRun, error) {
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +106,7 @@ func ActionsDisabled(err error) bool { return errors.Is(err, ErrActionsDisabled)
 
 // listRunsPage fetches one page of the repo's runs, optionally filtered by status.
 func (s GraphSource) listRunsPage(limit int, status string) ([]WorkflowRun, error) {
-	owner, name, err := s.repoParts()
+	owner, name, err := splitRepo(s.repo)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +229,7 @@ func mergeRuns(lists ...[]WorkflowRun) []WorkflowRun {
 // ListRunJobs fetches the first page of runID's latest-attempt jobs and the
 // total job count.
 func (s GraphSource) ListRunJobs(runID int64) ([]RunJob, int, error) {
-	owner, name, err := s.repoParts()
+	owner, name, err := splitRepo(s.repo)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -313,8 +304,8 @@ func (s GraphSource) postAction(path string) error {
 
 // RerunFailedJobs reruns the failed jobs of runID, replacing
 // `gh run rerun <id> --failed`.
-func (s GraphSource) RerunFailedJobs(runID int64) error {
-	owner, name, err := s.repoParts()
+func (s GraphSource) RerunFailedJobs(repo string, runID int64) error {
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return err
 	}
@@ -323,8 +314,8 @@ func (s GraphSource) RerunFailedJobs(runID int64) error {
 
 // RerunJob reruns a single job and its dependent jobs, replacing
 // `gh run rerun --job <id>`.
-func (s GraphSource) RerunJob(jobID int64) error {
-	owner, name, err := s.repoParts()
+func (s GraphSource) RerunJob(repo string, jobID int64) error {
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return err
 	}
@@ -356,8 +347,8 @@ func timeoutHTTPClient(checkRedirect func(*http.Request, []*http.Request) error)
 // dedicated, non-oauth2 client that never auto-follows, reads Location off
 // the 302 itself, then issues a second, independent, unauthenticated request
 // to that URL.
-func (s GraphSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
-	owner, name, err := s.repoParts()
+func (s GraphSource) JobLog(repo string, jobID int64, failedOnly bool) ([]byte, error) {
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return nil, err
 	}

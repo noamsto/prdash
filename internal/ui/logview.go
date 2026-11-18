@@ -189,9 +189,9 @@ func (m *Model) openJobLog(jobID, label string, showAll bool) tea.Cmd {
 
 // fetchJobLogCmd fetches a job log off the UI thread and reports it back.
 func (m Model) fetchJobLogCmd(job string, all bool) tea.Cmd {
-	native := m.actionsSource
+	native, repo := m.actionsSource, m.repo
 	return func() tea.Msg {
-		out, err := action.JobLog(native, job, !all)
+		out, err := action.JobLog(native, repo, job, !all)
 		return logFetchedMsg{job: job, all: all, raw: out, err: err}
 	}
 }

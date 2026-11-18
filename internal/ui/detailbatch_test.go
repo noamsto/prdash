@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/noamsto/prdash/internal/cache"
@@ -10,19 +11,28 @@ import (
 )
 
 type fakeDetailSource struct {
-	got [][]int // numbers passed to each FetchDetails call
+	got [][]gh.PRRef // refs passed to each FetchDetails call
 	ret map[int]gh.PRDetail
 }
 
-func (f *fakeDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, map[int][]byte, error) {
-	f.got = append(f.got, append([]int(nil), nums...))
-	details := map[int]gh.PRDetail{}
-	raws := map[int][]byte{}
-	for _, n := range nums {
-		details[n] = f.ret[n]
-		raws[n], _ = json.Marshal(f.ret[n])
+func (f *fakeDetailSource) FetchDetails(refs []gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
+	f.got = append(f.got, append([]gh.PRRef(nil), refs...))
+	details := map[gh.PRRef]gh.PRDetail{}
+	raws := map[gh.PRRef][]byte{}
+	for _, r := range refs {
+		details[r] = f.ret[r.Number]
+		raws[r], _ = json.Marshal(f.ret[r.Number])
 	}
 	return details, raws, nil
+}
+
+// refsIn qualifies nums with repo, for asserting what a fake source received.
+func refsIn(repo string, nums ...int) []gh.PRRef {
+	refs := make([]gh.PRRef, len(nums))
+	for i, n := range nums {
+		refs[i] = gh.PRRef{Repo: repo, Number: n}
+	}
+	return refs
 }
 
 func batchModel(t *testing.T, fd *fakeDetailSource, prs []gh.PR) Model {
@@ -51,7 +61,7 @@ func TestBatchDetailCmdPopulatesDetail(t *testing.T) {
 	if !got.fresh[5] {
 		t.Error("PR 5 should be marked fresh after the batch lands")
 	}
-	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 5 {
+	if len(fd.got) != 1 || !slices.Equal(fd.got[0], refsIn("owner/repo", 5)) {
 		t.Errorf("source called with %v, want one call for [5]", fd.got)
 	}
 }
@@ -85,7 +95,7 @@ func TestCursorDetailRoutesToBatchSource(t *testing.T) {
 	if _, ok := cmd().(detailsBatchMsg); !ok {
 		t.Error("cursor detail should route through the batch source (detailsBatchMsg)")
 	}
-	if len(fd.got) != 1 || fd.got[0][0] != 9 {
+	if len(fd.got) != 1 || fd.got[0][0] != (gh.PRRef{Repo: "owner/repo", Number: 9}) {
 		t.Errorf("source called with %v, want one call for [9]", fd.got)
 	}
 }

@@ -360,12 +360,12 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 			err: fmt.Errorf("external check %q has no rerunnable job", c.Label())}
 		return m, clearStatusCmd(m.actionStatus)
 	}
-	native := m.actionsSource
+	native, repo := m.actionsSource, m.repo
 	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
 		refresh: true, rerunCI: true, nums: []int{ps.prAt(m.cursor).Number}}
 	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{stat: stat, err: action.RerunCheck(native, job)}
+		return actionDoneMsg{stat: stat, err: action.RerunCheck(native, repo, job)}
 	}, m.startSpinner())
 }
 
@@ -381,12 +381,12 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 			return m, clearStatusCmd(m.actionStatus)
 		}
 	}
-	branch, native := v.HeadRefName, m.actionsSource
+	branch, native, repo := v.HeadRefName, m.actionsSource, m.repo
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
 		refresh: true, rerunCI: true, nums: []int{v.Number}}
 	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{stat: stat, err: action.RerunFailed(native, branch)}
+		return actionDoneMsg{stat: stat, err: action.RerunFailed(native, repo, branch)}
 	}, m.startSpinner())
 }
 
