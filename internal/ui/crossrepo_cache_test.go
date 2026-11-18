@@ -184,19 +184,8 @@ func TestCrossFetchFailureKeepsBoard(t *testing.T) {
 	if got := boardLayout(m); !slices.Contains(got, "stop:c/d") || !slices.Contains(got, "stop:a/b") {
 		t.Errorf("layout after failed cross fetch = %v, want the c/d and a/b stops kept", got)
 	}
-	if m.crossErr == nil {
-		t.Error("m.crossErr = nil after a failed cross search")
-	}
 	if m.actionStatus == nil || !strings.Contains(m.actionStatus.fail, "Other repos: search down") {
 		t.Errorf("status = %+v, want an \"Other repos: search down\" hint", m.actionStatus)
-	}
-
-	fake.err = nil
-	fake.prs = cross
-	u, _ = m.Update(m.sectionsFetchCmd(true)())
-	m = u.(Model)
-	if m.crossErr != nil {
-		t.Errorf("m.crossErr = %v after a successful cross search, want nil", m.crossErr)
 	}
 }
 

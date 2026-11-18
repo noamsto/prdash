@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -64,7 +65,7 @@ func TestPartialChecksApplied(t *testing.T) {
 		if got := ps.prAt(rowIndexOf(t, ps, 1)).StatusCheckRollup; len(got) != 1 || got[0].State != "SUCCESS" {
 			t.Errorf("#1 rollup = %+v, want the fetched SUCCESS", got)
 		}
-		if m.actionStatus == nil {
+		if m.actionStatus == nil || !strings.Contains(m.actionStatus.fail, "Checks: "+errOtherRepo.Error()) {
 			t.Error("no hint for the failed repo's checks")
 		}
 	})

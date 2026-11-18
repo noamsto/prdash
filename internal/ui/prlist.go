@@ -144,7 +144,6 @@ type Model struct {
 	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
 	repoFold          map[string]bool      // explicit per-repo fold state; an absent repo is folded iff not the launch repo
 	crossPRs          []gh.PR              // other repos' open PRs the default board groups below the launch repo's
-	crossErr          error                // last cross search failure; cleared by the next success
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
@@ -2261,7 +2260,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a server qualifier became active, or state changed: cache only
 		}
 		if msg.crossOK {
-			m.crossPRs, m.crossErr = msg.cross, nil
+			m.crossPRs = msg.cross
 		}
 		m.refreshing = false
 		m.err = nil
@@ -2273,7 +2272,6 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive()
 		cmds := []tea.Cmd{m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll()}
 		if msg.crossErr != nil {
-			m.crossErr = msg.crossErr
 			cmds = append(cmds, m.hint("Other repos: "+msg.crossErr.Error()))
 		}
 		if !msg.replace {
