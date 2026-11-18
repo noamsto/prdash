@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -116,7 +117,7 @@ func TestFetchPRsSendsMergeInfoHeaderAndParsesMergeState(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"search":{"nodes":[{"number":1,"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"search":{"nodes":[{"number":1,"repository":{"nameWithOwner":"owner/repo"},"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}]}}}`))
 	}))
 	defer srv.Close()
 
@@ -133,5 +134,42 @@ func TestFetchPRsSendsMergeInfoHeaderAndParsesMergeState(t *testing.T) {
 	}
 	if len(prs) != 1 || prs[0].Mergeable != "CONFLICTING" || prs[0].MergeStateStatus != "DIRTY" {
 		t.Errorf("prs = %+v, want one PR with CONFLICTING/DIRTY", prs)
+	}
+	if prs[0].Repo != "owner/repo" {
+		t.Errorf("Repo = %q, want owner/repo", prs[0].Repo)
+	}
+	if got, want := prs[0].Ref(), (PRRef{Repo: "owner/repo", Number: 1}); got != want {
+		t.Errorf("Ref = %+v, want %+v", got, want)
+	}
+}
+
+func TestFetchCrossRepoPRs(t *testing.T) {
+	var vars struct {
+		Variables struct {
+			Q     string `json:"q"`
+			Limit int    `json:"limit"`
+		} `json:"variables"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &vars)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"search":{"nodes":[{"number":3,"repository":{"nameWithOwner":"a/b"}},{"number":4,"repository":{"nameWithOwner":"c/d"}}]}}}`))
+	}))
+	defer srv.Close()
+
+	s := testQuerySource(srv, "owner/repo")
+	prs, _, err := s.FetchCrossRepoPRs("is:open involves:@me archived:false sort:updated-desc", 100)
+	if err != nil {
+		t.Fatalf("FetchCrossRepoPRs: %v", err)
+	}
+	if want := "is:pr -repo:owner/repo is:open involves:@me archived:false sort:updated-desc"; vars.Variables.Q != want {
+		t.Errorf("q = %q, want %q", vars.Variables.Q, want)
+	}
+	if vars.Variables.Limit != 100 {
+		t.Errorf("limit = %d, want 100", vars.Variables.Limit)
+	}
+	if len(prs) != 2 || prs[0].Repo != "a/b" || prs[1].Repo != "c/d" {
+		t.Errorf("prs = %+v, want rows for a/b and c/d", prs)
 	}
 }

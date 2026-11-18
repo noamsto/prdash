@@ -77,11 +77,18 @@ type PRStack struct {
 	BaseRefName string `json:"baseRefName"`
 }
 
+// PRRef identifies a PR across repos; Repo is owner/name.
+type PRRef struct {
+	Repo   string
+	Number int
+}
+
 type PR struct {
 	// ID is the GraphQL node ID (e.g. "PR_kwDOA..."), populated only on the
 	// GraphSource list path — every mutation input needs it as pullRequestId.
 	// Empty on the gh-CLI path, which mutates by number instead.
 	ID     string `json:"id"`
+	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
 	Author struct {
@@ -190,3 +197,6 @@ func (c Check) Result() string {
 		return "pass"
 	}
 }
+
+// Ref returns the PR's repo-qualified identity.
+func (p PR) Ref() PRRef { return PRRef{Repo: p.Repo, Number: p.Number} }

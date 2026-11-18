@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
+	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/triage"
 )
 
@@ -19,6 +23,119 @@ func cardGlyph(k triage.Kind) string {
 	default:
 		return dimStyle.Render("•")
 	}
+}
+
+// stageBucket is one segment of a repo header's stage strip, in display order.
+type stageBucket int
+
+const (
+	stageFailing stageBucket = iota
+	stageRunning
+	stageReview
+	stageBlocked
+	stageDraft
+	stageReady
+	stageOther
+	stageBucketCount
+)
+
+type stageCounts [stageBucketCount]int
+
+func (c stageCounts) total() int {
+	n := 0
+	for _, v := range c {
+		n += v
+	}
+	return n
+}
+
+// headerBucket maps a preliminary triage kind to its header bucket. Only an
+// approved Fallback with passing or absent CI counts as ready.
+func headerBucket(p gh.PR, k triage.Kind) stageBucket {
+	switch k {
+	case triage.KindChecksFailing, triage.KindChangesRequested:
+		return stageFailing
+	case triage.KindChecksRunning:
+		return stageRunning
+	case triage.KindAwaitingReview:
+		return stageReview
+	case triage.KindBlocked:
+		return stageBlocked
+	case triage.KindDraft:
+		return stageDraft
+	case triage.KindFallback:
+		if ci := p.CIState(); p.ReviewDecision == "APPROVED" && (ci == "pass" || ci == "none") {
+			return stageReady
+		}
+	}
+	return stageOther
+}
+
+func stageGlyph(b stageBucket) string {
+	switch b {
+	case stageFailing:
+		return cardGlyph(triage.KindChecksFailing)
+	case stageRunning:
+		return cardGlyph(triage.KindChecksRunning)
+	case stageReview:
+		return pendStyle.Render("●")
+	case stageBlocked:
+		return dimStyle.Render("⧉")
+	case stageDraft:
+		return dimStyle.Render(draftGlyph)
+	case stageReady:
+		return cardGlyph(triage.KindReady)
+	}
+	return cardGlyph(triage.KindFallback)
+}
+
+func stageLabel(b stageBucket) string {
+	return [...]string{"failing", "running", "review", "blocked", "draft", "ready", "other"}[b]
+}
+
+func countStages(prs []gh.PR, viewer string, parent func(gh.PR) int) stageCounts {
+	var c stageCounts
+	for _, p := range prs {
+		c[headerBucket(p, triage.Preliminary(p, viewer, parent(p)).Kind)]++
+	}
+	return c
+}
+
+// renderRepoHeader lays out "repo  N · glyph count ..." within width, shedding
+// bucket counts right to left, then the separator, then the total, then
+// truncating the repo name.
+func renderRepoHeader(repo string, c stageCounts, width int, focused bool) string {
+	if width <= 0 {
+		return ""
+	}
+	var parts []string
+	for b := stageBucket(0); b < stageBucketCount; b++ {
+		if c[b] > 0 {
+			parts = append(parts, stageGlyph(b)+strconv.Itoa(c[b]))
+		}
+	}
+	total := "  " + strconv.Itoa(c.total())
+	const sep = " · "
+	name := sectionLabelStyle.Render(repo)
+	var line string
+	switch {
+	case lipgloss.Width(name+total) > width:
+		line = truncate(name, width)
+	default:
+		line = name + total
+		for n := len(parts); n > 0; n-- {
+			cand := line + sep + strings.Join(parts[:n], " ")
+			if lipgloss.Width(cand) <= width {
+				line = cand
+				break
+			}
+		}
+	}
+	if !focused {
+		return line
+	}
+	line += strings.Repeat(" ", max(width-lipgloss.Width(line), 0))
+	return rowBgWrap(line, theme.RowBg)
 }
 
 // runningRow is one in-flight check: glyph, label and elapsed time. Shared by the

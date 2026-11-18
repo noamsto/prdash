@@ -12,6 +12,12 @@ type PRSource interface {
 	FetchPRs(filter string, limit int) (prs []PR, raw []byte, err error)
 }
 
+// CrossRepoPRSource fetches PRs matching a search filter from every repo except
+// the current one, with the same raw-bytes contract as PRSource.
+type CrossRepoPRSource interface {
+	FetchCrossRepoPRs(filter string, limit int) (prs []PR, raw []byte, err error)
+}
+
 // DetailSource fetches per-PR detail for a set of PR numbers in one shot,
 // returning the mapped details plus the JSON bytes to cache per number (which
 // must round-trip through the detail hydrate path). A batched backend collapses

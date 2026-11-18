@@ -4218,7 +4218,8 @@ func (m Model) statusBar() string {
 // entry has none of them and would paint "+0 -0". v6 adds mergeable and
 // mergeStateStatus; a v5 cache entry has neither and would paint a blank
 // board "!" column for a conflicted PR until its detail happens to be fetched.
-const schemaVer = "v6"
+// v7 adds repo; a v6 row has none and would route to the launch repo.
+const schemaVer = "v7"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.
