@@ -269,7 +269,7 @@ func (m *Model) cursorAnchor() (anchor gh.PRRef, order []gh.PRRef) {
 		}
 		order = append(order, r)
 	}
-	if m.cursor >= 0 && m.cursor < l {
+	if m.cursor >= 0 && m.cursor < len(order) {
 		anchor = order[m.cursor]
 	}
 	return anchor, order

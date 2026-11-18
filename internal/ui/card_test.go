@@ -154,7 +154,7 @@ func TestCountStagesFromPreliminary(t *testing.T) {
 		stageFailing: 2, stageRunning: 1, stageReview: 1, stageBlocked: 1,
 		stageDraft: 1, stageReady: 2, stageOther: 1,
 	}
-	for b := stageBucket(0); b < stageBucketCount; b++ {
+	for b := range stageBucketCount {
 		if c[b] != want[b] {
 			t.Errorf("bucket %s = %d, want %d", stageLabel(b), c[b], want[b])
 		}

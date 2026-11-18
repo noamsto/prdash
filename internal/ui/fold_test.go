@@ -136,7 +136,7 @@ func TestFoldStopIsInert(t *testing.T) {
 		if m.pickerMode != "" {
 			t.Errorf("%s on a stop opened the %s picker", k, m.pickerMode)
 		}
-		m.actionStatus = nil
+		m.actionStatus = &actionStat{settled: true}
 	}
 	if len(fm.mergeCalls)+len(fm.autoMergeCalls)+len(fm.markReadyCalls)+len(fm.convertToDraftCalls)+len(fm.updateBranchCalls)+len(fm.approveCalls)+len(fm.reviewCalls) != 0 {
 		t.Errorf("a stop triggered mutations: %+v", fm)
@@ -235,7 +235,7 @@ func TestLegendListsFoldKey(t *testing.T) {
 
 func TestGroupedBoardFitsWidths(t *testing.T) {
 	glyphs := make([]string, 0, int(stageBucketCount))
-	for b := stageBucket(0); b < stageBucketCount; b++ {
+	for b := range stageBucketCount {
 		glyphs = append(glyphs, ansi.Strip(stageGlyph(b)))
 	}
 	for _, w := range []int{120, 80} {

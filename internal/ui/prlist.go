@@ -1517,11 +1517,9 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 		var wg sync.WaitGroup
 		wg.Add(3)
 		if crossSrc != nil {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				cross.prs, cross.raw, cross.err = crossSrc.FetchCrossRepoPRs(crossRepoFilter, crossRepoLimit)
-			}()
+			})
 		}
 		go func() {
 			defer wg.Done()

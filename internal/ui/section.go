@@ -434,7 +434,7 @@ func (s *PRSection) setShownOrdered(idx []int) {
 		s.setShownRepoGroups(idx)
 		return
 	}
-	s.groupRepos, s.groupRows = nil, nil
+	s.groupRepos, s.groupRows = s.groupRepos[:0], map[string][]int{}
 	shown, grouped := s.orderUnits(idx)
 	s.grouped = grouped
 	s.setShownStacks(shown)

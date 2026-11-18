@@ -67,8 +67,10 @@ func headerBucket(p gh.PR, k triage.Kind) stageBucket {
 		if ci := p.CIState(); p.ReviewDecision == "APPROVED" && (ci == "pass" || ci == "none") {
 			return stageReady
 		}
+		return stageOther
+	default:
+		return stageOther
 	}
-	return stageOther
 }
 
 func stageGlyph(b stageBucket) string {
@@ -85,8 +87,9 @@ func stageGlyph(b stageBucket) string {
 		return dimStyle.Render(draftGlyph)
 	case stageReady:
 		return cardGlyph(triage.KindReady)
+	default:
+		return cardGlyph(triage.KindFallback)
 	}
-	return cardGlyph(triage.KindFallback)
 }
 
 func stageLabel(b stageBucket) string {
@@ -108,8 +111,8 @@ func renderRepoHeader(repo string, c stageCounts, width int, focused bool) strin
 	if width <= 0 {
 		return ""
 	}
-	var parts []string
-	for b := stageBucket(0); b < stageBucketCount; b++ {
+	parts := make([]string, 0, stageBucketCount)
+	for b := range stageBucketCount {
 		if c[b] > 0 {
 			parts = append(parts, stageGlyph(b)+strconv.Itoa(c[b]))
 		}

@@ -79,7 +79,7 @@ func handoffLines(t *testing.T, path string) [][]string {
 		t.Fatal(err)
 	}
 	var out [][]string
-	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -124,8 +124,7 @@ func TestOtherRepoWorktree(t *testing.T) {
 		if cmd == nil {
 			t.Fatal("enter returned no cmd")
 		}
-		u, _ := m.Update(firstBatchMsg(t, cmd))
-		m = u.(Model)
+		_, _ = m.Update(firstBatchMsg(t, cmd))
 
 		if len(*calls) != 1 || (*calls)[0].dir != checkout || (*calls)[0].branch != "feat/b" {
 			t.Errorf("preflight calls = %+v, want one in %s for feat/b", *calls, checkout)
