@@ -65,10 +65,10 @@ func markedRows(m Model) int {
 
 // selectedNumbers is the board's selection as numbers, ascending.
 func selectedNumbers(m Model) []int {
-	n := m.section.(numbered)
 	var out []int
 	for _, i := range m.sel.indices() {
-		out = append(out, n.numberAt(i))
+		r, _ := m.refAt(i)
+		out = append(out, r.Number)
 	}
 	slices.Sort(out)
 	return out

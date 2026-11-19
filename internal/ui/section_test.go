@@ -486,8 +486,8 @@ func TestPRStacksStayTogetherAcrossCategoriesAndDraftFilter(t *testing.T) {
 	other.Author.Login = "dave"
 
 	s := NewPRSection("")
-	s.SetCategorized([]gh.PR{root, middle, tip, other}, map[int]string{
-		100: "Review requested", 101: "Others", 102: "Others", 200: "Others",
+	s.SetCategorized([]gh.PR{root, middle, tip, other}, map[gh.PRRef]string{
+		{Number: 100}: "Review requested", {Number: 101}: "Others", {Number: 102}: "Others", {Number: 200}: "Others",
 	}, []string{"Review requested", "Others"})
 	s.SetHideDrafts(true)
 	s.SetShown([]int{0, 1, 2, 3})
@@ -522,7 +522,7 @@ func TestPRStackUnitLabelSelectsWholeChain(t *testing.T) {
 	s := NewPRSection("")
 	s.SetForceGroup(true)
 	s.SetPRs(prs)
-	if s.unitLabel(1) != "stack:900" {
+	if s.unitLabel(1) != "stack:#900" {
 		t.Fatalf("middle stack unit = %q, want stack identity", s.unitLabel(1))
 	}
 }
@@ -697,7 +697,7 @@ func TestSetForceFlatSkipsGrouping(t *testing.T) {
 	s.SetCategorized([]gh.PR{
 		{Number: 1, Author: author("a")},
 		{Number: 2, Author: author("b")},
-	}, map[int]string{1: "Mine", 2: "Others"}, []string{"Mine", "Others"})
+	}, map[gh.PRRef]string{{Number: 1}: "Mine", {Number: 2}: "Others"}, []string{"Mine", "Others"})
 	s.SetForceFlat(true)
 	// s.prs is now number-sorted (#2, #1); category order would show #1 (Mine)
 	// before #2 (Others) — SetForceFlat must keep this raw idx order instead.
@@ -1383,7 +1383,7 @@ func TestCategoriesClusterByAuthorInside(t *testing.T) {
 	prs[2].Author.Login = "asaf-s-factify"
 
 	s := NewPRSection("is:open")
-	cats := map[int]string{3086: "Review requested", 3084: "Review requested", 3071: "Review requested"}
+	cats := map[gh.PRRef]string{{Number: 3086}: "Review requested", {Number: 3084}: "Review requested", {Number: 3071}: "Review requested"}
 	s.SetCategorized(prs, cats, []string{"Review requested"})
 
 	got := []int{}

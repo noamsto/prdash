@@ -233,7 +233,7 @@ func TestParseSanitizesRunsForBranch(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			v := jstr(t, row.value)
 			srv := jsonServer(t, `{"workflow_runs":[{"id":1,"conclusion":`+v+`,"head_sha":`+v+`}]}`)
-			runs, err := testSource(srv, "o/r", "tok").ListRunsForBranch("main")
+			runs, err := testSource(srv, "o/r", "tok").ListRunsForBranch("o/r", "main")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -300,7 +300,7 @@ func TestParseSanitizesStack(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			v := jstr(t, row.value)
 			srv := jsonServer(t, `[{"number":1,"base":{"ref":`+v+`},"pull_requests":[]}]`)
-			st, ok, err := testSource(srv, "o/r", "tok").FetchStackForPR(1)
+			st, ok, err := testSource(srv, "o/r", "tok").FetchStackForPR(PRRef{Repo: "o/r", Number: 1})
 			if err != nil || !ok {
 				t.Fatalf("FetchStackForPR = %v, %v", ok, err)
 			}
@@ -320,7 +320,7 @@ func TestParseSanitizesAssignableUsers(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			v := jstr(t, row.value)
 			srv := jsonServer(t, `{"data":{"repository":{"assignableUsers":{"nodes":[{"login":`+v+`,"name":`+v+`}]}}}}`)
-			users, _, err := testQuerySource(srv, "o/r").FetchAssignableUsers()
+			users, _, err := testQuerySource(srv, "o/r").FetchAssignableUsers("o/r")
 			if err != nil {
 				t.Fatal(err)
 			}

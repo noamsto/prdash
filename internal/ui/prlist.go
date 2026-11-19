@@ -82,7 +82,7 @@ type Model struct {
 	repo              string
 	actions           map[string]action.Action
 	pending           *action.Action
-	pendingTargets    []int // per-selected pending's target numbers, as of the prompt; confirmAnswer refuses a changed set
+	pendingTargets    []gh.PRRef // per-selected pending's target rows, as of the prompt; confirmAnswer refuses a changed set
 	showActions       bool
 	showLegend        bool
 	legendQuery       string // live substring filter typed while the legend overlay is open
@@ -90,23 +90,24 @@ type Model struct {
 	actionFilter      textinput.Model
 	actionCursor      int
 	sel               selection
-	detail            map[int]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
-	detailErr         map[int]error       // per-number background detail failure; never becomes the board error
-	fresh             map[int]bool        // PR numbers whose detail was refetched this session; gates revalidation
-	reviewRequested   map[int]bool        // PR numbers in the latest review-requested half; gates the ◐ marker off on re-request
-	reviewedSet       map[int]bool        // PR numbers in the latest reviewed-by-me half; the ◐ marker's candidates
-	ciRerun           map[int]time.Time   // PR number → stamp time when its checks-in-progress override was applied
-	held              map[int]string      // number → looked-up GitHub state ("" = lookup pending); a held row stays shown past an unrequested refetch
-	heldGen           int                 // bumped on every clearHeld, so a stale heldStatesMsg lookup response is dropped
-	heldPageFull      bool                // the latest paint's list (any half of it) hit its fetch limit; see heldTag
-	sessionMerged     map[int]time.Time   // PR number → the time prdash saw its merge succeed this session; never cleared
-	detailSeq         int                 // bumped on cursor move; gates the debounced detail fetch
+	detail            map[gh.PRRef]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
+	detailErr         map[gh.PRRef]error       // per-row background detail failure; never becomes the board error
+	fresh             map[gh.PRRef]bool        // PRs whose detail was refetched this session; gates revalidation
+	reviewRequested   map[gh.PRRef]bool        // PRs in the latest review-requested half; gates the ◐ marker off on re-request
+	reviewedSet       map[gh.PRRef]bool        // PRs in the latest reviewed-by-me half; the ◐ marker's candidates
+	ciRerun           map[gh.PRRef]time.Time   // PR → stamp time when its checks-in-progress override was applied
+	held              map[gh.PRRef]string      // row → looked-up GitHub state ("" = lookup pending); a held row stays shown past an unrequested refetch
+	heldGen           int                      // bumped on every clearHeld, so a stale heldStatesMsg lookup response is dropped
+	heldPageFull      bool                     // the latest paint's list (any half of it) hit its fetch limit; see heldTag
+	sessionMerged     map[gh.PRRef]time.Time   // PR → the time prdash saw its merge succeed this session; never cleared
+	detailSeq         int                      // bumped on cursor move; gates the debounced detail fetch
 	previewExpanded   bool
 	previewN          int
 	expanded          bool
 	expandedTab       int
 	checkCursor       int    // hovered check on the expanded Checks tab
 	logView           bool   // the check-log sub-view is active (over the Checks tab)
+	logRepo           string // repo of the job whose log is shown
 	logJobID          string // Actions job ID whose log is shown
 	logLabel          string // hovered check's label, for the log box title
 	logShowAll        bool   // full job log vs failed-steps-only
@@ -132,6 +133,7 @@ type Model struct {
 	pendingCascade    *cascadePlan         // plan awaiting the y/n prompt
 	cascadeReport     []string             // settled cascade's per-PR report; nil when none
 	stackSource       gh.StackSource       // stack-membership + merge-queue lookup backend
+	crossSource       gh.CrossRepoPRSource // other-repo open PRs for the default board; nil disables the cross-repo search
 	stackLoadSeq      int                  // bumped per stack-merge load; a stackPlanLoadedMsg from another load is dropped
 	stackLoad         *actionStat          // the in-flight stack load's badge; nil when no load is in flight
 	pendingStackMerge *stackMergePlan      // loaded stack plan awaiting the y/n prompt
@@ -140,13 +142,17 @@ type Model struct {
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
 	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
+	repoFold          map[string]bool      // explicit per-repo fold state; an absent repo is folded iff not the launch repo
+	crossPRs          []gh.PR              // other repos' open PRs the default board groups below the launch repo's
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
 	pick              picker
-	members           []gh.User              // cached assignable users for this repo
+	members           []gh.User              // cached assignable users for membersRepo
+	membersRepo       string                 // repo members belongs to: the reviewer picker's row, else the launch repo
 	membersErr        error                  // last member-fetch failure; hints the picker/omni dropdown
 	viewerLogin       string                 // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string             // exits-TUI commands to run after quit when no orchestrator sink is set
+	reposRoot         string                 // parent of the sibling checkouts other-repo rows run git/wt in
 	switchNotice      string                 // read-only wt preflight failure; held until a keypress
 	switchChecking    bool                   // a switchPreflightCmd is in flight; blocks a second dispatch
 	themeMode         string                 // "light"|"dark"; active palette mode
@@ -178,10 +184,11 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		cache:   c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
-		detail:  map[int]gh.PRDetail{}, detailErr: map[int]error{}, fresh: map[int]bool{},
-		reviewRequested: map[int]bool{}, reviewedSet: map[int]bool{},
-		ciRerun: map[int]time.Time{},
-		held:    map[int]string{}, sessionMerged: map[int]time.Time{},
+		detail:  map[gh.PRRef]gh.PRDetail{}, detailErr: map[gh.PRRef]error{}, fresh: map[gh.PRRef]bool{},
+		reviewRequested: map[gh.PRRef]bool{}, reviewedSet: map[gh.PRRef]bool{},
+		ciRerun: map[gh.PRRef]time.Time{},
+		held:    map[gh.PRRef]string{}, sessionMerged: map[gh.PRRef]time.Time{},
+		repoFold:    map[string]bool{},
 		issueDetail: map[int]gh.IssueDetail{}, issueFresh: map[int]bool{},
 		previewN:        2,
 		logCache:        map[string][]logStep{},
@@ -208,6 +215,10 @@ func (m *Model) SetDetailSource(s gh.DetailSource) { m.detailSource = s }
 // SetStackSource installs the stack-membership backend the stack merge loads
 // its plan from.
 func (m *Model) SetStackSource(s gh.StackSource) { m.stackSource = s }
+
+// SetCrossRepoSource installs the backend for the default board's cross-repo
+// open-PR search.
+func (m *Model) SetCrossRepoSource(s gh.CrossRepoPRSource) { m.crossSource = s }
 
 // SetChecksSource installs the rollup-only backend the live-checks poll uses
 // instead of refetching the whole list.
@@ -243,7 +254,36 @@ func (m *Model) SetRunsSource(s gh.RunsSource) { m.runsSource = s }
 // SetRateSource installs the backend the header's API-budget segment samples.
 func (m *Model) SetRateSource(s gh.RateSource) { m.rateSource = s }
 
-func (m *Model) SetRepo(repo string) { m.repo = repo }
+// launchRef qualifies a number with the launch repo: issue rows and the
+// launch-scoped calls.
+func (m Model) launchRef(n int) gh.PRRef { return gh.PRRef{Repo: m.repo, Number: n} }
+
+// stampRepo fills the launch repo on rows that carry none (fixtures and rows
+// cached before PR.Repo existed), and rewrites a case-only mismatch to m.repo:
+// m.repo keeps the origin URL's casing while rows carry GitHub's
+// nameWithOwner. Copy-on-write, like applyCIRerun: fetched slices may share
+// the cache's backing array.
+func (m *Model) stampRepo(prs []gh.PR) []gh.PR {
+	var out []gh.PR
+	for i, p := range prs {
+		if p.Repo == m.repo || (p.Repo != "" && !strings.EqualFold(p.Repo, m.repo)) {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(prs)
+		}
+		out[i].Repo = m.repo
+	}
+	if out == nil {
+		return prs
+	}
+	return out
+}
+
+func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo = repo, repo }
+
+// SetReposRoot sets where other repos' local checkouts are looked up.
+func (m *Model) SetReposRoot(root string) { m.reposRoot = root }
 
 // ciRerunWindow is how long a PR keeps its optimistic checks-in-progress state
 // after an update-branch or rerun. Long enough for GitHub to queue the new runs,
@@ -284,32 +324,32 @@ func (m *Model) applyOptimisticAction(stat *actionStat) {
 	}
 	switch stat.native {
 	case "auto-merge-squash":
-		for _, n := range stat.nums {
-			ps.updatePR(n, func(p *gh.PR) {
+		for _, r := range stat.refs {
+			ps.updatePR(r, func(p *gh.PR) {
 				p.AutoMergeRequest = &gh.AutoMergeRequest{MergeMethod: "SQUASH"}
 			})
 		}
 	case "disable-auto-merge":
-		for _, n := range stat.nums {
-			ps.updatePR(n, func(p *gh.PR) { p.AutoMergeRequest = nil })
+		for _, r := range stat.refs {
+			ps.updatePR(r, func(p *gh.PR) { p.AutoMergeRequest = nil })
 		}
 	case "mark-ready":
-		for _, n := range stat.nums {
-			ps.updatePR(n, func(p *gh.PR) { p.IsDraft = false })
+		for _, r := range stat.refs {
+			ps.updatePR(r, func(p *gh.PR) { p.IsDraft = false })
 		}
 	case "convert-to-draft":
-		for _, n := range stat.nums {
-			ps.updatePR(n, func(p *gh.PR) { p.IsDraft = true })
+		for _, r := range stat.refs {
+			ps.updatePR(r, func(p *gh.PR) { p.IsDraft = true })
 		}
 	case "approve":
-		for _, n := range stat.nums {
-			ps.updatePR(n, func(p *gh.PR) {
+		for _, r := range stat.refs {
+			ps.updatePR(r, func(p *gh.PR) {
 				p.ReviewDecision = "APPROVED"
 			})
 			if m.viewerLogin == "" {
 				continue
 			}
-			d, ok := m.detail[n]
+			d, ok := m.detail[r]
 			if !ok {
 				continue
 			}
@@ -322,12 +362,12 @@ func (m *Model) applyOptimisticAction(stat *actionStat) {
 				}
 			}
 			if !replaced {
-				var r gh.Review
-				r.Author.Login = m.viewerLogin
-				r.State = "APPROVED"
-				d.LatestReviews = append(d.LatestReviews, r)
+				var rv gh.Review
+				rv.Author.Login = m.viewerLogin
+				rv.State = "APPROVED"
+				d.LatestReviews = append(d.LatestReviews, rv)
 			}
-			m.detail[n] = d
+			m.detail[r] = d
 		}
 	default:
 		return
@@ -338,9 +378,9 @@ func (m *Model) applyOptimisticAction(stat *actionStat) {
 
 func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
 	now := time.Now()
-	for n, stamp := range m.ciRerun {
+	for r, stamp := range m.ciRerun {
 		if now.Sub(stamp) > ciRerunWindow {
-			delete(m.ciRerun, n) // PR left the board (or its own next call): sweep so the fast path below stays true
+			delete(m.ciRerun, r) // PR left the board (or its own next call): sweep so the fast path below stays true
 		}
 	}
 	if len(m.ciRerun) == 0 {
@@ -349,12 +389,12 @@ func (m *Model) applyCIRerun(prs []gh.PR) []gh.PR {
 	out := make([]gh.PR, len(prs))
 	copy(out, prs)
 	for i, p := range out {
-		stamp, stamped := m.ciRerun[p.Number]
+		stamp, stamped := m.ciRerun[p.Ref()]
 		if !stamped {
 			continue
 		}
 		if hasCheckStartedAfter(p, stamp) {
-			delete(m.ciRerun, p.Number)
+			delete(m.ciRerun, p.Ref())
 			continue
 		}
 		// Copy before writing: these PR values come from the shared cache.
@@ -403,13 +443,13 @@ func (m *Model) markSessionMerged(merged []gh.PR) {
 	landed := time.Now()
 	ps, isPR := m.section.(*PRSection)
 	for _, p := range merged {
-		m.sessionMerged[p.Number] = landed
+		m.sessionMerged[p.Ref()] = landed
 		if isPR {
-			ps.updatePR(p.Number, func(pr *gh.PR) {
+			ps.updatePR(p.Ref(), func(pr *gh.PR) {
 				pr.State, pr.MergedAt = "MERGED", landed
 			})
 		}
-		delete(m.ciRerun, p.Number) // a landed PR's checks are moot; keep applyCIRerun off its row
+		delete(m.ciRerun, p.Ref()) // a landed PR's checks are moot; keep applyCIRerun off its row
 	}
 	m.rowGen++
 	m.repaintActive()
@@ -422,7 +462,7 @@ func (m *Model) setPRs(prs []gh.PR) { m.paintPRs(prs, false) }
 func (m *Model) setIssues(is []gh.Issue) { m.paintIssues(is, false) }
 
 func (m *Model) setSections(review, reviewed, open []gh.PR, viewer string) {
-	m.paintSections(review, reviewed, open, viewer, false, false)
+	m.paintSections(review, reviewed, open, m.crossPRs, viewer, false, false)
 }
 
 func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer string) {
@@ -436,7 +476,7 @@ func (m *Model) setIssueSections(assigned, authored, open []gh.Issue, viewer str
 func (m *Model) paintPRs(prs []gh.PR, replace bool) {
 	num, order := m.paintAnchor(false)
 	selNums, wasHeld := m.selectedRows()
-	prs = m.overlaySessionMerged(m.applyCIRerun(prs))
+	prs = m.overlaySessionMerged(m.applyCIRerun(m.stampRepo(prs)))
 	m.heldPageFull = len(prs) >= defaultLimit
 	if s, ok := m.section.(*PRSection); ok {
 		var prev []gh.PR
@@ -486,55 +526,58 @@ func (m *Model) paintIssues(is []gh.Issue, replace bool) {
 // and carry the ◐ marker (see commentedByMe) instead of sinking into Others.
 // A held row keeps the category it had; replace as in paintPRs, except that a
 // launch replace still carries the rows merged this session: search already
-// omits them, and the cached rows being dropped predate this session.
-func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, replace, launch bool) {
+// omits them, and the cached rows being dropped predate this session. cross
+// rows are categorized like open ones; the section groups other repos' rows
+// below the launch repo's.
+func (m *Model) paintSections(review, reviewed, open, cross []gh.PR, viewer string, replace, launch bool) {
 	num, order := m.paintAnchor(true)
 	selNums, wasHeld := m.selectedRows()
-	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit
-	review = m.overlaySessionMerged(review)
-	reviewed = m.overlaySessionMerged(reviewed)
-	open = m.overlaySessionMerged(open)
-	m.reviewRequested = make(map[int]bool, len(review))
-	m.reviewedSet = make(map[int]bool, len(reviewed))
-	cats := make(map[int]string, len(open)+len(review)+len(reviewed))
+	m.heldPageFull = len(review) >= defaultLimit || len(reviewed) >= defaultLimit || len(open) >= openListLimit || len(cross) >= crossRepoLimit
+	review = m.overlaySessionMerged(m.stampRepo(review))
+	reviewed = m.overlaySessionMerged(m.stampRepo(reviewed))
+	open = m.overlaySessionMerged(m.stampRepo(open))
+	cross = m.overlaySessionMerged(m.stampRepo(cross))
+	m.reviewRequested = make(map[gh.PRRef]bool, len(review))
+	m.reviewedSet = make(map[gh.PRRef]bool, len(reviewed))
+	cats := make(map[gh.PRRef]string, len(open)+len(review)+len(reviewed))
 	all := make([]gh.PR, 0, len(open)+len(review)+len(reviewed))
 	for _, p := range review {
-		m.reviewRequested[p.Number] = true
-		cats[p.Number] = "Review requested"
+		m.reviewRequested[p.Ref()] = true
+		cats[p.Ref()] = "Review requested"
 		all = append(all, p)
 	}
 	for _, p := range reviewed {
-		m.reviewedSet[p.Number] = true
-		if _, dup := cats[p.Number]; dup {
+		m.reviewedSet[p.Ref()] = true
+		if _, dup := cats[p.Ref()]; dup {
 			continue // re-requested after my review: the review-requested half wins
 		}
-		cats[p.Number] = "Review requested"
+		cats[p.Ref()] = "Review requested"
 		all = append(all, p)
 	}
-	for _, p := range open {
-		if _, dup := cats[p.Number]; dup {
+	for _, p := range slices.Concat(open, cross) {
+		if _, dup := cats[p.Ref()]; dup {
 			continue // already Review requested; precedence wins
 		}
 		if viewer != "" && p.Author.Login == viewer {
-			cats[p.Number] = "Mine"
+			cats[p.Ref()] = "Mine"
 		} else {
-			cats[p.Number] = "Others"
+			cats[p.Ref()] = "Others"
 		}
 		all = append(all, p)
 	}
 	all = m.applyCIRerun(all)
 	if s, ok := m.section.(*PRSection); ok {
 		var prev []gh.PR
-		var prevCats map[int]string
+		var prevCats map[gh.PRRef]string
 		if replace {
 			m.clearHeld()
 			m.cursorPinnedTop = false
 			if launch {
-				prevCats = map[int]string{}
+				prevCats = map[gh.PRRef]string{}
 				for _, p := range s.prs {
-					if _, merged := m.sessionMerged[p.Number]; merged {
+					if _, merged := m.sessionMerged[p.Ref()]; merged {
 						prev = append(prev, p)
-						prevCats[p.Number] = s.cats[p.Number]
+						prevCats[p.Ref()] = s.cats[p.Ref()]
 					}
 				}
 			}
@@ -543,6 +586,7 @@ func (m *Model) paintSections(review, reviewed, open []gh.PR, viewer string, rep
 		}
 		s.SetState(m.state)
 		s.SetByAuthor(m.byAuthor)
+		s.SetRepoGrouping(m.repo, viewer, m.repoFold)
 		s.SetCategorized(m.mergeHeldPRs(prev, prevCats, all, cats), cats, []string{"Review requested", "Mine", "Others"})
 	}
 	m.applyFilter()
@@ -610,16 +654,16 @@ func (m *Model) paintIssueSections(assigned, authored, open []gh.Issue, viewer s
 	m.homeCursorOnMine()
 }
 
-// commentedByMe reports whether the viewer's latest review on number is a
+// commentedByMe reports whether the viewer's latest review on r is a
 // comment — the ◐ marker's state. A PR back in the review-requested half was
 // re-requested after that comment, so the marker clears: my input is stale and
 // the row reads as an ordinary awaiting-review again. LatestReviews holds one
 // entry per reviewer, so the first match is the viewer's latest.
-func (m *Model) commentedByMe(number int) bool {
-	if m.viewerLogin == "" || m.reviewRequested[number] || !m.reviewedSet[number] {
+func (m *Model) commentedByMe(r gh.PRRef) bool {
+	if m.viewerLogin == "" || m.reviewRequested[r] || !m.reviewedSet[r] {
 		return false
 	}
-	d, ok := m.detail[number]
+	d, ok := m.detail[r]
 	if !ok {
 		return false
 	}
@@ -635,17 +679,17 @@ func (m *Model) commentedByMe(number int) bool {
 // request, so the ◐ marker lands a beat after the board paints rather than
 // waiting for the cursor to visit each row.
 func (m Model) reviewedDetailCmd() tea.Cmd {
-	var nums []int
-	for num := range m.reviewedSet {
-		if m.reviewRequested[num] || m.fresh[num] {
+	var refs []gh.PRRef
+	for r := range m.reviewedSet {
+		if m.reviewRequested[r] || m.fresh[r] {
 			continue
 		}
-		if m.cacheFreshFor(detailKey(m.repo, num), pollIntervalCold) {
+		if m.cacheFreshFor(detailKey(r.Repo, r.Number), pollIntervalCold) {
 			continue
 		}
-		nums = append(nums, num)
+		refs = append(refs, r)
 	}
-	return m.batchDetailCmd(nums)
+	return m.batchDetailCmd(refs)
 }
 
 // spanOf returns the inclusive [lo, hi] shown-index span around cur for which
@@ -699,16 +743,24 @@ func (m Model) groupRange() (lo, hi int) {
 	if !ok || !g.isGrouped() {
 		return 0, n - 1
 	}
-	return spanOf(n, m.cursor, g.groupLabelAt)
+	return spanOf(n, m.cursor, g.groupKeyAt)
 }
 
 // unitRange is the cursor's tightest selectable unit — its author cluster, or
-// (once #89 lands) its stack. Falls back to the whole shown set off a grouper.
+// its stack. Falls back to the whole shown set off a grouper, and on an
+// ungrouped board unless the cursor is on a stack: a flat board keeps each
+// stack contiguous, so the stack is still a unit there.
 func (m Model) unitRange() (lo, hi int) {
 	n := m.section.Len()
 	g, ok := m.section.(grouper)
-	if !ok || !g.isGrouped() {
+	if !ok {
 		return 0, n - 1
+	}
+	if !g.isGrouped() {
+		ps, isPR := m.section.(*PRSection)
+		if !isPR || n == 0 || ps.prAt(min(max(m.cursor, 0), n-1)).Stack == nil {
+			return 0, n - 1
+		}
 	}
 	return spanOf(n, m.cursor, g.unitLabelAt)
 }
@@ -817,22 +869,43 @@ func (m *Model) renderList() {
 	ps, isPR := m.section.(*PRSection)
 	g, isGrouper := m.section.(grouper)
 	grouped := isGrouper && g.isGrouped()
+	repoGrouped := isPR && ps.repoGrouped()
 	n := m.section.Len()
 	if len(m.rowText) != n { // shown set resized (or first paint): reset the cache
 		m.rowText = make([]string, n)
 		m.rowSig = make([]rowKey, n)
 	}
 	var b strings.Builder
-	line, prevGroup := 0, ""
+	line, prevGroup, prevRepo := 0, "", ""
+	prevStop := false
 	for i := range n {
 		headerLine := -1 // this row's group header line, when it opens a new group
-		if grouped {
-			if lbl := g.groupLabelAt(i); lbl != prevGroup {
-				if prevGroup != "" { // blank line between groups, not above the first
+		stop := repoGrouped && ps.isFoldStop(i)
+		if repoGrouped {
+			if repo := ps.repoAt(i); repo != prevRepo {
+				if prevRepo != "" && (!stop || !prevStop) { // blank line between repo groups, not above the first or between two stops
 					b.WriteString("\n")
 					line++
 				}
 				headerLine = line
+				prevRepo, prevGroup = repo, ""
+				if !stop { // a stop is its own header line
+					b.WriteString(renderRepoHeader(repo, ps.groupStages(repo), innerW, false) + "\n")
+					line++
+				}
+			}
+		}
+		if grouped {
+			// Under repo grouping only the launch group has sub-sections: other
+			// repos' rows and stops carry no label.
+			if lbl := g.groupLabelAt(i); lbl != prevGroup && (lbl != "" || !repoGrouped) {
+				if prevGroup != "" { // blank line between groups, not above the first
+					b.WriteString("\n")
+					line++
+				}
+				if headerLine < 0 {
+					headerLine = line
+				}
 				b.WriteString(groupHeader(lbl, innerW) + "\n")
 				line++
 				prevGroup = lbl
@@ -841,14 +914,17 @@ func (m *Model) renderList() {
 		flag := ""
 		if isPR && ps.prAt(i).State == "OPEN" {
 			p := ps.prAt(i)
-			d, hasDetail := m.detail[p.Number]
+			d, hasDetail := m.detail[p.Ref()]
 			mergeable, mss := mergeState(p, d, hasDetail)
 			flag = flagGlyph(mergeable, mss)
 		}
 		held, tag := m.heldTag(i)
-		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.prAt(i).Number)
+		commented := isPR && m.openPRBoard() && m.commentedByMe(ps.refAt(i))
 		key := rowKey{gen: m.rowGen, w: innerW, numW: numW, diffW: diffW, tktW: tktW, authorW: authorW, focused: i == m.cursor, selected: m.sel.has(i), flag: flag, held: held, tag: tag, commented: commented, compactDiff: l.CompactDiffstat, initials: l.InitialsAuthor}
-		if m.rowSig[i] != key || m.rowText[i] == "" {
+		if stop { // uncached: its counts follow the group's rows, which the row key doesn't cover
+			m.rowText[i] = renderRepoHeader(ps.repoAt(i), ps.groupStages(ps.repoAt(i)), innerW, key.focused)
+			m.rowSig[i] = rowKey{}
+		} else if m.rowSig[i] != key || m.rowText[i] == "" {
 			m.rowText[i] = m.section.RenderRow(i, RowOpts{
 				Width: innerW, NumWidth: numW, DiffWidth: diffW, TicketWidth: tktW, AuthorWidth: authorW, Focused: key.focused, Selected: key.selected, Flag: flag, Held: held, Tag: tag, Commented: commented,
 				CompactDiff: l.CompactDiffstat, Initials: l.InitialsAuthor, Now: m.clock(),
@@ -870,6 +946,7 @@ func (m *Model) renderList() {
 		b.WriteString(row)
 		b.WriteString("\n")
 		line += rowH
+		prevStop = stop
 	}
 	content := b.String()
 	if m.section.Len() == 0 {
@@ -912,8 +989,10 @@ func (m *Model) renderList() {
 // display line, headers included) would fall outside the visible window.
 func (m *Model) scrollToCursor() {
 	rows := max(m.cursorRows, 1)
-	top := m.cursorTop // reveal the group header above the row, when it has one
 	bottom := m.cursorLine + rows - 1
+	// Reveal the group header above the row when it has one, but never at the
+	// cost of the row itself in a viewport too short for both.
+	top := max(m.cursorTop, bottom-m.vp.Height()+1)
 	off := m.vp.YOffset()
 	switch {
 	case top < off:
@@ -1242,6 +1321,9 @@ func (m *Model) hydrate() bool {
 		if !ok1 && !ok2 {
 			return false
 		}
+		if m.crossSource != nil {
+			m.crossPRs, _ = m.cachedPRs(crossRepoFilter, crossRepoLimit)
+		}
 		m.setSections(rev, revd, open, m.viewerLogin)
 		m.hydrateDetail()
 		return true
@@ -1267,11 +1349,14 @@ func (m *Model) hydrateDetail() {
 		return
 	}
 	for i := 0; i < ps.Len(); i++ {
-		num := ps.prAt(i).Number
-		if _, ok := m.detail[num]; ok {
+		if ps.isFoldStop(i) {
 			continue
 		}
-		e, hit := m.cache.Get(detailKey(m.repo, num))
+		r := ps.refAt(i)
+		if _, ok := m.detail[r]; ok {
+			continue
+		}
+		e, hit := m.cache.Get(detailKey(r.Repo, r.Number))
 		if !hit {
 			continue
 		}
@@ -1280,8 +1365,8 @@ func (m *Model) hydrateDetail() {
 			slog.Debug("detail cache unmarshal failed", "err", err)
 			continue
 		}
-		m.detail[num] = d
-		delete(m.detailErr, num) // a hydrated detail is a successful detail load
+		m.detail[r] = d
+		delete(m.detailErr, r) // a hydrated detail is a successful detail load
 	}
 }
 
@@ -1320,13 +1405,29 @@ const membersSchemaVer = "v1"
 // membersKey scopes the cached assignable-users list by repo.
 func membersKey(repo string) string { return cache.Key("members", repo, 0, membersSchemaVer) }
 
-// hydrateMembers paints the assignable-users list from disk so the author/
-// reviewer picker opens instantly; Init refetches once per launch to refresh it.
+// hydrateMembers paints the launch repo's assignable-users list from disk so
+// the author/reviewer picker opens instantly; Init refetches once per launch to
+// refresh it.
 func (m *Model) hydrateMembers() {
+	m.membersRepo = m.repo
+	m.loadMembers()
+}
+
+// switchMembers points the member list at repo, painting it from disk when
+// cached; the caller fetches when it is still empty.
+func (m *Model) switchMembers(repo string) {
+	if repo == m.membersRepo {
+		return
+	}
+	m.membersRepo, m.members, m.membersErr = repo, nil, nil
+	m.loadMembers()
+}
+
+func (m *Model) loadMembers() {
 	if m.cache == nil {
 		return
 	}
-	e, ok := m.cache.Get(membersKey(m.repo))
+	e, ok := m.cache.Get(membersKey(m.membersRepo))
 	if !ok {
 		return
 	}
@@ -1406,6 +1507,10 @@ func (m Model) issueFetchCmd(filter string, replace bool) tea.Cmd {
 func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 	src := m.prSource
 	state := m.state
+	crossSrc := m.crossSource
+	if state != "open" {
+		crossSrc = nil
+	}
 	reviewF := searchFor("pr", state, reviewBody)
 	reviewedF := searchFor("pr", state, reviewedBody)
 	return func() tea.Msg {
@@ -1414,9 +1519,14 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 			raw []byte
 			err error
 		}
-		var review, reviewed, open half
+		var review, reviewed, open, cross half
 		var wg sync.WaitGroup
 		wg.Add(3)
+		if crossSrc != nil {
+			wg.Go(func() {
+				cross.prs, cross.raw, cross.err = crossSrc.FetchCrossRepoPRs(crossRepoFilter, crossRepoLimit)
+			})
+		}
 		go func() {
 			defer wg.Done()
 			review.prs, review.raw, review.err = src.FetchPRs(reviewF, defaultLimit)
@@ -1445,7 +1555,8 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 		return sectionsFetchedMsg{state: state,
 			review: review.prs, reviewRaw: review.raw,
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
-			open: open.prs, openRaw: open.raw, replace: replace}
+			open: open.prs, openRaw: open.raw, replace: replace,
+			cross: cross.prs, crossRaw: cross.raw, crossOK: crossSrc != nil && cross.err == nil, crossErr: cross.err}
 	}
 }
 
@@ -1558,13 +1669,10 @@ func (m Model) checksPollDelay() time.Duration {
 	if !ok {
 		return pollIntervalCold
 	}
-	cursorNum := -1
-	if v, ok := m.cursorVars(); ok {
-		cursorNum = v.Number
-	}
+	cursorRef, _ := m.cursorRef()
 	for _, i := range runningCheckRows(ps, m.held) {
 		p := ps.prAt(i)
-		if p.Number == cursorNum || (m.viewerLogin != "" && p.Author.Login == m.viewerLogin) {
+		if p.Ref() == cursorRef || (m.viewerLogin != "" && p.Author.Login == m.viewerLogin) {
 			return pollIntervalHot
 		}
 	}
@@ -1593,15 +1701,15 @@ func (m *Model) cascadeDispatch(step cascadeStep) tea.Cmd {
 // fatal fetch.
 func (m *Model) cascadeProbeFetchCmd() tea.Cmd {
 	r := m.cascade
-	number := r.plan.chains[r.chain][r.link].pr.Number
+	ref := r.plan.chains[r.chain][r.link].pr.Ref()
 	src := m.detailSource
 	return func() tea.Msg {
-		details, raws, err := src.FetchDetails([]int{number})
+		details, raws, err := src.FetchDetails([]gh.PRRef{ref})
 		if err != nil {
-			return cascadeProbedMsg{number: number, err: err}
+			return cascadeProbedMsg{ref: ref, err: err}
 		}
-		d, ok := details[number]
-		return cascadeProbedMsg{number: number, detail: d, raw: raws[number], ok: ok}
+		d, ok := details[ref]
+		return cascadeProbedMsg{ref: ref, detail: d, raw: raws[ref], ok: ok}
 	}
 }
 
@@ -1656,8 +1764,8 @@ func themeWatchTick(lastMod time.Time) tea.Cmd {
 }
 
 // frozenRow reports whether pr's rollup is frozen: held, merged or closed.
-func frozenRow(pr gh.PR, held map[int]string) bool {
-	_, ok := held[pr.Number]
+func frozenRow(pr gh.PR, held map[gh.PRRef]string) bool {
+	_, ok := held[pr.Ref()]
 	return ok || pr.State == "MERGED" || pr.State == "CLOSED"
 }
 
@@ -1666,7 +1774,7 @@ func frozenRow(pr gh.PR, held map[int]string) bool {
 // "fail" when any check failed and would hide checks still running behind it.
 // A merged, closed or held row is skipped: its rollup is frozen at whatever it
 // was when it left the board, and polling it would keep the poll alive forever.
-func runningCheckRows(ps *PRSection, held map[int]string) []int {
+func runningCheckRows(ps *PRSection, held map[gh.PRRef]string) []int {
 	var out []int
 	for i := 0; i < ps.Len(); i++ {
 		p := ps.prAt(i)
@@ -1732,17 +1840,17 @@ func (m Model) pollChecksCmd() tea.Cmd {
 	if len(rows) == 0 {
 		return nil
 	}
-	nums := make([]int, 0, len(rows))
+	refs := make([]gh.PRRef, 0, len(rows))
 	for _, i := range rows {
-		nums = append(nums, ps.prAt(i).Number)
+		refs = append(refs, ps.refAt(i))
 	}
 	src := m.checksSource
 	return func() tea.Msg {
-		checks, err := src.FetchChecks(nums)
-		if err != nil {
+		checks, err := src.FetchChecks(refs)
+		if err != nil && len(checks) == 0 {
 			return fetchFailedMsg{err: err}
 		}
-		return checksFetchedMsg{checks: checks}
+		return checksFetchedMsg{checks: checks, err: err}
 	}
 }
 
@@ -1884,10 +1992,12 @@ func (m *Model) cycleBoard(step int) tea.Cmd {
 func (m *Model) openPicker(mode string) tea.Cmd {
 	checked := map[string]bool{}
 	title := "Filter by author"
+	repo := m.repo // author: terms filter the launch repo's search
 	if mode == "reviewer" {
 		title = "Assign reviewers"
 		if v, ok := m.cursorVars(); ok {
-			if d, cached := m.detail[v.Number]; cached {
+			repo = v.Repo
+			if d, cached := m.detail[gh.PRRef{Repo: v.Repo, Number: v.Number}]; cached {
 				for _, r := range d.ReviewRequests {
 					if r.Login != "" {
 						checked[r.Login] = true
@@ -1896,24 +2006,25 @@ func (m *Model) openPicker(mode string) tea.Cmd {
 			}
 		}
 	}
+	m.switchMembers(repo)
 	m.showPicker = true
 	m.pickerMode = mode
 	m.pick = newPicker(title, m.members, checked)
 	if len(m.members) == 0 || m.membersErr != nil {
-		return m.fetchMembersCmd()
+		return m.fetchMembersCmd(repo)
 	}
 	return nil
 }
 
-// fetchMembersCmd fetches the assignable-users list through the members source.
-func (m Model) fetchMembersCmd() tea.Cmd {
+// fetchMembersCmd fetches repo's assignable-users list through the members source.
+func (m Model) fetchMembersCmd(repo string) tea.Cmd {
 	src := m.membersSource
 	return func() tea.Msg {
-		users, raw, err := src.FetchAssignableUsers()
+		users, raw, err := src.FetchAssignableUsers(repo)
 		if err != nil {
-			return membersFailedMsg{err: err}
+			return membersFailedMsg{repo: repo, err: err}
 		}
-		return membersFetchedMsg{users: users, raw: raw}
+		return membersFetchedMsg{repo: repo, users: users, raw: raw}
 	}
 }
 
@@ -1952,8 +2063,9 @@ func (m *Model) confirmPicker() tea.Cmd {
 		if !ok {
 			return nil
 		}
+		ref := gh.PRRef{Repo: v.Repo, Number: v.Number}
 		var current []string
-		if d, cached := m.detail[v.Number]; cached {
+		if d, cached := m.detail[ref]; cached {
 			for _, rr := range d.ReviewRequests {
 				if rr.Login != "" {
 					current = append(current, rr.Login)
@@ -1961,7 +2073,7 @@ func (m *Model) confirmPicker() tea.Cmd {
 			}
 		}
 		add, remove := reviewerDiff(current, checked)
-		return m.assignReviewersCmd(v.Number, v.ID, add, remove, checked)
+		return m.assignReviewersCmd(ref, v.ID, add, remove, checked)
 	}
 	return nil
 }
@@ -1976,11 +2088,15 @@ func (m Model) Init() tea.Cmd {
 // invalidateLaunchCache marks these same keys Stale at mutation dispatch, so
 // the gate can never trust a snapshot a mutation has since made questionable.
 func (m Model) launchGateKeys() []string {
-	return []string{
+	keys := []string{
 		prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit),
 		prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit),
 		prKey(m.repo, "is:open", openListLimit),
 	}
+	if m.crossSource != nil {
+		keys = append(keys, prKey(m.repo, crossRepoFilter, crossRepoLimit))
+	}
+	return keys
 }
 
 // issueLaunchGateKeys are launchGateKeys' issue-side counterpart. Kept
@@ -2001,13 +2117,13 @@ func (m Model) issueLaunchGateKeys() []string {
 // quit while the mutation is still in flight leaves the pre-mutation snapshot
 // unpainted and untrusted at next launch (hydrate withholds a Stale entry,
 // and Fresh reports false for one regardless of age).
-func (m Model) invalidateLaunchCache(nums ...int) {
+func (m Model) invalidateLaunchCache(refs ...gh.PRRef) {
 	if m.cache == nil {
 		return
 	}
 	keys := m.launchGateKeys()
-	for _, n := range nums {
-		keys = append(keys, detailKey(m.repo, n))
+	for _, r := range refs {
+		keys = append(keys, detailKey(r.Repo, r.Number))
 	}
 	m.cache.Invalidate(keys...)
 }
@@ -2057,7 +2173,7 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 		cmds = append(cmds, m.issueSectionsFetchCmd(true))
 	}
 	if !m.cacheFresh(membersKey(m.repo)) {
-		cmds = append(cmds, m.fetchMembersCmd())
+		cmds = append(cmds, m.fetchMembersCmd(m.repo))
 	}
 	if m.viewerLogin == "" {
 		cmds = append(cmds, m.fetchViewerCmd())
@@ -2136,19 +2252,28 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewedBody), defaultLimit), msg.reviewedRaw)
 			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
+			if msg.crossOK {
+				m.cache.Set(prKey(m.repo, crossRepoFilter, crossRepoLimit), msg.crossRaw)
+			}
 		}
 		if !m.sectionsDefault() || msg.state != m.state {
 			return m, nil // a server qualifier became active, or state changed: cache only
 		}
+		if msg.crossOK {
+			m.crossPRs = msg.cross
+		}
 		m.refreshing = false
 		m.err = nil
 		m.loaded = true
-		m.paintSections(msg.review, msg.reviewed, msg.open, m.viewerLogin, msg.replace, msg.launch)
+		m.paintSections(msg.review, msg.reviewed, msg.open, m.crossPRs, m.viewerLogin, msg.replace, msg.launch)
 		if m.expanded && m.section.Len() == 0 {
 			m.expanded = false
 		}
 		m.repaintActive()
 		cmds := []tea.Cmd{m.warmDetailCmd(), m.reviewedDetailCmd(), m.maybeStartPoll()}
+		if msg.crossErr != nil {
+			cmds = append(cmds, m.hint("Other repos: "+msg.crossErr.Error()))
+		}
 		if !msg.replace {
 			cmds = append(cmds, m.heldStatesCmd())
 		}
@@ -2252,9 +2377,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			slog.Debug("held-state lookup failed", "err", msg.err)
-		} else {
-			m.applyHeldStates(msg.states)
 		}
+		m.applyHeldStates(msg.states)
 		m.rowGen++
 		m.repaintActive()
 		return m, nil
@@ -2287,24 +2411,29 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 	case membersFetchedMsg:
+		if m.cache != nil {
+			m.cache.Set(membersKey(msg.repo), msg.raw)
+		}
+		if msg.repo != m.membersRepo {
+			return m, nil // the list was switched to another repo while this was in flight
+		}
 		m.members = msg.users
 		m.membersErr = nil
-		if m.cache != nil {
-			m.cache.Set(membersKey(m.repo), msg.raw)
-		}
 		if m.showPicker {
 			m.pick.cands = msg.users
 		}
 		return m, nil
 	case membersFailedMsg:
-		m.membersErr = msg.err
+		if msg.repo == m.membersRepo {
+			m.membersErr = msg.err
+		}
 		return m, nil
 	case detailFailedMsg:
 		if m.detailErr == nil {
-			m.detailErr = map[int]error{}
+			m.detailErr = map[gh.PRRef]error{}
 		}
-		for _, n := range msg.numbers {
-			m.detailErr[n] = msg.err
+		for _, r := range msg.refs {
+			m.detailErr[r] = msg.err
 		}
 		m.repaintActive() // paint the failure beside the detail that is missing
 		return m, nil
@@ -2335,22 +2464,22 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive() // the re-partition above moved rows; match the cursor focus and selection bars to it
 		return m, nil
 	case prDetailMsg:
-		m.detail[msg.number] = msg.detail
-		delete(m.detailErr, msg.number)
-		m.fresh[msg.number] = true
+		m.detail[msg.ref] = msg.detail
+		delete(m.detailErr, msg.ref)
+		m.fresh[msg.ref] = true
 		if m.cache != nil && msg.raw != nil {
-			m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+			m.cache.Set(detailKey(msg.ref.Repo, msg.ref.Number), msg.raw)
 		}
 		m.repaintActive() // fold the fresh detail into the active view without losing place
 		return m, nil
 	case detailsBatchMsg:
-		for num, d := range msg.details {
-			m.detail[num] = d
-			delete(m.detailErr, num)
-			m.fresh[num] = true
+		for r, d := range msg.details {
+			m.detail[r] = d
+			delete(m.detailErr, r)
+			m.fresh[r] = true
 			if m.cache != nil {
-				if raw := msg.raws[num]; raw != nil {
-					m.cache.Set(detailKey(m.repo, num), raw)
+				if raw := msg.raws[r]; raw != nil {
+					m.cache.Set(detailKey(r.Repo, r.Number), raw)
 				}
 			}
 		}
@@ -2373,7 +2502,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case issueDetailMsg:
 		m.issueDetail[msg.number] = msg.detail
-		delete(m.detailErr, msg.number)
+		delete(m.detailErr, m.launchRef(msg.number))
 		m.issueFresh[msg.number] = true
 		if m.cache != nil && msg.raw != nil {
 			m.cache.Set(issueDetailKey(m.repo, msg.number), msg.raw)
@@ -2434,6 +2563,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repaintActive()
 		// No reschedule: the tick armed alongside this fetch is still in flight, and
 		// it retires the loop itself once nothing is pending.
+		if msg.err != nil {
+			return m, m.hint("Checks: " + msg.err.Error())
+		}
 		return m, nil
 	case themePollMsg:
 		// This is the only tick that runs for the whole session, so the header's
@@ -2492,7 +2624,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// replaced and cleared still merged, and still needs reconciling.
 		m.markSessionMerged(msg.merged)
 		for _, p := range msg.merged {
-			delete(m.fresh, p.Number) // force the detail/summary to revalidate
+			delete(m.fresh, p.Ref()) // force the detail/summary to revalidate
 		}
 		// m.actionStatus may belong to another action by now, so a merge's
 		// reconcile is keyed off the result.
@@ -2534,16 +2666,16 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyOptimisticAction(stat)
 		}
 		if msg.err == nil && stat.refresh {
-			for _, n := range stat.nums {
-				delete(m.fresh, n) // force the detail/summary to revalidate
+			for _, r := range stat.refs {
+				delete(m.fresh, r) // force the detail/summary to revalidate
 			}
 			refetch = true
 		}
 		if msg.err != nil && (stat.native == "merge-squash" || stat.native == "merge-stack") {
-			for _, n := range stat.nums {
-				delete(m.fresh, n)
+			for _, r := range stat.refs {
+				delete(m.fresh, r)
 			}
-			cmds = append(cmds, m.batchDetailCmd(stat.nums))
+			cmds = append(cmds, m.batchDetailCmd(stat.refs))
 		}
 		if msg.err != nil && stat.native == "merge-stack" {
 			// A poll that ran out of budget may still land server-side; the list
@@ -2552,8 +2684,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err == nil && stat.rerunCI {
 			stamp := time.Now()
-			for _, n := range stat.nums {
-				m.ciRerun[n] = stamp
+			for _, r := range stat.refs {
+				m.ciRerun[r] = stamp
 			}
 			cmds = append(cmds, delayedRefreshCmd())
 		}
@@ -2561,8 +2693,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// links that succeeded, even though the run as a whole failed — those
 		// rows need the same invalidation an all-success settle would give them.
 		if msg.err != nil && len(msg.partial) > 0 {
-			for _, n := range msg.partial {
-				delete(m.fresh, n) // force the detail/summary to revalidate
+			for _, r := range msg.partial {
+				delete(m.fresh, r) // force the detail/summary to revalidate
 			}
 			refetch = true
 		}
@@ -2570,17 +2702,17 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.backgroundRefresh())
 		}
 		if msg.err != nil && len(msg.partial) > 0 && msg.rerunCI {
-			merged := make(map[int]bool, len(msg.merged))
+			merged := make(map[gh.PRRef]bool, len(msg.merged))
 			for _, p := range msg.merged {
-				merged[p.Number] = true
+				merged[p.Ref()] = true
 			}
 			stamp := time.Now()
 			var stamped bool
-			for _, n := range msg.partial {
-				if merged[n] {
+			for _, r := range msg.partial {
+				if merged[r] {
 					continue // already landed as a merge above; not a CI re-trigger
 				}
-				m.ciRerun[n] = stamp
+				m.ciRerun[r] = stamp
 				stamped = true
 			}
 			if stamped {
@@ -2613,11 +2745,11 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (MERGEABLE, BEHIND) reads as "settled" on the very first beat and
 			// the wait this whole mechanism exists for never happens.
 			mergeable, mss = msg.detail.Mergeable, msg.detail.MergeStateStatus
-			m.detail[msg.number] = msg.detail
-			delete(m.detailErr, msg.number) // a live probe is a successful detail load
-			m.fresh[msg.number] = true
+			m.detail[msg.ref] = msg.detail
+			delete(m.detailErr, msg.ref) // a live probe is a successful detail load
+			m.fresh[msg.ref] = true
 			if m.cache != nil && msg.raw != nil {
-				m.cache.Set(detailKey(m.repo, msg.number), msg.raw)
+				m.cache.Set(detailKey(msg.ref.Repo, msg.ref.Number), msg.raw)
 			}
 		}
 		return m, m.cascadeDispatch(r.onProbed(mergeable, mss, msg.err))
@@ -2725,6 +2857,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.filtering = false
 				m.filterInput.Blur() // keep the query applied so actions work on the filtered set
+				m.revealCursorRepo()
 				if m.omniServer != "" {
 					return m, m.switchToFilter() // reconcile in case the debounce never fired
 				}
@@ -2742,6 +2875,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// itself, so accepting a suggestion here would trap the user.
 				m.filtering = false
 				m.filterInput.Blur()
+				m.revealCursorRepo()
 				if m.omniServer != "" {
 					return m, m.switchToFilter() // committed a server query: reconcile now, in case the debounce never fired
 				}
@@ -2865,8 +2999,20 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "a":
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.showActions = true
 			return m, m.actionFilter.Focus()
+		case "e":
+			if m.mode != "pr" {
+				return m.prOnly("Folding", "e")
+			}
+			if ps, ok := m.section.(*PRSection); !ok || !ps.repoGrouped() {
+				return m.statusHint("Repo groups only fold on the default board")
+			}
+			m.toggleFold()
+			return m, nil
 		case "s":
 			if m.mode == "run" {
 				cmd := m.cycleRunState()
@@ -2936,6 +3082,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode != "pr" {
 				return m.prOnly("Assigning reviewers", "R")
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			if _, ok := m.cursorVars(); ok {
 				if ps, ok := m.section.(*PRSection); ok {
 					if err := m.mutable(ps.prAt(m.cursor)); err != nil {
@@ -2949,8 +3098,11 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filtering = true
 			cmds := []tea.Cmd{m.filterInput.Focus()}
-			if m.mode == "pr" && m.members == nil {
-				cmds = append(cmds, m.fetchMembersCmd())
+			if m.mode == "pr" {
+				m.switchMembers(m.repo) // @-completion names the launch repo's users
+				if m.members == nil {
+					cmds = append(cmds, m.fetchMembersCmd(m.repo))
+				}
 			}
 			return m, tea.Batch(cmds...)
 		case "?", "f1":
@@ -2962,6 +3114,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.filterInput.SetValue("")
 			m.sel.clear()
+			anchor, order := m.cursorAnchor()
+			m.revealCursorRepo()
 			if m.mode == "pr" && m.omniServer != "" {
 				m.omniServer = ""
 				m.omniSuggestCursor = 0
@@ -2969,6 +3123,8 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchToFilter() // restore the sections default
 			}
 			m.applyFilter()
+			m.restoreCursor(anchor, order)
+			m.repaintActive()
 			if m.mode == "run" {
 				m.detailSeq++
 				return m, m.debounceDetailCmd()
@@ -2980,6 +3136,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == "run" {
 				return m.statusHint("Runs can't be multi-selected")
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.sel.toggle(m.cursor)
 			m.renderList()
 			return m, nil
@@ -2987,12 +3146,18 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == "run" {
 				return m.statusHint("Runs can't be multi-selected")
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.advanceSelection()
 			m.renderList()
 			return m, nil
 		case "p":
 			if m.mode != "pr" {
 				return m, nil // the fold is only read by the PR Overview timeline
+			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
 			}
 			m.previewExpanded = !m.previewExpanded
 			m.detailSeq++
@@ -3018,6 +3183,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checkCursor = 0
 				return m, nil
 			}
+			if repo, stop := m.foldStop(); stop {
+				return m.stopHint(repo)
+			}
 			m.enterExpanded() // narrow: no pane, open full-screen tabs
 			m.detailSeq++
 			return m, m.debounceDetailCmd()
@@ -3041,6 +3209,13 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			if a, ok := m.actions[msg.String()]; ok {
+				if repo, stop := m.foldStop(); stop {
+					if msg.String() == "enter" {
+						m.toggleFold()
+						return m, nil
+					}
+					return m.stopHint(repo)
+				}
 				if a.Scope == "per-selected" {
 					return m, m.startBulk(a)
 				}
@@ -3067,6 +3242,56 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // status instead of a silent no-op. An in-flight action keeps its badge.
 func (m Model) prOnly(label, key string) (tea.Model, tea.Cmd) {
 	return m.statusHint(fmt.Sprintf("%s is PR-only (%s)", label, key))
+}
+
+// foldStop reports whether the cursor sits on a folded group's header stop,
+// which has no PR behind it, and that group's repo.
+func (m *Model) foldStop() (repo string, ok bool) {
+	ps, isPR := m.section.(*PRSection)
+	if !isPR || m.mode != "pr" || !ps.isFoldStop(m.cursor) {
+		return "", false
+	}
+	return ps.repoAt(m.cursor), true
+}
+
+// stopHint is the answer to a row key pressed on a fold stop.
+func (m Model) stopHint(repo string) (tea.Model, tea.Cmd) {
+	return m.statusHint("unfold " + repo + " with e first")
+}
+
+// toggleFold folds or unfolds the cursor's repo group. Folding drops that
+// repo's selected rows (they leave the shown set); the cursor lands on the
+// group's stop when folding and on its first row when unfolding.
+func (m *Model) toggleFold() {
+	ps, ok := m.section.(*PRSection)
+	if !ok || !ps.repoGrouped() || m.cursor < 0 || m.cursor >= ps.Len() {
+		return
+	}
+	repo := ps.repoAt(m.cursor)
+	fold := !ps.isFolded(repo)
+	m.repoFold[repo] = fold
+	refs, wasHeld := m.selectedRows()
+	refs = slices.DeleteFunc(refs, func(r gh.PRRef) bool { return r.Repo == repo })
+	m.applyFilter()
+	m.restoreSelection(refs, wasHeld)
+	if i, found := ps.stopIndex(repo); fold && found {
+		m.cursor = i
+	} else if i, found := ps.firstRowIndex(repo); !fold && found {
+		m.cursor = i
+	}
+	m.repaintActive() // the cursor and marks moved after applyFilter rendered
+}
+
+// revealCursorRepo unfolds the repo of the row under the cursor, so a board
+// that regroups after a filter keeps the matched row visible.
+func (m *Model) revealCursorRepo() {
+	ps, ok := m.section.(*PRSection)
+	if !ok || m.mode != "pr" || m.cursor < 0 || m.cursor >= ps.Len() || ps.isFoldStop(m.cursor) {
+		return
+	}
+	if repo := ps.repoAt(m.cursor); ps.isFolded(repo) {
+		m.repoFold[repo] = false
+	}
 }
 
 // statusHint shows msg as a transient status. An in-flight action keeps its badge.
@@ -3370,26 +3595,21 @@ func (m Model) confirmQuestion() string {
 	if len(targets) > 1 {
 		return fmt.Sprintf("%s for %d PRs?", a.Label, len(targets))
 	}
-	n := targets[0]
-	if author, ok := m.authorOfNumber(n); ok && a.ConfirmOthers && author != "" && author != m.viewerLogin {
-		return fmt.Sprintf("%s #%d by %s?", a.Label, n, author)
+	r := targets[0]
+	if author, ok := m.authorOfRef(r); ok && a.ConfirmOthers && author != "" && author != m.viewerLogin {
+		return fmt.Sprintf("%s #%d by %s?", a.Label, r.Number, author)
 	}
-	return fmt.Sprintf("%s #%d?", a.Label, n)
+	return fmt.Sprintf("%s #%d?", a.Label, r.Number)
 }
 
-// authorOfNumber returns the author of the shown row numbered n; ok is false
-// once that row has left the section.
-func (m Model) authorOfNumber(n int) (author string, ok bool) {
-	num, isNumbered := m.section.(numbered)
-	if !isNumbered {
+// authorOfRef returns the author of the shown row r; ok is false once that row
+// has left the section.
+func (m Model) authorOfRef(r gh.PRRef) (author string, ok bool) {
+	i, shown := m.shownRefs()[r]
+	if !shown {
 		return "", false
 	}
-	for i := 0; i < m.section.Len(); i++ {
-		if num.numberAt(i) == n {
-			return m.section.VarsAt(i).Author, true
-		}
-	}
-	return "", false
+	return m.section.VarsAt(i).Author, true
 }
 
 // confirmPanel is the y/n dialog for a pending action.
@@ -3609,7 +3829,7 @@ func (m Model) cursorCard() (triage.Card, bool) {
 	if !ok || m.section.Len() == 0 {
 		return triage.Card{}, false
 	}
-	d, cached := m.detail[ps.prAt(m.cursor).Number]
+	d, cached := m.detail[ps.refAt(m.cursor)]
 	if !cached {
 		return triage.Card{}, false
 	}
@@ -3744,7 +3964,7 @@ func (m Model) keyPanes() []legendGroup {
 
 	nav := []keyHint{{"↑↓/jk", "move", nil}}
 	if m.mode == "pr" {
-		nav = append(nav, keyHint{"→/l", "expand", nil})
+		nav = append(nav, keyHint{"→/l", "expand", nil}, keyHint{"e", "fold repo group", nil})
 	}
 	nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
@@ -4218,7 +4438,8 @@ func (m Model) statusBar() string {
 // entry has none of them and would paint "+0 -0". v6 adds mergeable and
 // mergeStateStatus; a v5 cache entry has neither and would paint a blank
 // board "!" column for a conflicted PR until its detail happens to be fetched.
-const schemaVer = "v6"
+// v7 adds repo; a v6 row has none and would route to the launch repo.
+const schemaVer = "v7"
 
 // defaultLimit caps the PR list fetch. The fetch, cache write, and cache
 // hydrate must all key on the same value or hydration silently misses.
@@ -4227,3 +4448,10 @@ const defaultLimit = 20
 // openListLimit is the tail depth for the empty-default open list; the 3-section
 // partition needs more than the focused review/terminal boards' defaultLimit.
 const openListLimit = 100
+
+// crossRepoFilter and crossRepoLimit are the default board's one cross-repo
+// search; the fetch, cache write, hydrate and launch gate all key on them.
+const (
+	crossRepoFilter = "is:open involves:@me archived:false sort:updated-desc"
+	crossRepoLimit  = 100
+)

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -280,9 +281,9 @@ type mergeReading struct {
 	err       error
 }
 
-func snapshots(byNumber map[int]mergeReading) func(gh.PR) (string, string) {
+func snapshots(byNum map[int]mergeReading) func(gh.PR) (string, string) {
 	return func(pr gh.PR) (string, string) {
-		s := byNumber[pr.Number]
+		s := byNum[pr.Number]
 		return s.mergeable, s.mss
 	}
 }
@@ -359,7 +360,7 @@ func (p *cascadePump) failures() map[int]error {
 	errs := map[int]error{}
 	for _, o := range p.run.done {
 		if o.err != nil {
-			errs[o.number] = o.err
+			errs[o.ref.Number] = o.err
 		}
 	}
 	return errs
@@ -716,7 +717,7 @@ func TestCascadeReportGroupsUpdatedFailedAndNotAttempted(t *testing.T) {
 	if !p.run.failed() {
 		t.Error("failed() = false, want true")
 	}
-	if !slices.Equal(p.run.updated(), []int{20, 21}) {
+	if !slices.Equal(p.run.updated(), []gh.PRRef{{Number: 20}, {Number: 21}}) {
 		t.Errorf("updated() = %v, want [20 21]", p.run.updated())
 	}
 	want := []string{
@@ -795,7 +796,7 @@ type sequencedDetailSource struct {
 	calls    int
 }
 
-func (f *sequencedDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, map[int][]byte, error) {
+func (f *sequencedDetailSource) FetchDetails(refs []gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
 	i := f.calls
 	f.calls++
 	if i < len(f.errs) && f.errs[i] != nil {
@@ -806,9 +807,9 @@ func (f *sequencedDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, m
 		ri = len(f.readings) - 1
 	}
 	d := f.readings[ri]
-	out := map[int]gh.PRDetail{}
-	for _, n := range nums {
-		out[n] = d
+	out := map[gh.PRRef]gh.PRDetail{}
+	for _, r := range refs {
+		out[r] = d
 	}
 	return out, nil, nil
 }
@@ -1150,16 +1151,16 @@ func TestCascadeMidChainFailureSettlesPartialWithRefreshAndCIRerun(t *testing.T)
 	if !slices.Equal(mut.updateBranchCalls, []string{"n1"}) {
 		t.Fatalf("updateBranchCalls = %v, want [n1] only: #2's empty id must short-circuit, #3 must never fire", mut.updateBranchCalls)
 	}
-	if !slices.Equal(m.actionStatus.partial, []int{1}) {
+	if !slices.Equal(m.actionStatus.partial, []gh.PRRef{m.launchRef(1)}) {
 		t.Fatalf("actionStatus.partial = %v, want [1]", m.actionStatus.partial)
 	}
-	if _, ok := m.ciRerun[1]; !ok {
+	if _, ok := m.ciRerun[m.launchRef(1)]; !ok {
 		t.Error("ciRerun[1] missing: the succeeded link should get the same CI-rerun stamp a full success would")
 	}
-	if _, ok := m.ciRerun[2]; ok {
+	if _, ok := m.ciRerun[m.launchRef(2)]; ok {
 		t.Error("ciRerun[2] set, want none: link 2's mutation failed")
 	}
-	if _, ok := m.ciRerun[3]; ok {
+	if _, ok := m.ciRerun[m.launchRef(3)]; ok {
 		t.Error("ciRerun[3] set, want none: link 3 was never attempted")
 	}
 }
@@ -1205,7 +1206,7 @@ func TestCascadeModelClearsAfterSettle(t *testing.T) {
 // when the run settled must not panic or mutate state once it lands.
 func TestStaleCascadeProbeAfterSettleIsNoOp(t *testing.T) {
 	m := settledCascade(t)
-	beforeDetail, beforeFresh := m.detail[2], m.fresh[2]
+	beforeDetail, beforeFresh := m.detail[m.launchRef(2)], m.fresh[m.launchRef(2)]
 
 	next, cmd := m.Update(cascadeProbeMsg{})
 	m2 := next.(Model)
@@ -1215,16 +1216,16 @@ func TestStaleCascadeProbeAfterSettleIsNoOp(t *testing.T) {
 	if m2.cascade != nil {
 		t.Fatal("cascade must stay nil")
 	}
-	if !reflect.DeepEqual(m2.detail[2], beforeDetail) || m2.fresh[2] != beforeFresh {
+	if !reflect.DeepEqual(m2.detail[m2.launchRef(2)], beforeDetail) || m2.fresh[m2.launchRef(2)] != beforeFresh {
 		t.Fatal("stale cascadeProbeMsg must not mutate state")
 	}
 
-	next, cmd = m2.Update(cascadeProbedMsg{number: 2, detail: gh.PRDetail{Mergeable: "MERGEABLE"}, ok: true})
+	next, cmd = m2.Update(cascadeProbedMsg{ref: m2.launchRef(2), detail: gh.PRDetail{Mergeable: "MERGEABLE"}, ok: true})
 	m3 := next.(Model)
 	if cmd != nil {
 		t.Fatal("stale cascadeProbedMsg after settle should produce no command")
 	}
-	if !reflect.DeepEqual(m3.detail[2], beforeDetail) {
+	if !reflect.DeepEqual(m3.detail[m3.launchRef(2)], beforeDetail) {
 		t.Fatal("stale cascadeProbedMsg must not fold detail after settle")
 	}
 }
@@ -1378,10 +1379,10 @@ func TestCascadeErroredProbeDoesNotTouchDetailOrFresh(t *testing.T) {
 	probed, cmd2 := m.Update(fetch())
 	m = probed.(Model)
 
-	if _, ok := m.detail[2]; ok {
+	if _, ok := m.detail[m.launchRef(2)]; ok {
 		t.Error("an errored probe must not write m.detail[2]")
 	}
-	if m.fresh[2] {
+	if m.fresh[m.launchRef(2)] {
 		t.Error("an errored probe must not mark #2 fresh")
 	}
 	if m.cascade.probes != 1 {
@@ -1482,5 +1483,36 @@ func TestCascadePlanNeverBuildsOnIssueBoard(t *testing.T) {
 
 	if m.pendingCascade != nil {
 		t.Fatalf("pendingCascade = %+v, want nil on the issue board even for update-branch", m.pendingCascade)
+	}
+}
+
+// TestCascadeSeedsPerRepo: stack numbers are only unique within a repo, so
+// seeds on owner/repo's stack 3 and other/x's stack 3 each walk their own repo's
+// links and neither absorbs or shadows the other.
+func TestCascadeSeedsPerRepo(t *testing.T) {
+	linked := func(repo string, n, pos int) gh.PR {
+		return gh.PR{Repo: repo, Number: n, State: "OPEN", Stack: &gh.PRStack{Number: 3, Size: 3}, StackPosition: pos}
+	}
+	shown := []gh.PR{
+		linked("owner/repo", 10, 1), linked("owner/repo", 11, 2), linked("owner/repo", 12, 3),
+		linked("other/x", 20, 1), linked("other/x", 21, 2), linked("other/x", 22, 3),
+	}
+	plan := buildCascadePlan(shown, []gh.PR{shown[1], shown[4]}, noState)
+
+	var got []string
+	for _, c := range plan.chains {
+		var links []string
+		for _, l := range c {
+			links = append(links, fmt.Sprintf("%s#%d", l.pr.Repo, l.pr.Number))
+		}
+		got = append(got, strings.Join(links, ","))
+	}
+	slices.Sort(got)
+	want := []string{"other/x#21,other/x#22", "owner/repo#11,owner/repo#12"}
+	if !slices.Equal(got, want) {
+		t.Errorf("chains = %v, want one chain per repo %v", got, want)
+	}
+	if len(plan.dropped) != 0 {
+		t.Errorf("dropped = %v, want none", plan.dropped)
 	}
 }

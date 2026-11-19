@@ -8,17 +8,17 @@ import (
 )
 
 // RerunCheck reruns a single Actions job (one check) by its job ID.
-func RerunCheck(native gh.ActionsSource, jobID string) error {
+func RerunCheck(native gh.ActionsSource, repo, jobID string) error {
 	id, err := strconv.ParseInt(jobID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("rerun check: bad job ID %q: %w", jobID, err)
 	}
-	return native.RerunJob(id)
+	return native.RerunJob(repo, id)
 }
 
 // RerunFailed reruns every failed sibling run at the branch's current head SHA.
-func RerunFailed(native gh.ActionsSource, branch string) error {
-	runs, err := native.ListRunsForBranch(branch)
+func RerunFailed(native gh.ActionsSource, repo, branch string) error {
+	runs, err := native.ListRunsForBranch(repo, branch)
 	if err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func RerunFailed(native gh.ActionsSource, branch string) error {
 		if run.HeadSHA != head || run.Conclusion != "failure" {
 			continue
 		}
-		if err := native.RerunFailedJobs(run.ID); err != nil {
+		if err := native.RerunFailedJobs(repo, run.ID); err != nil {
 			return err
 		}
 		reran = true
@@ -48,10 +48,10 @@ func RerunFailed(native gh.ActionsSource, branch string) error {
 
 // JobLog fetches one Actions job's log. failedOnly limits it to failed steps;
 // otherwise the whole job log.
-func JobLog(native gh.ActionsSource, jobID string, failedOnly bool) ([]byte, error) {
+func JobLog(native gh.ActionsSource, repo, jobID string, failedOnly bool) ([]byte, error) {
 	id, err := strconv.ParseInt(jobID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("job log: bad job ID %q: %w", jobID, err)
 	}
-	return native.JobLog(id, failedOnly)
+	return native.JobLog(repo, id, failedOnly)
 }

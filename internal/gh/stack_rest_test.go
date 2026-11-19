@@ -24,7 +24,7 @@ func TestFetchStackForPR(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	st, ok, err := testSource(srv, "owner/repo", "tok123").FetchStackForPR(142)
+	st, ok, err := testSource(srv, "owner/repo", "tok123").FetchStackForPR(PRRef{Repo: "owner/repo", Number: 142})
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
@@ -51,7 +51,7 @@ func TestFetchStackForPREmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	st, ok, err := testSource(srv, "owner/repo", "tok").FetchStackForPR(5)
+	st, ok, err := testSource(srv, "owner/repo", "tok").FetchStackForPR(PRRef{Repo: "owner/repo", Number: 5})
 	if err != nil || ok {
 		t.Fatalf("ok=%v err=%v, want false, nil", ok, err)
 	}
@@ -66,7 +66,7 @@ func TestFetchStackForPRNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := testSource(srv, "owner/repo", "tok").FetchStackForPR(5)
+	_, _, err := testSource(srv, "owner/repo", "tok").FetchStackForPR(PRRef{Repo: "owner/repo", Number: 5})
 	if err == nil || err.Error() != "stacked PRs aren't available for this repo" {
 		t.Errorf("err = %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBaseUsesMergeQueue(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := testSource(srv, "owner/repo", "tok123").BaseUsesMergeQueue("release/1")
+			got, err := testSource(srv, "owner/repo", "tok123").BaseUsesMergeQueue("owner/repo", "release/1")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +140,7 @@ func TestBaseUsesMergeQueueErrors(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			if _, err := testSource(srv, "owner/repo", "tok").BaseUsesMergeQueue("main"); err == nil {
+			if _, err := testSource(srv, "owner/repo", "tok").BaseUsesMergeQueue("owner/repo", "main"); err == nil {
 				t.Error("want error")
 			}
 		})
@@ -176,7 +176,7 @@ func TestMergeStackDirect(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, method, path, body, ctype := stackMergeServer(t, tc.status, tc.resp)
-			got, err := testSource(srv, "owner/repo", "tok123").MergeStack(142, false)
+			got, err := testSource(srv, "owner/repo", "tok123").MergeStack(PRRef{Repo: "owner/repo", Number: 142}, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +201,7 @@ func TestMergeStackDirect(t *testing.T) {
 
 func TestMergeStackQueue(t *testing.T) {
 	srv, _, _, body, _ := stackMergeServer(t, http.StatusAccepted, `{"status":"enqueued"}`)
-	got, err := testSource(srv, "owner/repo", "tok123").MergeStack(142, true)
+	got, err := testSource(srv, "owner/repo", "tok123").MergeStack(PRRef{Repo: "owner/repo", Number: 142}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestMergeStackErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			srv, _, _, _, _ := stackMergeServer(t, tc.status, tc.resp)
-			_, err := testSource(srv, "owner/repo", "tok123").MergeStack(142, false)
+			_, err := testSource(srv, "owner/repo", "tok123").MergeStack(PRRef{Repo: "owner/repo", Number: 142}, false)
 			if err == nil || err.Error() != tc.want {
 				t.Errorf("err = %v, want %q", err, tc.want)
 			}
@@ -236,7 +236,7 @@ func TestMergeStackErrors(t *testing.T) {
 
 func TestStackMergeStatus(t *testing.T) {
 	srv, method, path, body, _ := stackMergeServer(t, http.StatusOK, `{"status":"failed","details":{"message":"conflict in #141"}}`)
-	got, err := testSource(srv, "owner/repo", "tok123").StackMergeStatus(142, "abc-123")
+	got, err := testSource(srv, "owner/repo", "tok123").StackMergeStatus(PRRef{Repo: "owner/repo", Number: 142}, "abc-123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestStackMergeStatus(t *testing.T) {
 
 func TestStackMergeStatusError(t *testing.T) {
 	srv, _, _, _, _ := stackMergeServer(t, http.StatusInternalServerError, "oops\n")
-	_, err := testSource(srv, "owner/repo", "tok123").StackMergeStatus(142, "u")
+	_, err := testSource(srv, "owner/repo", "tok123").StackMergeStatus(PRRef{Repo: "owner/repo", Number: 142}, "u")
 	if err == nil || !strings.Contains(err.Error(), "500 Internal Server Error: oops") {
 		t.Errorf("err = %v", err)
 	}

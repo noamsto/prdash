@@ -76,7 +76,7 @@ func TestHydrateSanitizesCachedPRDetail(t *testing.T) {
 	m.setPRs([]gh.PR{{Number: 4}})
 	m.cache.Set(detailKey(m.repo, 4), []byte(`{"comments":[{"body":"`+evilJSON+`"}],"reviews":[{"body":"`+evilJSON+`","state":"`+evilJSON+`"}]}`))
 	m.hydrateDetail()
-	d, ok := m.detail[4]
+	d, ok := m.detail[m.launchRef(4)]
 	if !ok || len(d.Comments) != 1 || len(d.Reviews) != 1 {
 		t.Fatalf("detail = %+v, %v", d, ok)
 	}

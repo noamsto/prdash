@@ -12,22 +12,28 @@ type PRSource interface {
 	FetchPRs(filter string, limit int) (prs []PR, raw []byte, err error)
 }
 
-// DetailSource fetches per-PR detail for a set of PR numbers in one shot,
-// returning the mapped details plus the JSON bytes to cache per number (which
-// must round-trip through the detail hydrate path). A batched backend collapses
-// the prefetch window's N `gh pr view` subprocesses into a single request.
+// CrossRepoPRSource fetches PRs matching a search filter from every repo except
+// the current one, with the same raw-bytes contract as PRSource.
+type CrossRepoPRSource interface {
+	FetchCrossRepoPRs(filter string, limit int) (prs []PR, raw []byte, err error)
+}
+
+// DetailSource fetches per-PR detail for a set of PRs in one shot, returning
+// the mapped details plus the JSON bytes to cache per PR (which must round-trip
+// through the detail hydrate path). When a repo fails, the maps still hold the repos that succeeded and err is non-nil.
 type DetailSource interface {
-	FetchDetails(numbers []int) (details map[int]PRDetail, raw map[int][]byte, err error)
+	FetchDetails(refs []PRRef) (details map[PRRef]PRDetail, raw map[PRRef][]byte, err error)
 }
 
-// ChecksSource fetches just the status-check rollup for a set of PR numbers, for
-// the live-CI poll. Nothing is cached: the rollup is the most perishable field on
-// the board, and the poll applies it to rows it already has.
+// ChecksSource fetches just the status-check rollup for a set of PRs, for the
+// live-CI poll. Nothing is cached: the rollup is the most perishable field on
+// the board, and the poll applies it to rows it already has. Partial results
+// follow DetailSource.
 type ChecksSource interface {
-	FetchChecks(numbers []int) (checks map[int][]Check, err error)
+	FetchChecks(refs []PRRef) (checks map[PRRef][]Check, err error)
 }
 
-// ItemState is the current GitHub state of a held row, looked up by number.
+// ItemState is the current GitHub state of a held row, looked up by ref.
 // MergedAt is PRs only; zero otherwise.
 type ItemState struct {
 	State    string
@@ -35,11 +41,11 @@ type ItemState struct {
 	ClosedAt time.Time
 }
 
-// StateSource looks up the current state of issues/PRs by number in one
-// aliased request, for the held-row lookup: a departed row's real state
-// without a full list refetch.
+// StateSource looks up the current state of issues/PRs in one aliased request
+// per repo, for the held-row lookup: a departed row's real state without a full
+// list refetch. Partial results follow DetailSource.
 type StateSource interface {
-	FetchStates(numbers []int) (map[int]ItemState, error)
+	FetchStates(refs []PRRef) (map[PRRef]ItemState, error)
 }
 
 // IssueSource fetches an issue list for a search filter, mirroring PRSource:
@@ -61,10 +67,10 @@ type ViewerSource interface {
 	FetchViewer() (login string, err error)
 }
 
-// MembersSource fetches the assignable-users list for the current repo. The
-// []byte is the marshalled []User for the members cache hydrate round-trip.
+// MembersSource fetches the assignable-users list for repo. The []byte is the
+// marshalled []User for the members cache hydrate round-trip.
 type MembersSource interface {
-	FetchAssignableUsers() (users []User, raw []byte, err error)
+	FetchAssignableUsers(repo string) (users []User, raw []byte, err error)
 }
 
 // MutationSource performs the PR-mutating actions (merge, auto-merge,
@@ -74,7 +80,7 @@ type MembersSource interface {
 // and always replaces (union:false); an empty set is the valid "remove all
 // reviewers" encoding and callers must still fire it, not skip it. MergeStack
 // and StackMergeStatus are the exception: they are REST calls and take the PR
-// number.
+// ref.
 type MutationSource interface {
 	MergePR(prID string) error
 	EnableAutoMerge(prID string) error
@@ -84,15 +90,15 @@ type MutationSource interface {
 	UpdateBranch(prID string) error
 	ApprovePR(prID string) error
 	RequestReviews(prID string, logins []string) error
-	MergeStack(prNumber int, mergeQueue bool) (StackMergeResult, error)
-	StackMergeStatus(prNumber int, uuid string) (StackMergeResult, error)
+	MergeStack(pr PRRef, mergeQueue bool) (StackMergeResult, error)
+	StackMergeStatus(pr PRRef, uuid string) (StackMergeResult, error)
 }
 
 // StackSource looks up a PR's stacked-PR chain and whether its base branch
 // is merge-queue protected, the inputs to a stack merge.
 type StackSource interface {
-	FetchStackForPR(prNumber int) (Stack, bool, error)
-	BaseUsesMergeQueue(baseRef string) (bool, error)
+	FetchStackForPR(pr PRRef) (Stack, bool, error)
+	BaseUsesMergeQueue(repo, baseRef string) (bool, error)
 }
 
 // WorkflowRun is one run entry from ActionsSource.ListRunsForBranch, mirroring
@@ -144,22 +150,23 @@ func (j RunJob) Check() Check {
 }
 
 // ActionsSource performs the Actions rerun/job-log operations via REST.
-// RunID/JobID are the REST API's numeric IDs.
+// RunID/JobID are the REST API's numeric IDs; repo is the owner/name they
+// belong to.
 type ActionsSource interface {
 	// ListRunsForBranch lists the most recent runs for branch, newest first,
 	// mirroring `gh run list --branch <b> -L 20 --json databaseId,conclusion,headSha`.
-	ListRunsForBranch(branch string) ([]WorkflowRun, error)
+	ListRunsForBranch(repo, branch string) ([]WorkflowRun, error)
 	// RerunFailedJobs reruns the failed jobs of runID, mirroring
 	// `gh run rerun <id> --failed`.
-	RerunFailedJobs(runID int64) error
+	RerunFailedJobs(repo string, runID int64) error
 	// RerunJob reruns a single job (and its dependents), mirroring
 	// `gh run rerun --job <id>`.
-	RerunJob(jobID int64) error
+	RerunJob(repo string, jobID int64) error
 	// JobLog fetches jobID's log, filtered to failed steps when failedOnly,
 	// tab-delimited in the same "job\tstep\ttimestamp content" shape
 	// `gh run view --log[-failed]` emits so it round-trips through the
 	// existing parseJobLog consumer unchanged.
-	JobLog(jobID int64, failedOnly bool) ([]byte, error)
+	JobLog(repo string, jobID int64, failedOnly bool) ([]byte, error)
 }
 
 // RunsSource lists the repo's workflow runs and a run's jobs for the runs board.

@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/noamsto/prdash/internal/cache"
@@ -10,19 +11,28 @@ import (
 )
 
 type fakeDetailSource struct {
-	got [][]int // numbers passed to each FetchDetails call
+	got [][]gh.PRRef // refs passed to each FetchDetails call
 	ret map[int]gh.PRDetail
 }
 
-func (f *fakeDetailSource) FetchDetails(nums []int) (map[int]gh.PRDetail, map[int][]byte, error) {
-	f.got = append(f.got, append([]int(nil), nums...))
-	details := map[int]gh.PRDetail{}
-	raws := map[int][]byte{}
-	for _, n := range nums {
-		details[n] = f.ret[n]
-		raws[n], _ = json.Marshal(f.ret[n])
+func (f *fakeDetailSource) FetchDetails(refs []gh.PRRef) (map[gh.PRRef]gh.PRDetail, map[gh.PRRef][]byte, error) {
+	f.got = append(f.got, append([]gh.PRRef(nil), refs...))
+	details := map[gh.PRRef]gh.PRDetail{}
+	raws := map[gh.PRRef][]byte{}
+	for _, r := range refs {
+		details[r] = f.ret[r.Number]
+		raws[r], _ = json.Marshal(f.ret[r.Number])
 	}
 	return details, raws, nil
+}
+
+// refsIn qualifies nums with repo, for asserting what a fake source received.
+func refsIn(repo string, nums ...int) []gh.PRRef {
+	refs := make([]gh.PRRef, len(nums))
+	for i, n := range nums {
+		refs[i] = gh.PRRef{Repo: repo, Number: n}
+	}
+	return refs
 }
 
 func batchModel(t *testing.T, fd *fakeDetailSource, prs []gh.PR) Model {
@@ -39,19 +49,19 @@ func TestBatchDetailCmdPopulatesDetail(t *testing.T) {
 	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{5: {MergeStateStatus: "CLEAN"}}}
 	m := batchModel(t, fd, []gh.PR{{Number: 5}})
 
-	cmd := m.batchDetailCmd([]int{5})
+	cmd := m.batchDetailCmd([]gh.PRRef{m.launchRef(5)})
 	if cmd == nil {
 		t.Fatal("batchDetailCmd should return a command for uncached PRs")
 	}
 	u, _ := m.Update(cmd())
 	got := u.(Model)
-	if got.detail[5].MergeStateStatus != "CLEAN" {
-		t.Errorf("detail[5] = %+v, want MergeStateStatus=CLEAN", got.detail[5])
+	if got.detail[got.launchRef(5)].MergeStateStatus != "CLEAN" {
+		t.Errorf("detail[5] = %+v, want MergeStateStatus=CLEAN", got.detail[got.launchRef(5)])
 	}
-	if !got.fresh[5] {
+	if !got.fresh[got.launchRef(5)] {
 		t.Error("PR 5 should be marked fresh after the batch lands")
 	}
-	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 5 {
+	if len(fd.got) != 1 || !slices.Equal(fd.got[0], refsIn("owner/repo", 5)) {
 		t.Errorf("source called with %v, want one call for [5]", fd.got)
 	}
 }
@@ -61,13 +71,13 @@ func TestBatchDetailCmdPopulatesDetail(t *testing.T) {
 func TestDetailWindowSkipsFresh(t *testing.T) {
 	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{}}
 	m := batchModel(t, fd, []gh.PR{{Number: 1}, {Number: 2}, {Number: 3}})
-	m.fresh[2] = true
+	m.fresh[m.launchRef(2)] = true
 
 	ps := m.section.(*PRSection)
 	got := m.detailWindow(ps)
 	// Shown order is number descending: 3, 2, 1. PR 2 is fresh, so it's skipped.
-	want := []int{3, 1}
-	if len(got) != len(want) || got[0] != 3 || got[1] != 1 {
+	want := []gh.PRRef{m.launchRef(3), m.launchRef(1)}
+	if !slices.Equal(got, want) {
 		t.Errorf("detailWindow = %v, want %v (PR 2 is fresh)", got, want)
 	}
 }
@@ -85,7 +95,7 @@ func TestCursorDetailRoutesToBatchSource(t *testing.T) {
 	if _, ok := cmd().(detailsBatchMsg); !ok {
 		t.Error("cursor detail should route through the batch source (detailsBatchMsg)")
 	}
-	if len(fd.got) != 1 || fd.got[0][0] != 9 {
+	if len(fd.got) != 1 || fd.got[0][0] != (gh.PRRef{Repo: "owner/repo", Number: 9}) {
 		t.Errorf("source called with %v, want one call for [9]", fd.got)
 	}
 }

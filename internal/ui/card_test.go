@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/noamsto/prdash/internal/gh"
 	"github.com/noamsto/prdash/internal/triage"
 )
 
@@ -126,5 +127,63 @@ func TestRenderCardFailingTimingDroppedAtNarrowWidth(t *testing.T) {
 	}
 	if !strings.Contains(got, "✗ integrati") {
 		t.Fatalf("truncated label missing: %q", got)
+	}
+}
+
+func TestCountStagesFromPreliminary(t *testing.T) {
+	pass := []gh.Check{{State: "SUCCESS"}}
+	prs := []gh.PR{
+		{Number: 1, StatusCheckRollup: []gh.Check{{State: "FAILURE"}}},
+		{Number: 2, ReviewDecision: "CHANGES_REQUESTED", StatusCheckRollup: pass},
+		{Number: 3, StatusCheckRollup: []gh.Check{{State: "PENDING"}}},
+		{Number: 4, ReviewDecision: "REVIEW_REQUIRED", StatusCheckRollup: pass},
+		{Number: 5, IsDraft: true, StatusCheckRollup: pass},
+		{Number: 6, ReviewDecision: "APPROVED", StatusCheckRollup: pass},
+		{Number: 7, ReviewDecision: "APPROVED"},
+		{Number: 8, StatusCheckRollup: pass},
+		{Number: 9, Stack: &gh.PRStack{}, StackPosition: 2, StatusCheckRollup: pass},
+	}
+	parent := func(p gh.PR) int {
+		if p.Stack != nil {
+			return 4
+		}
+		return 0
+	}
+	c := countStages(prs, "viewer", parent)
+	want := map[stageBucket]int{
+		stageFailing: 2, stageRunning: 1, stageReview: 1, stageBlocked: 1,
+		stageDraft: 1, stageReady: 2, stageOther: 1,
+	}
+	for i, n := range c {
+		b := stageBucket(i)
+		if n != want[b] {
+			t.Errorf("bucket %s = %d, want %d", stageLabel(b), n, want[b])
+		}
+	}
+	if c.total() != 9 {
+		t.Fatalf("total = %d, want 9", c.total())
+	}
+}
+
+func TestRenderRepoHeader(t *testing.T) {
+	c := stageCounts{stageFailing: 1, stageRunning: 1, stageReady: 1}
+	if got, want := ansi.Strip(renderRepoHeader("owner/repo", c, 80, false)),
+		"owner/repo  3 · ✗1 "+ciRunningGlyph+"1 ✓1"; got != want {
+		t.Fatalf("wide header = %q, want %q", got, want)
+	}
+	for w := 12; w <= 120; w++ {
+		out := renderRepoHeader("owner/repo", c, w, true)
+		if lipgloss.Width(out) > w {
+			t.Fatalf("width %d: header is %d wide: %q", w, lipgloss.Width(out), ansi.Strip(out))
+		}
+		if !strings.HasPrefix(ansi.Strip(out), "owner/repo") {
+			t.Fatalf("width %d: repo name dropped: %q", w, ansi.Strip(out))
+		}
+	}
+	if got := ansi.Strip(renderRepoHeader("owner/repo", c, 14, false)); got != "owner/repo  3" {
+		t.Fatalf("width 14 = %q, want %q", got, "owner/repo  3")
+	}
+	if got := ansi.Strip(renderRepoHeader("owner/repo", c, 11, false)); got != "owner/repo" {
+		t.Fatalf("width 11 = %q, want %q", got, "owner/repo")
 	}
 }

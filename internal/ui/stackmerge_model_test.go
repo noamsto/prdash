@@ -123,7 +123,7 @@ func TestStackMergeMiddleLayerPromptsWithOffBoardLayer(t *testing.T) {
 	if got, want := m.confirmQuestion(), "Merge stack up to #142 (3 PRs: #140 #141 #142)?"; got != want {
 		t.Errorf("confirmQuestion = %q, want %q", got, want)
 	}
-	if len(details.calls) != 1 || !slices.Equal(details.calls[0], []int{140}) {
+	if len(details.calls) != 1 || !slices.Equal(details.calls[0], refsIn("owner/repo", 140)) {
 		t.Errorf("FetchDetails calls = %v, want one call for the off-board #140", details.calls)
 	}
 	if stacks.calls != 1 {
@@ -143,7 +143,7 @@ func TestStackMergeConfirmMergesEveryLayer(t *testing.T) {
 		t.Fatalf("y should start the run and consume the prompt: run=%v pending=%v plan=%v", m.stackMerge, m.pending, m.pendingStackMerge)
 	}
 	m, cmd = update(m, head(t, cmd))
-	if !slices.Equal(fs.stackMergeCalls, []stackMergeCall{{number: 142}}) {
+	if !slices.Equal(fs.stackMergeCalls, []stackMergeCall{{ref: gh.PRRef{Repo: "owner/repo", Number: 142}}}) {
 		t.Fatalf("MergeStack calls = %+v, want exactly one MergeStack(142, false)", fs.stackMergeCalls)
 	}
 	done, ok := cmd().(actionDoneMsg)
@@ -160,7 +160,7 @@ func TestStackMergeConfirmMergesEveryLayer(t *testing.T) {
 
 	m, _ = update(m, done)
 	for _, n := range []int{140, 141, 142} {
-		if _, ok := m.sessionMerged[n]; !ok {
+		if _, ok := m.sessionMerged[m.launchRef(n)]; !ok {
 			t.Errorf("PR #%d not marked session-merged", n)
 		}
 	}
@@ -227,7 +227,7 @@ func TestStackMergePollIgnoresForeignSettleAndStaleBeats(t *testing.T) {
 	fs.stackPollResults = []gh.StackMergeResult{{Status: gh.StackMergeMerged}}
 	m, cmd = update(m, stackMergeProbeMsg{id: run.id})
 	m, cmd = update(m, cmd())
-	if !slices.Equal(fs.stackPollCalls, []stackPollCall{{number: 142, uuid: "u1"}}) {
+	if !slices.Equal(fs.stackPollCalls, []stackPollCall{{ref: gh.PRRef{Repo: "owner/repo", Number: 142}, uuid: "u1"}}) {
 		t.Errorf("StackMergeStatus calls = %+v, want one for #142 u1", fs.stackPollCalls)
 	}
 	done, ok := cmd().(actionDoneMsg)

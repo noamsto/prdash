@@ -84,10 +84,10 @@ func (f *partialMergeSource) ApprovePR(prID string) error {
 	return f.failFor[prID]
 }
 func (f *partialMergeSource) RequestReviews(string, []string) error { return nil }
-func (f *partialMergeSource) MergeStack(int, bool) (gh.StackMergeResult, error) {
+func (f *partialMergeSource) MergeStack(gh.PRRef, bool) (gh.StackMergeResult, error) {
 	return gh.StackMergeResult{}, nil
 }
-func (f *partialMergeSource) StackMergeStatus(int, string) (gh.StackMergeResult, error) {
+func (f *partialMergeSource) StackMergeStatus(gh.PRRef, string) (gh.StackMergeResult, error) {
 	return gh.StackMergeResult{}, nil
 }
 
@@ -263,11 +263,11 @@ func TestPartialBatchUpdateBranchStampsTheSuccesses(t *testing.T) {
 	m = updated.(Model)
 
 	for _, n := range []int{11, 13} {
-		if _, ok := m.ciRerun[n]; !ok {
+		if _, ok := m.ciRerun[m.launchRef(n)]; !ok {
 			t.Errorf("ciRerun[%d] missing, want it stamped — update-branch succeeded on this PR", n)
 		}
 	}
-	if _, ok := m.ciRerun[12]; ok {
+	if _, ok := m.ciRerun[m.launchRef(12)]; ok {
 		t.Error("ciRerun[12] stamped, want it absent — update-branch failed on this PR")
 	}
 }
@@ -353,22 +353,22 @@ func TestDepartedRowKeepsItsPosition(t *testing.T) {
 func TestMergeHeldPRsCarriesDepartedRowWithCategory(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	prev := []gh.PR{openPR(30, "alice"), openPR(29, "alice")}
-	prevCats := map[int]string{30: "Mine", 29: "Others"}
+	prevCats := map[gh.PRRef]string{m.launchRef(30): "Mine", m.launchRef(29): "Others"}
 	fetched := []gh.PR{openPR(30, "alice")}
-	cats := map[int]string{30: "Mine"}
+	cats := map[gh.PRRef]string{m.launchRef(30): "Mine"}
 
 	out := m.mergeHeldPRs(prev, prevCats, fetched, cats)
 
 	if len(out) != 2 {
 		t.Fatalf("out = %+v, want #29 carried forward alongside #30", out)
 	}
-	if cats[29] != "Others" {
-		t.Errorf("cats[29] = %q, want %q (carried from prevCats)", cats[29], "Others")
+	if cats[m.launchRef(29)] != "Others" {
+		t.Errorf("cats[29] = %q, want %q (carried from prevCats)", cats[m.launchRef(29)], "Others")
 	}
-	if st, ok := m.held[29]; !ok || st != "" {
+	if st, ok := m.held[m.launchRef(29)]; !ok || st != "" {
 		t.Errorf("m.held[29] = (%q, %v), want (\"\", true) — pending lookup", st, ok)
 	}
-	if _, ok := m.held[30]; ok {
+	if _, ok := m.held[m.launchRef(30)]; ok {
 		t.Error("m.held[30] should be absent — #30 is OPEN, matching the open board state")
 	}
 }
@@ -381,7 +381,7 @@ func TestMergeHeldPRsCarriesDepartedRowWithCategory(t *testing.T) {
 func TestMergeHeldPRsSessionMergeReturnedStaleHeldAsMerged(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	stamp := time.Now()
-	m.sessionMerged[12] = stamp
+	m.sessionMerged[m.launchRef(12)] = stamp
 	p := openPR(12, "alice")
 	p.State, p.MergedAt = "MERGED", stamp // as overlaySessionMerged would have left it
 	fetched := []gh.PR{p}
@@ -391,7 +391,7 @@ func TestMergeHeldPRsSessionMergeReturnedStaleHeldAsMerged(t *testing.T) {
 	if len(out) != 1 || out[0].State != "MERGED" {
 		t.Fatalf("out = %+v, want the single overlaid PR unchanged", out)
 	}
-	if got := m.held[12]; got != "MERGED" {
+	if got := m.held[m.launchRef(12)]; got != "MERGED" {
 		t.Errorf("m.held[12] = %q, want MERGED", got)
 	}
 }
@@ -400,12 +400,12 @@ func TestMergeHeldPRsSessionMergeReturnedStaleHeldAsMerged(t *testing.T) {
 // fetch returns with State equal to the board state is no longer held.
 func TestMergeHeldPRsReturnedMemberUnholds(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
-	m.held[14] = ""
+	m.held[m.launchRef(14)] = ""
 	fetched := []gh.PR{openPR(14, "alice")}
 
 	m.mergeHeldPRs(nil, nil, fetched, nil)
 
-	if _, ok := m.held[14]; ok {
+	if _, ok := m.held[m.launchRef(14)]; ok {
 		t.Error("m.held[14] should be gone — the fetch returned it OPEN, matching the open board")
 	}
 }
@@ -416,13 +416,13 @@ func TestMergeHeldPRsReturnedThenMissingReholds(t *testing.T) {
 	m := NewModel("/repo", "is:open", nil)
 	prev := []gh.PR{openPR(14, "alice")}
 	m.mergeHeldPRs(nil, nil, prev, nil) // returned: not held
-	if _, ok := m.held[14]; ok {
+	if _, ok := m.held[m.launchRef(14)]; ok {
 		t.Fatalf("test setup: #14 should not be held yet")
 	}
 
 	m.mergeHeldPRs(prev, nil, nil, nil) // now missing entirely
 
-	if st, ok := m.held[14]; !ok || st != "" {
+	if st, ok := m.held[m.launchRef(14)]; !ok || st != "" {
 		t.Errorf("m.held[14] = (%q, %v), want (\"\", true) after departing", st, ok)
 	}
 }
@@ -437,17 +437,17 @@ func TestApplyHeldStatesPreservesTheClosedBoardsSortKey(t *testing.T) {
 	original := time.Now().Add(-24 * time.Hour)
 	p := gh.PR{Number: 50, State: "CLOSED", ClosedAt: original}
 	m.setPRs([]gh.PR{p})
-	m.held[50] = ""
+	m.held[m.launchRef(50)] = ""
 
-	m.applyHeldStates(map[int]gh.ItemState{50: {State: "CLOSED", ClosedAt: time.Now()}})
+	m.applyHeldStates(map[gh.PRRef]gh.ItemState{m.launchRef(50): {State: "CLOSED", ClosedAt: time.Now()}})
 
 	ps := m.section.(*PRSection)
 	got := findPR(t, ps, 50)
 	if !got.ClosedAt.Equal(original) {
 		t.Errorf("ClosedAt = %v, want unchanged %v — it's the closed board's sort key", got.ClosedAt, original)
 	}
-	if m.held[50] != "CLOSED" {
-		t.Errorf("m.held[50] = %q, want CLOSED recorded from the lookup", m.held[50])
+	if m.held[m.launchRef(50)] != "CLOSED" {
+		t.Errorf("m.held[50] = %q, want CLOSED recorded from the lookup", m.held[m.launchRef(50)])
 	}
 }
 
@@ -460,10 +460,10 @@ func TestCursorAnchorCapturesNumberAndOrder(t *testing.T) {
 
 	num, order := m.cursorAnchor()
 
-	if num != 20 {
-		t.Errorf("num = %d, want #20 (the cursor row)", num)
+	if num != m.launchRef(20) {
+		t.Errorf("num = %v, want #20 (the cursor row)", num)
 	}
-	if want := []int{30, 20, 10}; !slices.Equal(order, want) {
+	if want := []gh.PRRef{m.launchRef(30), m.launchRef(20), m.launchRef(10)}; !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
 	}
 }
@@ -475,8 +475,8 @@ func TestCursorAnchorEmptyBoard(t *testing.T) {
 
 	num, order := m.cursorAnchor()
 
-	if num != 0 || len(order) != 0 {
-		t.Errorf("cursorAnchor() = (%d, %v), want (0, empty)", num, order)
+	if num != (gh.PRRef{}) || len(order) != 0 {
+		t.Errorf("cursorAnchor() = (%v, %v), want (zero, empty)", num, order)
 	}
 }
 
@@ -485,12 +485,19 @@ func TestCursorAnchorEmptyBoard(t *testing.T) {
 // old position — below first, then above — and clamps only once nothing in the
 // old order survived.
 func TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps(t *testing.T) {
-	order := []int{50, 40, 30, 20, 10} // old shown order; cursor was on #30 (index 2)
+	refs := func(nums ...int) []gh.PRRef {
+		out := make([]gh.PRRef, len(nums))
+		for i, n := range nums {
+			out[i] = gh.PRRef{Number: n}
+		}
+		return out
+	}
+	order := refs(50, 40, 30, 20, 10) // old shown order; cursor was on #30 (index 2)
 
 	t.Run("prefers the neighbour below when both survive", func(t *testing.T) {
 		m := NewModel("/repo", "is:open", nil)
 		m.setPRs([]gh.PR{openPR(40, "alice"), openPR(20, "alice")})
-		m.restoreCursor(30, order)
+		m.restoreCursor(m.launchRef(30), order)
 		ps := m.section.(*PRSection)
 		if got := ps.prAt(m.cursor).Number; got != 20 {
 			t.Errorf("cursor PR = #%d, want #20 (the surviving neighbour below #30)", got)
@@ -500,7 +507,7 @@ func TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps(t *te
 	t.Run("falls back to the neighbour above", func(t *testing.T) {
 		m := NewModel("/repo", "is:open", nil)
 		m.setPRs([]gh.PR{openPR(40, "alice"), openPR(10, "alice")})
-		m.restoreCursor(30, order)
+		m.restoreCursor(m.launchRef(30), order)
 		ps := m.section.(*PRSection)
 		if got := ps.prAt(m.cursor).Number; got != 40 {
 			t.Errorf("cursor PR = #%d, want #40 (the surviving neighbour above #30)", got)
@@ -511,7 +518,7 @@ func TestRestoreCursorAnchorWalksOutwardPreferringBelowThenAboveThenClamps(t *te
 		m := NewModel("/repo", "is:open", nil)
 		m.setPRs([]gh.PR{openPR(99, "alice"), openPR(98, "alice")})
 		m.cursor = 5 // stale, out of range
-		m.restoreCursor(30, order)
+		m.restoreCursor(m.launchRef(30), order)
 		if m.cursor != 1 {
 			t.Errorf("cursor = %d, want clamped to the last row (1)", m.cursor)
 		}
@@ -601,7 +608,7 @@ func heldBoard(t *testing.T, src gh.PRSource) Model {
 	m.setPRs([]gh.PR{mergedPR(30, "alice"), mergedPR(29, "alice"), mergedPR(28, "alice")})
 	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
 	m = u.(Model)
-	if _, held := m.held[29]; !held || m.section.Len() != 3 {
+	if _, held := m.held[m.launchRef(29)]; !held || m.section.Len() != 3 {
 		t.Fatalf("test setup: want #29 held on a 3-row board, held = %v, rows = %d", m.held, m.section.Len())
 	}
 	return m
@@ -611,10 +618,10 @@ func heldBoard(t *testing.T, src gh.PRSource) Model {
 // MergedAt/ClosedAt stamped at fixture build time, so display order isn't
 // what these tests pin.
 func shownNumbers(m Model) []int {
-	n := m.section.(numbered)
 	var out []int
 	for i := range m.section.Len() {
-		out = append(out, n.numberAt(i))
+		r, _ := m.refAt(i)
+		out = append(out, r.Number)
 	}
 	slices.Sort(out)
 	return out
@@ -659,7 +666,7 @@ func TestCtrlRWinsOverAnOlderUnrequestedFetch(t *testing.T) {
 	u, _ = m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergedPR(30, "alice"), mergedPR(28, "alice")}})
 	m = u.(Model)
 	for _, n := range []int{27, 29} {
-		if _, held := m.held[n]; !held {
+		if _, held := m.held[m.launchRef(n)]; !held {
 			t.Errorf("#%d not held after the unrequested fetch that landed first: held = %v", n, m.held)
 		}
 	}
@@ -694,7 +701,7 @@ func TestFailedCtrlRKeepsHeldRows(t *testing.T) {
 	if got := shownNumbers(m); !slices.Contains(got, 29) {
 		t.Errorf("shown = %v, want #29 still held after a failed ctrl+r", got)
 	}
-	if _, held := m.held[29]; !held {
+	if _, held := m.held[m.launchRef(29)]; !held {
 		t.Errorf("held = %v, want #29 held", m.held)
 	}
 }
@@ -784,12 +791,8 @@ func TestMineHomeJumpSurvivesAReorderingFetch(t *testing.T) {
 // shownIndex returns number's index among the currently shown rows (PR or
 // issue board), or -1 if it isn't shown.
 func shownIndex(m Model, number int) int {
-	n, ok := m.section.(numbered)
-	if !ok {
-		return -1
-	}
 	for i := 0; i < m.section.Len(); i++ {
-		if n.numberAt(i) == number {
+		if r, ok := m.refAt(i); ok && r.Number == number {
 			return i
 		}
 	}
@@ -819,14 +822,14 @@ func TestHeldRowTaggedFromLookup(t *testing.T) {
 	m = u.(Model)
 
 	staleGen := m.heldGen - 1
-	u, _ = m.Update(heldStatesMsg{gen: staleGen, states: map[int]gh.ItemState{29: {State: "CLOSED"}}})
+	u, _ = m.Update(heldStatesMsg{gen: staleGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(29): {State: "CLOSED"}}})
 	m = u.(Model)
 	m.renderList()
 	if got := rowTextFor(t, m, 29); strings.Contains(got, "closed") {
 		t.Errorf("row #29 = %q, want a stale-gen lookup to change nothing", got)
 	}
 
-	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "CLOSED"}}})
+	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(29): {State: "CLOSED"}}})
 	m = u.(Model)
 	m.renderList()
 
@@ -904,7 +907,7 @@ func TestLeftFilterTag(t *testing.T) {
 	u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{openPR(30, "alice"), openPR(28, "alice")}})
 	m = u.(Model)
 
-	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "OPEN"}}})
+	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(29): {State: "OPEN"}}})
 	m = u.(Model)
 	m.renderList()
 
@@ -926,11 +929,11 @@ func TestIssueHeldRowTagged(t *testing.T) {
 
 	u, _ := m.Update(issuesFetchedMsg{filter: m.filter, issues: []gh.Issue{{Number: 30, Title: "a"}, {Number: 28, Title: "c"}}})
 	m = u.(Model)
-	if _, held := m.held[29]; !held {
+	if _, held := m.held[m.launchRef(29)]; !held {
 		t.Fatalf("test setup: want issue #29 held, held = %v", m.held)
 	}
 
-	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "CLOSED"}}})
+	u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(29): {State: "CLOSED"}}})
 	m = u.(Model)
 	m.renderList()
 
@@ -950,7 +953,7 @@ func TestHeldTagIsPartOfTheRowCacheKey(t *testing.T) {
 	m.renderList()
 	before := rowTextFor(t, m, 29)
 
-	m.applyHeldStates(map[int]gh.ItemState{29: {State: "CLOSED"}}) // no rowGen bump
+	m.applyHeldStates(map[gh.PRRef]gh.ItemState{m.launchRef(29): {State: "CLOSED"}}) // no rowGen bump
 	m.renderList()
 	after := rowTextFor(t, m, 29)
 
@@ -962,22 +965,22 @@ func TestHeldTagIsPartOfTheRowCacheKey(t *testing.T) {
 	}
 }
 
-// fakeStateSource is a gh.StateSource that records the numbers each call
+// fakeStateSource is a gh.StateSource that records the refs each call
 // receives, so a test can assert what heldStatesCmd asked for.
 type fakeStateSource struct {
 	mu     sync.Mutex
-	calls  [][]int
-	states map[int]gh.ItemState
+	calls  [][]gh.PRRef
+	states map[gh.PRRef]gh.ItemState
 }
 
-func (f *fakeStateSource) FetchStates(numbers []int) (map[int]gh.ItemState, error) {
+func (f *fakeStateSource) FetchStates(refs []gh.PRRef) (map[gh.PRRef]gh.ItemState, error) {
 	f.mu.Lock()
-	f.calls = append(f.calls, append([]int(nil), numbers...))
+	f.calls = append(f.calls, append([]gh.PRRef(nil), refs...))
 	f.mu.Unlock()
 	return f.states, nil
 }
 
-func (f *fakeStateSource) calledWith() [][]int {
+func (f *fakeStateSource) calledWith() [][]gh.PRRef {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
@@ -999,7 +1002,7 @@ func TestHeldStatesLookupIssued(t *testing.T) {
 		invokeCmdTree(t, cmd)
 
 		calls := src.calledWith()
-		if len(calls) != 1 || !slices.Contains(calls[0], 29) {
+		if len(calls) != 1 || !slices.Contains(calls[0], m.launchRef(29)) {
 			t.Fatalf("FetchStates calls = %v, want one call containing #29", calls)
 		}
 	})
@@ -1124,7 +1127,7 @@ func TestHeldRowsRejectMutations(t *testing.T) {
 		m.setPRs([]gh.PR{mergeablePR(30, "alice"), mergeablePR(29, "alice"), mergeablePR(28, "alice")})
 		u, _ := m.Update(prsFetchedMsg{filter: m.filter, prs: []gh.PR{mergeablePR(30, "alice"), mergeablePR(28, "alice")}})
 		m = u.(Model)
-		u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{29: {State: "OPEN"}}})
+		u, _ = m.Update(heldStatesMsg{gen: m.heldGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(29): {State: "OPEN"}}})
 		m = u.(Model)
 		m.cursor = shownIndex(m, 29)
 
@@ -1203,7 +1206,7 @@ func TestPollIgnoresHeldRows(t *testing.T) {
 		p := openPR(29, "alice")
 		p.StatusCheckRollup = pending()
 		m.setPRs([]gh.PR{p})
-		m.held[29] = ""
+		m.held[m.launchRef(29)] = ""
 
 		if m.anyChecksRunning() {
 			t.Error("a held row's pending check must not keep the poll alive")
@@ -1447,7 +1450,7 @@ func TestMergeResultAfterStatusClearedStillMarksMerged(t *testing.T) {
 	m.cursor = shownIndex(m, 11)
 	cmd := m.runBulk(action.DefaultPRActions()["m"])
 
-	m.held[9] = ""
+	m.held[m.launchRef(9)] = ""
 	m.cursor = shownIndex(m, 9)
 	m.runAction(action.DefaultPRActions()["r"]) // refused: #9 is held
 	u, _ := m.Update(clearFor(m))
@@ -1458,7 +1461,7 @@ func TestMergeResultAfterStatusClearedStillMarksMerged(t *testing.T) {
 
 	u, cmd = m.Update(driveBulk(t, cmd))
 	m = u.(Model)
-	if _, ok := m.sessionMerged[11]; !ok {
+	if _, ok := m.sessionMerged[m.launchRef(11)]; !ok {
 		t.Errorf("sessionMerged = %v, want #11 recorded", m.sessionMerged)
 	}
 	if p := findPR(t, m.section.(*PRSection), 11); p.State != "MERGED" {
@@ -1478,12 +1481,12 @@ func TestLookupAfterSessionMergeKeepsTheRowMerged(t *testing.T) {
 	m.setPRs([]gh.PR{mergeablePR(7, "alice"), mergeablePR(8, "alice")})
 	m.setPRs([]gh.PR{mergeablePR(8, "alice")}) // #7 departs
 	gen := m.heldGen
-	u, _ := m.Update(heldStatesMsg{gen: gen, states: map[int]gh.ItemState{7: {State: "OPEN"}}})
+	u, _ := m.Update(heldStatesMsg{gen: gen, states: map[gh.PRRef]gh.ItemState{m.launchRef(7): {State: "OPEN"}}})
 	m = u.(Model)
 
 	u, _ = m.Update(withStat(m, actionDoneMsg{merged: []gh.PR{findPR(t, m.section.(*PRSection), 7)}}))
 	m = u.(Model)
-	u, _ = m.Update(heldStatesMsg{gen: gen, states: map[int]gh.ItemState{7: {State: "OPEN"}}})
+	u, _ = m.Update(heldStatesMsg{gen: gen, states: map[gh.PRRef]gh.ItemState{m.launchRef(7): {State: "OPEN"}}})
 	m = u.(Model)
 
 	p := findPR(t, m.section.(*PRSection), 7)
@@ -1509,10 +1512,10 @@ func TestHeldRowOffAFullPageIsNotTaggedLeftFilter(t *testing.T) {
 	}
 	lookup := func(t *testing.T, m Model, n int) string {
 		t.Helper()
-		u, _ := m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{n: {State: "OPEN"}}})
+		u, _ := m.Update(heldStatesMsg{gen: m.heldGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(n): {State: "OPEN"}}})
 		m = u.(Model)
 		m.renderList()
-		if _, held := m.held[n]; !held {
+		if _, held := m.held[m.launchRef(n)]; !held {
 			t.Fatalf("test setup: #%d not held, held = %v", n, m.held)
 		}
 		return rowTextFor(t, m, n)
@@ -1633,7 +1636,7 @@ func TestHeldMergedRowRefusesChecksRerun(t *testing.T) {
 		p.StatusCheckRollup = []gh.Check{{State: "FAILURE", Name: "lint", DetailsUrl: "https://github.com/o/r/actions/runs/1/job/2"}}
 		m.setPRs([]gh.PR{p, openPR(8, "alice")})
 		m.setPRs([]gh.PR{openPR(8, "alice")})
-		u, _ := m.Update(heldStatesMsg{gen: m.heldGen, states: map[int]gh.ItemState{7: {State: "MERGED"}}})
+		u, _ := m.Update(heldStatesMsg{gen: m.heldGen, states: map[gh.PRRef]gh.ItemState{m.launchRef(7): {State: "MERGED"}}})
 		m = u.(Model)
 		m.cursor = shownIndex(m, 7)
 		m.expandedTab = tabChecks

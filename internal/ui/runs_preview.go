@@ -295,7 +295,7 @@ func (m *Model) rerunRunCmd(a action.Action) tea.Cmd {
 	case !runRerunnable(run):
 		return m.hint("No failed jobs to rerun")
 	}
-	src, id := m.actionsSource, run.ID
+	src, repo, id := m.actionsSource, m.repo, run.ID
 	m.actionStatus = statFor(a)
 	m.actionStatus.refresh = a.Refresh
 	m.actionStatus.rerunCI = true
@@ -304,7 +304,7 @@ func (m *Model) rerunRunCmd(a action.Action) tea.Cmd {
 	}
 	stat := m.actionStatus
 	return tea.Batch(func() tea.Msg {
-		return actionDoneMsg{stat: stat, err: src.RerunFailedJobs(id)}
+		return actionDoneMsg{stat: stat, err: src.RerunFailedJobs(repo, id)}
 	}, m.startSpinner())
 }
 
@@ -332,5 +332,5 @@ func (m *Model) openRunJobLog() tea.Cmd {
 	if job.Status != "completed" {
 		return m.hint("Job hasn't finished — GitHub serves logs only for finished jobs")
 	}
-	return m.openJobLog(strconv.FormatInt(job.ID, 10), job.Name, job.Conclusion != "failure")
+	return m.openJobLog(m.repo, strconv.FormatInt(job.ID, 10), job.Name, job.Conclusion != "failure")
 }

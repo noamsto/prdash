@@ -265,6 +265,9 @@ func TestRerunFailedJobsCallsSource(t *testing.T) {
 	if !slices.Equal(fs.rerunFailedCalls, []int64{bigRunID}) {
 		t.Errorf("rerunFailedCalls = %v, want [%d]", fs.rerunFailedCalls, bigRunID)
 	}
+	if !slices.Equal(fs.repos, []string{"owner/repo"}) {
+		t.Errorf("repos = %v, want [owner/repo]", fs.repos)
+	}
 	if m.actionStatus == nil || !m.actionStatus.refresh || !m.actionStatus.rerunCI {
 		t.Errorf("status = %+v, want refresh and rerunCI", m.actionStatus)
 	}

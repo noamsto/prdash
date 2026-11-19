@@ -147,9 +147,10 @@ func (m Model) expandedBody(w int) string {
 		}
 		return ""
 	}
-	d, cached := m.detail[v.Number]
+	ref := gh.PRRef{Repo: v.Repo, Number: v.Number}
+	d, cached := m.detail[ref]
 	if !cached {
-		if err := m.detailErr[v.Number]; err != nil {
+		if err := m.detailErr[ref]; err != nil {
 			return failStyle.Render("  details failed: " + err.Error())
 		}
 		return dimStyle.Render("  Loading…")
@@ -290,16 +291,12 @@ func (m Model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vp.ScrollUp(1)
 		return m, nil
 	case "J":
-		if m.cursor < m.section.Len()-1 {
-			m.cursor++
-		}
+		m.stepRealRow(1)
 		m.checkCursor = 0
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
 	case "K":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.stepRealRow(-1)
 		m.checkCursor = 0
 		m.renderExpanded()
 		return m, m.detailCmdForCursor()
@@ -360,12 +357,12 @@ func (m Model) rerunHoveredCheck() (tea.Model, tea.Cmd) {
 			err: fmt.Errorf("external check %q has no rerunnable job", c.Label())}
 		return m, clearStatusCmd(m.actionStatus)
 	}
-	native := m.actionsSource
+	native, repo := m.actionsSource, p.Repo
 	m.actionStatus = &actionStat{run: "rerunning " + c.Label(), ok: "rerun queued: " + c.Label(), fail: "rerun failed",
-		refresh: true, rerunCI: true, nums: []int{ps.prAt(m.cursor).Number}}
+		refresh: true, rerunCI: true, refs: []gh.PRRef{p.Ref()}}
 	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{stat: stat, err: action.RerunCheck(native, job)}
+		return actionDoneMsg{stat: stat, err: action.RerunCheck(native, repo, job)}
 	}, m.startSpinner())
 }
 
@@ -381,12 +378,12 @@ func (m Model) rerunAllFailedChecks() (tea.Model, tea.Cmd) {
 			return m, clearStatusCmd(m.actionStatus)
 		}
 	}
-	branch, native := v.HeadRefName, m.actionsSource
+	branch, native, repo := v.HeadRefName, m.actionsSource, v.Repo
 	m.actionStatus = &actionStat{run: "rerunning failed checks", ok: "rerun-all queued", fail: "rerun failed",
-		refresh: true, rerunCI: true, nums: []int{v.Number}}
+		refresh: true, rerunCI: true, refs: []gh.PRRef{{Repo: v.Repo, Number: v.Number}}}
 	stat := m.actionStatus
 	return m, tea.Batch(func() tea.Msg {
-		return actionDoneMsg{stat: stat, err: action.RerunFailed(native, branch)}
+		return actionDoneMsg{stat: stat, err: action.RerunFailed(native, repo, branch)}
 	}, m.startSpinner())
 }
 
@@ -490,9 +487,9 @@ func (m Model) expandedLegendGroups() []legendGroup {
 // active tab's content framed in a tabbed box — the same rounded chrome as the
 // board's titled boxes — with the keys hint beneath.
 func (m Model) expandedView() string {
-	n := 0
+	n, repo := 0, m.repo
 	if v, ok := m.cursorVars(); ok {
-		n = v.Number
+		n, repo = v.Number, v.Repo
 	}
 	ps, isPR := m.section.(*PRSection)
 	l := computeExpandedLayout(m.width, m.height, isPR)
@@ -502,7 +499,7 @@ func (m Model) expandedView() string {
 		blockW = l.RailW + expandedColGap + l.ContentW
 	}
 
-	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
+	head := headerStyle.Render(expandedHeader(repo, n, blockW))
 	if isPR {
 		if title := ps.prAt(m.cursor).Title; title != "" {
 			if avail := blockW - lipgloss.Width(head) - 4; avail > 12 { // truncate vs FULL block width, not ContentW
@@ -516,7 +513,7 @@ func (m Model) expandedView() string {
 
 	var mid string
 	if l.TwoCol {
-		rail := m.renderExpandedRail(ps.prAt(m.cursor), m.detail[n], l)
+		rail := m.renderExpandedRail(ps.prAt(m.cursor), m.detail[ps.refAt(m.cursor)], l)
 		gap := lipgloss.NewStyle().Width(expandedColGap).Render("")
 		mid = lipgloss.JoinHorizontal(lipgloss.Top, rail, gap, contentBox)
 	} else {
@@ -537,4 +534,23 @@ func (m Model) expandedView() string {
 		out = indentLines(out, (m.width-blockW)/2)
 	}
 	return out
+}
+
+// stepRealRow moves the cursor one row in dir, skipping fold stops; it stays
+// put when no real row lies that way.
+func (m *Model) stepRealRow(dir int) {
+	ps, _ := m.section.(*PRSection)
+	for i := m.cursor + dir; i >= 0 && i < m.section.Len(); i += dir {
+		if ps == nil || !ps.isFoldStop(i) {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+// expandedHeader is the "repo #N" line, shortening the repo from the left so
+// the PR number always survives within w cells.
+func expandedHeader(repo string, n, w int) string {
+	suffix := fmt.Sprintf(" #%d", n)
+	return "  " + truncateLeft(repo, max(0, w-2-lipgloss.Width(suffix))) + suffix
 }

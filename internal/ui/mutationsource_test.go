@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -30,13 +31,13 @@ type fakeMutationSource struct {
 }
 
 type stackMergeCall struct {
-	number     int
+	ref        gh.PRRef
 	mergeQueue bool
 }
 
 type stackPollCall struct {
-	number int
-	uuid   string
+	ref  gh.PRRef
+	uuid string
 }
 
 type reviewCall struct {
@@ -82,13 +83,13 @@ func (f *fakeMutationSource) RequestReviews(prID string, logins []string) error 
 	return f.err
 }
 
-func (f *fakeMutationSource) MergeStack(prNumber int, mergeQueue bool) (gh.StackMergeResult, error) {
-	f.stackMergeCalls = append(f.stackMergeCalls, stackMergeCall{number: prNumber, mergeQueue: mergeQueue})
+func (f *fakeMutationSource) MergeStack(pr gh.PRRef, mergeQueue bool) (gh.StackMergeResult, error) {
+	f.stackMergeCalls = append(f.stackMergeCalls, stackMergeCall{ref: pr, mergeQueue: mergeQueue})
 	return f.stackMergeResult, f.stackMergeErr
 }
 
-func (f *fakeMutationSource) StackMergeStatus(prNumber int, uuid string) (gh.StackMergeResult, error) {
-	f.stackPollCalls = append(f.stackPollCalls, stackPollCall{number: prNumber, uuid: uuid})
+func (f *fakeMutationSource) StackMergeStatus(pr gh.PRRef, uuid string) (gh.StackMergeResult, error) {
+	f.stackPollCalls = append(f.stackPollCalls, stackPollCall{ref: pr, uuid: uuid})
 	if f.stackPollErr != nil {
 		return gh.StackMergeResult{}, f.stackPollErr
 	}
@@ -165,7 +166,7 @@ func TestMergeSkipsWhenNotOpen(t *testing.T) {
 
 func TestMergeSkipsWhenConflicting(t *testing.T) {
 	m, fs := mutationModel(t, []gh.PR{{Number: 7, ID: "pr7node", State: "OPEN"}})
-	m.detail[7] = gh.PRDetail{Mergeable: "CONFLICTING"}
+	m.detail[m.launchRef(7)] = gh.PRDetail{Mergeable: "CONFLICTING"}
 	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["m"]))
 	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
 		t.Fatalf("msg = %+v, want a failed actionDoneMsg (conflicting)", msg)
@@ -197,7 +198,7 @@ func TestMergeFetchesDetailWhenUnknownThenBlocks(t *testing.T) {
 	if len(fs.mergeCalls) != 0 {
 		t.Errorf("mergeCalls = %v, want none — blocked before reaching GitHub", fs.mergeCalls)
 	}
-	if len(fd.got) != 1 || len(fd.got[0]) != 1 || fd.got[0][0] != 7 {
+	if len(fd.got) != 1 || !slices.Equal(fd.got[0], refsIn("owner/repo", 7)) {
 		t.Errorf("detail source called with %v, want exactly one fetch for [7]", fd.got)
 	}
 }
@@ -261,16 +262,16 @@ func TestFailedMergeRefreshesDetail(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected a follow-up refresh command after a failed merge")
 	}
-	if len(m.actionStatus.nums) != 1 || m.actionStatus.nums[0] != 7 {
-		t.Fatalf("actionStatus.nums = %v, want [7]", m.actionStatus.nums)
+	if len(m.actionStatus.refs) != 1 || m.actionStatus.refs[0] != m.launchRef(7) {
+		t.Fatalf("actionStatus.refs = %v, want [7]", m.actionStatus.refs)
 	}
 	// Don't drain cmd directly: it batches the real clearStatusCmd tea.Tick
 	// (3s) alongside the refresh. Exercise the exact same production call
-	// (m.batchDetailCmd(m.actionStatus.nums)) the actionDoneMsg handler
+	// (m.batchDetailCmd(m.actionStatus.refs)) the actionDoneMsg handler
 	// invokes for the failure-refresh path instead.
-	u2, _ := m.Update(m.batchDetailCmd(m.actionStatus.nums)())
+	u2, _ := m.Update(m.batchDetailCmd(m.actionStatus.refs)())
 	m = u2.(Model)
-	if got := m.detail[7]; got.Mergeable != "CONFLICTING" {
+	if got := m.detail[m.launchRef(7)]; got.Mergeable != "CONFLICTING" {
 		t.Errorf("detail[7] = %+v, want the refreshed CONFLICTING value", got)
 	}
 }
@@ -600,7 +601,7 @@ func TestRequestReviewsSendsFullSetWithUnionFalse(t *testing.T) {
 	picked := map[string]bool{"alice": true, "bob": true}
 	add, remove := reviewerDiff(nil, picked)
 
-	cmd := m.assignReviewersCmd(5, "pr5node", add, remove, picked)
+	cmd := m.assignReviewersCmd(m.launchRef(5), "pr5node", add, remove, picked)
 	if cmd == nil {
 		t.Fatal("expected a command when reviewers changed")
 	}
@@ -622,7 +623,7 @@ func TestRequestReviewsRemoveAllFiresEmptySet(t *testing.T) {
 	picked := map[string]bool{"alice": false}
 	add, remove := reviewerDiff(current, picked)
 
-	cmd := m.assignReviewersCmd(5, "pr5node", add, remove, picked)
+	cmd := m.assignReviewersCmd(m.launchRef(5), "pr5node", add, remove, picked)
 	if cmd == nil {
 		t.Fatal("removing the last reviewer is a real change and must still fire")
 	}
@@ -642,7 +643,7 @@ func TestRequestReviewsSkipsWhenNothingChanged(t *testing.T) {
 	picked := map[string]bool{"alice": true}
 	add, remove := reviewerDiff(current, picked)
 
-	cmd := m.assignReviewersCmd(5, "pr5node", add, remove, picked)
+	cmd := m.assignReviewersCmd(m.launchRef(5), "pr5node", add, remove, picked)
 	if cmd != nil {
 		t.Fatal("nothing changed: assignReviewersCmd should skip, not fire")
 	}
@@ -660,7 +661,7 @@ func TestRequestReviewsSkipsWhenNodeIDEmpty(t *testing.T) {
 	picked := map[string]bool{"alice": true}
 	add, remove := reviewerDiff(nil, picked)
 
-	cmd := m.assignReviewersCmd(5, "", add, remove, picked)
+	cmd := m.assignReviewersCmd(m.launchRef(5), "", add, remove, picked)
 	if cmd == nil {
 		t.Fatal("expected a command surfacing the empty-id error")
 	}

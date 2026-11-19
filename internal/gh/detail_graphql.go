@@ -3,6 +3,7 @@ package gh
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,17 +22,35 @@ const detailFields = "comments(last:100){nodes{author{login __typename}body crea
 	"reviewRequests(first:100){nodes{requestedReviewer{__typename ... on User{login} ... on Bot{login} ... on Team{name}}}}" +
 	"files(first:100){nodes{path additions deletions}}" + threadsFields
 
-// FetchDetails fetches per-PR detail for every number in one aliased GraphQL
-// request, replacing the N `gh pr view` subprocesses the prefetch window used to
-// spawn. It returns the mapped details plus, per number, the JSON bytes to cache
-// (marshalled PRDetail, so the hydrate path round-trips).
-func (s GraphSource) FetchDetails(numbers []int) (map[int]PRDetail, map[int][]byte, error) {
-	if len(numbers) == 0 {
-		return map[int]PRDetail{}, map[int][]byte{}, nil
+// FetchDetails fetches per-PR detail with one aliased GraphQL request per repo.
+// It returns the mapped details plus, per ref, the JSON bytes to cache
+// (marshalled PRDetail, so the hydrate path round-trips). A failing repo leaves
+// the others' results in the maps and joins its error into err.
+func (s GraphSource) FetchDetails(refs []PRRef) (map[PRRef]PRDetail, map[PRRef][]byte, error) {
+	details := make(map[PRRef]PRDetail, len(refs))
+	raws := make(map[PRRef][]byte, len(refs))
+	repos, numbers := groupRefs(refs)
+	var errs []error
+	for _, repo := range repos {
+		d, r, err := s.fetchRepoDetails(repo, numbers[repo])
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for n, v := range d {
+			details[PRRef{Repo: repo, Number: n}] = v
+		}
+		for n, v := range r {
+			raws[PRRef{Repo: repo, Number: n}] = v
+		}
 	}
-	owner, name, ok := strings.Cut(s.repo, "/")
-	if !ok {
-		return nil, nil, fmt.Errorf("bad repo %q", s.repo)
+	return details, raws, errors.Join(errs...)
+}
+
+func (s GraphSource) fetchRepoDetails(repo string, numbers []int) (map[int]PRDetail, map[int][]byte, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, nil, err
 	}
 	reqBody, err := json.Marshal(map[string]any{
 		"query":     buildDetailQuery(numbers),

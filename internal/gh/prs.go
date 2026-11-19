@@ -1,6 +1,8 @@
 package gh
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -77,11 +79,42 @@ type PRStack struct {
 	BaseRefName string `json:"baseRefName"`
 }
 
+// PRRef identifies a PR across repos; Repo is owner/name.
+type PRRef struct {
+	Repo   string
+	Number int
+}
+
+// splitRepo splits an owner/name repo for building request paths and variables.
+func splitRepo(repo string) (owner, name string, err error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return "", "", fmt.Errorf("bad repo %q", repo)
+	}
+	return owner, name, nil
+}
+
+// groupRefs buckets refs by repo for the batched sources, which issue one
+// aliased request per repo; repos come back sorted so requests go out in a
+// stable order.
+func groupRefs(refs []PRRef) (repos []string, numbers map[string][]int) {
+	numbers = map[string][]int{}
+	for _, r := range refs {
+		if _, ok := numbers[r.Repo]; !ok {
+			repos = append(repos, r.Repo)
+		}
+		numbers[r.Repo] = append(numbers[r.Repo], r.Number)
+	}
+	sort.Strings(repos)
+	return repos, numbers
+}
+
 type PR struct {
 	// ID is the GraphQL node ID (e.g. "PR_kwDOA..."), populated only on the
 	// GraphSource list path — every mutation input needs it as pullRequestId.
 	// Empty on the gh-CLI path, which mutates by number instead.
 	ID     string `json:"id"`
+	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
 	Author struct {
@@ -190,3 +223,6 @@ func (c Check) Result() string {
 		return "pass"
 	}
 }
+
+// Ref returns the PR's repo-qualified identity.
+func (p PR) Ref() PRRef { return PRRef{Repo: p.Repo, Number: p.Number} }

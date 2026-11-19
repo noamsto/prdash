@@ -156,15 +156,16 @@ func (m Model) enterLogView() (tea.Model, tea.Cmd) {
 	if c.IsExternal() { // StatusContext: no job log — open its page in the browser
 		return m.openHoveredCheck()
 	}
-	cmd := m.openJobLog(c.JobID(), c.Label(), false) // capture before the return copies m
+	cmd := m.openJobLog(m.section.(*PRSection).prAt(m.cursor).Repo, c.JobID(), c.Label(), false) // capture before the return copies m
 	return m, cmd
 }
 
 // openJobLog opens the log sub-view on a job. A cached log paints instantly;
 // otherwise it kicks an async fetch. showAll picks the whole log over the
-// failed steps only.
-func (m *Model) openJobLog(jobID, label string, showAll bool) tea.Cmd {
+// failed steps only. repo is the job's repo, kept for the a-toggle refetch.
+func (m *Model) openJobLog(repo, jobID, label string, showAll bool) tea.Cmd {
 	m.logView = true
+	m.logRepo = repo
 	m.logJobID = jobID
 	m.logLabel = label
 	m.logCursor = 0
@@ -189,9 +190,9 @@ func (m *Model) openJobLog(jobID, label string, showAll bool) tea.Cmd {
 
 // fetchJobLogCmd fetches a job log off the UI thread and reports it back.
 func (m Model) fetchJobLogCmd(job string, all bool) tea.Cmd {
-	native := m.actionsSource
+	native, repo := m.actionsSource, m.logRepo
 	return func() tea.Msg {
-		out, err := action.JobLog(native, job, !all)
+		out, err := action.JobLog(native, repo, job, !all)
 		return logFetchedMsg{job: job, all: all, raw: out, err: err}
 	}
 }
@@ -440,8 +441,12 @@ func (m Model) logViewRender() string {
 	if v, ok := m.cursorVars(); ok {
 		n = v.Number
 	}
+	repo := m.logRepo
+	if repo == "" {
+		repo = m.repo
+	}
 	bw := m.expandedBoxWidth()
-	head := headerStyle.Render(fmt.Sprintf("  %s #%d", m.repo, n))
+	head := headerStyle.Render(expandedHeader(repo, n, bw))
 	head += m.statusBadge(bw - lipgloss.Width(head))
 	box := titledBox(m.vp.View(), bw, m.logBoxHeight(), m.logLabel)
 	parts := []string{head, box}

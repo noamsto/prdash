@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"iter"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ type RowOpts struct {
 	AuthorWidth  int       // fixed cell width for the author column; 0 = natural width (no padding)
 	CompactDiff  bool      // render ±N instead of +N -N
 	Initials     bool      // 2-char author initials instead of the login
+	TitlePrefix  string    // plain label rendered dim before the title, inside its budget (the short repo on a flattened other-repo row)
 	Now          time.Time // clock for live run elapsed times; zero shows age instead
 }
 
@@ -46,12 +48,15 @@ type Section interface {
 	SetShown(idx []int)
 }
 
-// grouper is a section that paints group headers. groupLabelAt keys the header
-// divider; unitLabelAt keys the tightest selectable cluster inside it. On the issue
-// board the two coincide — a category has no author sub-cluster.
+// grouper is a section that paints group headers. groupLabelAt is the header
+// divider's text; groupKeyAt keys the group itself (two repos can share a
+// sub-section label); unitLabelAt keys the tightest selectable cluster inside
+// it. On the issue board all three coincide — a category has no author
+// sub-cluster.
 type grouper interface {
 	isGrouped() bool
 	groupLabelAt(i int) string
+	groupKeyAt(i int) string
 	unitLabelAt(i int) string
 }
 
@@ -66,15 +71,25 @@ type PRSection struct {
 	forceFlat  bool   // suppress all grouping — keep the incoming (fuzzy rank) order
 	state      string // active view state (open|merged|closed); selects the sort key
 
-	cats     map[int]string // PR number → category label; non-nil switches grouping from author to category
-	catOrder []string       // category header order (e.g. Mine, Review requested)
-	byAuthor bool           // regroup a categorized board by author; cats stay stored for held rows
+	cats     map[gh.PRRef]string // PR → category label; non-nil switches grouping from author to category
+	catOrder []string            // category header order (e.g. Mine, Review requested)
+	byAuthor bool                // regroup a categorized board by author; cats stay stored for held rows
+
+	// Repo grouping partitions the categorized board by repo. A folded group is
+	// one synthetic stop in shown, encoded -(g+1) for groupRepos[g]; prs holds
+	// only real PRs.
+	launch       string           // launch repo; its group leads and keeps the category/author sub-grouping
+	viewer       string           // splits Mine in groupStages
+	folded       map[string]bool  // the Model's explicit fold state; an absent repo is folded iff not launch
+	repoGrouping bool             // the shown set is partitioned by repo (see setShownOrdered)
+	groupRepos   []string         // repo per group, in display order
+	groupRows    map[string][]int // repo → prs indices its group shows, or would show unfolded
 
 	// Stack rendering is derived from the current shown set: an open board can
 	// be missing merged links, so the lowest visible position is its root.
-	stackRoots   map[int]int // PR number → lowest visible PR number in its stack
-	stackTrees   map[int]string
-	stackMissing map[int]string
+	stackRoots   map[gh.PRRef]int // PR → lowest visible PR number in its stack (same repo)
+	stackTrees   map[gh.PRRef]string
+	stackMissing map[gh.PRRef]string
 }
 
 func NewPRSection(filter string) *PRSection { return &PRSection{filter: filter} }
@@ -92,7 +107,7 @@ func (s *PRSection) SetPRs(p []gh.PR) {
 
 // SetCategorized paints PRs grouped under category headers (order) instead of by
 // author — used by the mine view (Mine / Review requested).
-func (s *PRSection) SetCategorized(p []gh.PR, cats map[int]string, order []string) {
+func (s *PRSection) SetCategorized(p []gh.PR, cats map[gh.PRRef]string, order []string) {
 	if p == nil {
 		p = []gh.PR{}
 	}
@@ -103,30 +118,39 @@ func (s *PRSection) SetCategorized(p []gh.PR, cats map[int]string, order []strin
 	s.setShownOrdered(allIdx(len(p)))
 }
 
-// groupLabel is the header key for shown-row i: category when categorized, else author.
+// groupLabel is the header key for shown-row i: category when categorized, else
+// author. Other-repo groups have no sub-sections, so their rows and every stop
+// have none.
 func (s *PRSection) groupLabel(i int) string {
+	if s.isFoldStop(i) || s.otherRepo(i) {
+		return ""
+	}
 	p := s.prs[s.shown[i]]
-	if root, ok := s.stackRoots[p.Number]; ok {
-		p = s.prByNumber(root)
+	if root, ok := s.stackRoots[p.Ref()]; ok {
+		p = s.prByRef(gh.PRRef{Repo: p.Repo, Number: root})
 	}
 	if s.categorized() {
-		return s.cats[p.Number]
+		return s.cats[p.Ref()]
 	}
 	return p.Author.Login
 }
 
-// unitLabel is the tightest selectable unit a row belongs to: its author cluster
-// within its category. Distinct from groupLabel, which is the category (or the
-// author, on an uncategorized board).
+// unitLabel is the tightest selectable unit a row belongs to: its stack, else
+// its author cluster within its category. Distinct from groupLabel, which is the
+// category (or the author, on an uncategorized board). An other-repo group is
+// laid out by recency, not by author, so there an unstacked row is its own unit.
 //
 // The NUL separator keeps a category named like an author from colliding with
-// one. #89 makes this return the stack for stacked rows.
+// one.
 func (s *PRSection) unitLabel(i int) string {
 	p := s.prAt(i)
-	if p.Stack != nil {
-		return "stack:" + strconv.Itoa(p.Stack.Number)
+	if k, ok := stackKey(p); ok {
+		return "stack:" + k
 	}
-	return s.groupLabel(i) + "\x00" + p.Author.Login
+	if s.isFoldStop(i) || s.otherRepo(i) {
+		return s.groupKeyAt(i) + "\x00#" + strconv.Itoa(p.Number)
+	}
+	return s.groupKeyAt(i) + "\x00" + p.Author.Login
 }
 
 // isGrouped, groupLabelAt, unitLabelAt satisfy grouper — wrappers over the
@@ -134,46 +158,128 @@ func (s *PRSection) unitLabel(i int) string {
 // holds #89 in this file and owns unitLabel).
 func (s *PRSection) isGrouped() bool           { return s.grouped }
 func (s *PRSection) groupLabelAt(i int) string { return s.groupLabel(i) }
+func (s *PRSection) groupKeyAt(i int) string   { return s.repoAt(i) + "\x00" + s.groupLabel(i) }
 func (s *PRSection) unitLabelAt(i int) string  { return s.unitLabel(i) }
 
 func (s *PRSection) Len() int           { return len(s.shown) }
 func (s *PRSection) SetShown(idx []int) { s.setShownOrdered(idx) }
 
 // prAt returns the gh.PR at shown-row i (for triage, which needs list fields).
-func (s *PRSection) prAt(i int) gh.PR { return s.prs[s.shown[i]] }
+// On a fold stop it is the empty PR of the stop's repo.
+func (s *PRSection) prAt(i int) gh.PR {
+	if s.isFoldStop(i) {
+		return gh.PR{Repo: s.repoAt(i)}
+	}
+	return s.prs[s.shown[i]]
+}
+
+// shownPRs yields the shown set's PRs in display order, fold stops skipped.
+func (s *PRSection) shownPRs() iter.Seq[gh.PR] {
+	return func(yield func(gh.PR) bool) {
+		for _, j := range s.shown {
+			if j >= 0 && !yield(s.prs[j]) {
+				return
+			}
+		}
+	}
+}
+
+// SetRepoGrouping configures the repo partition the next layout applies. It is
+// active only on the categorized board when some row's Repo differs from
+// launch. folded is the Model's map, which outlives the section.
+func (s *PRSection) SetRepoGrouping(launch, viewer string, folded map[string]bool) {
+	s.launch, s.viewer, s.folded = launch, viewer, folded
+}
+
+func (s *PRSection) repoGrouped() bool { return s.repoGrouping }
+
+// repoAt is the repo of the row or stop at shown index i.
+func (s *PRSection) repoAt(i int) string {
+	if j := s.shown[i]; j < 0 {
+		return s.groupRepos[-j-1]
+	}
+	return s.prs[s.shown[i]].Repo
+}
+
+// isFoldStop is bounds-checked: callers pass a cursor that may sit off an
+// emptied board.
+func (s *PRSection) isFoldStop(i int) bool { return i >= 0 && i < len(s.shown) && s.shown[i] < 0 }
+
+func (s *PRSection) isFolded(repo string) bool {
+	if f, ok := s.folded[repo]; ok {
+		return f
+	}
+	return repo != s.launch
+}
+
+// otherRepo reports whether row i sits in a repo group other than launch's.
+func (s *PRSection) otherRepo(i int) bool { return s.repoGrouping && s.repoAt(i) != s.launch }
+
+// stopIndex is the shown index of a folded group's stop.
+func (s *PRSection) stopIndex(repo string) (int, bool) {
+	for i, j := range s.shown {
+		if j < 0 && s.groupRepos[-j-1] == repo {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// firstRowIndex is the shown index of an unfolded group's first row.
+func (s *PRSection) firstRowIndex(repo string) (int, bool) {
+	for i, j := range s.shown {
+		if j >= 0 && s.prs[j].Repo == repo {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// groupStages counts repo's group by header bucket over the rows it shows, or
+// would show unfolded, so a folded header still summarizes its group.
+func (s *PRSection) groupStages(repo string) stageCounts {
+	rows := make([]gh.PR, 0, len(s.groupRows[repo]))
+	for _, j := range s.groupRows[repo] {
+		rows = append(rows, s.prs[j])
+	}
+	return countStages(rows, s.viewer, func(p gh.PR) int { return stackParentAmong(p, slices.Values(rows)) })
+}
 
 // stackParentNumber returns the immediate predecessor when it is visible in the
 // current board. A merged or closed predecessor (absent from an open board, or
 // held on it) is not a live blocker, so a later link becomes its visible root
 // instead of inheriting a stale one.
 func (s *PRSection) stackParentNumber(i int) int {
-	p := s.prAt(i)
+	return stackParentAmong(s.prAt(i), s.shownPRs())
+}
+
+// stackParentAmong is p's live immediate predecessor among rows, or 0.
+func stackParentAmong(p gh.PR, rows iter.Seq[gh.PR]) int {
 	if p.Stack == nil || p.StackPosition <= 1 {
 		return 0
 	}
-	for _, j := range s.shown {
-		parent := s.prs[j]
-		if parent.State != "MERGED" && parent.State != "CLOSED" && parent.Stack != nil && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
+	for parent := range rows {
+		if parent.State != "MERGED" && parent.State != "CLOSED" && parent.Stack != nil && parent.Repo == p.Repo && parent.Stack.Number == p.Stack.Number && parent.StackPosition == p.StackPosition-1 {
 			return parent.Number
 		}
 	}
 	return 0
 }
 
-func (s *PRSection) prByNumber(number int) gh.PR {
+func (s *PRSection) prByRef(r gh.PRRef) gh.PR {
 	for _, p := range s.prs {
-		if p.Number == number {
+		if p.Ref() == r {
 			return p
 		}
 	}
 	return gh.PR{}
 }
 
-// authorOf returns the login that opened PR number, or "" when the board does not
+// authorOf returns the login that opened PR r, or "" when the board does not
 // hold it.
-func (s *PRSection) authorOf(number int) string {
+func (s *PRSection) authorOf(r gh.PRRef) string {
 	for _, p := range s.prs {
-		if p.Number == number {
+		if p.Ref() == r {
 			return p.Author.Login
 		}
 	}
@@ -184,19 +290,19 @@ func (s *PRSection) authorOf(number int) string {
 // does not re-sort — the board sorts by PR number, which a CI update never
 // changes, but re-sorting on every background beat would still cost a full
 // re-render for nothing. Order settles on the next real fetch.
-func (s *PRSection) ApplyChecks(checks map[int][]gh.Check) {
+func (s *PRSection) ApplyChecks(checks map[gh.PRRef][]gh.Check) {
 	for i := range s.prs {
-		if c, ok := checks[s.prs[i].Number]; ok {
+		if c, ok := checks[s.prs[i].Ref()]; ok {
 			s.prs[i].StatusCheckRollup = c
 		}
 	}
 }
 
-// updatePR applies fn to the stored PR with the given number. ok is false when
-// the board does not hold it.
-func (s *PRSection) updatePR(number int, fn func(*gh.PR)) bool {
+// updatePR applies fn to the stored PR r. ok is false when the board does not
+// hold it.
+func (s *PRSection) updatePR(r gh.PRRef, fn func(*gh.PR)) bool {
 	for i := range s.prs {
-		if s.prs[i].Number == number {
+		if s.prs[i].Ref() == r {
 			fn(&s.prs[i])
 			return true
 		}
@@ -205,12 +311,16 @@ func (s *PRSection) updatePR(number int, fn func(*gh.PR)) bool {
 }
 
 func (s *PRSection) RenderRow(i int, o RowOpts) string {
-	p := s.prs[s.shown[i]]
+	p := s.prAt(i)
 	o.Draft = p.IsDraft
-	if tree := s.stackTrees[p.Number]; tree != "" {
+	if tree := s.stackTrees[p.Ref()]; tree != "" {
 		o.Tree = tree
 	}
-	o.StackMissing = s.stackMissing[p.Number]
+	o.StackMissing = s.stackMissing[p.Ref()]
+	if s.forceFlat && p.Repo != "" && p.Repo != s.launch {
+		_, short, _ := strings.Cut(p.Repo, "/")
+		o.TitlePrefix = short
+	}
 	// A terminal PR's cell-1 glyph reflects how it ended, not its frozen CI rollup:
 	// merged → mauve merge mark, closed → dim ✗. The age column likewise shows the
 	// event that ended it (merge/close time) rather than the last update.
@@ -252,8 +362,11 @@ func (s *PRSection) RenderRow(i int, o RowOpts) string {
 }
 
 func (s *PRSection) VarsAt(i int) action.Vars {
+	if s.isFoldStop(i) {
+		return action.Vars{Repo: s.repoAt(i)}
+	}
 	p := s.prs[s.shown[i]]
-	return action.Vars{Number: p.Number, Title: p.Title, HeadRefName: p.HeadRefName,
+	return action.Vars{Repo: p.Repo, Number: p.Number, Title: p.Title, HeadRefName: p.HeadRefName,
 		BaseRefName: p.BaseRefName, URL: p.URL, Author: p.Author.Login, Branch: p.HeadRefName,
 		ID: p.ID, Ticket: ticketID(p.HeadRefName)}
 }
@@ -314,34 +427,100 @@ func (s *PRSection) setShownOrdered(idx []int) {
 			return s.prs[i].IsDraft && s.prs[i].Stack == nil
 		})
 	}
+	// byAuthor only regroups the launch group: other repos still follow it.
+	s.repoGrouping = len(s.catOrder) > 0 && !s.forceFlat &&
+		slices.ContainsFunc(idx, func(i int) bool { return s.prs[i].Repo != s.launch })
+	if s.repoGrouping {
+		s.setShownRepoGroups(idx)
+		return
+	}
+	s.groupRepos, s.groupRows = []string{}, map[string][]int{}
+	s.grouped = s.rendersHeaders(idx)
+	s.setShownStacks(s.orderUnits(idx))
+}
+
+// rendersHeaders reports whether idx, laid out as one unpartitioned board,
+// renders group headers.
+func (s *PRSection) rendersHeaders(idx []int) bool {
+	switch {
+	case s.forceFlat:
+		return false
+	case s.categorized():
+		return true
+	}
+	return s.forceGroup || s.byAuthor || distinctAuthors(s.prs, idx) >= 2
+}
+
+// orderUnits lays out idx as one unpartitioned board.
+func (s *PRSection) orderUnits(idx []int) []int {
 	units := stackUnits(s.prs, idx)
-	if s.forceFlat {
-		s.grouped = false
-		s.setShownStacks(flattenUnits(units))
-		return
+	switch {
+	case !s.rendersHeaders(idx):
+		return flattenUnits(units)
+	case s.categorized():
+		return groupStackUnits(s.prs, units, s.cats, s.catOrder, s.state)
 	}
-	if s.categorized() {
-		s.grouped = true
-		s.setShownStacks(groupStackUnits(s.prs, units, s.cats, s.catOrder, s.state))
-		return
+	return groupStackUnits(s.prs, units, nil, nil, s.state)
+}
+
+// setShownRepoGroups lays out the launch repo's group as orderUnits would the
+// whole board, then each other repo by its latest update: a folded group as one
+// stop, an unfolded one as its stack units, newest first.
+func (s *PRSection) setShownRepoGroups(idx []int) {
+	s.groupRepos = []string{s.launch}
+	s.groupRows = map[string][]int{}
+	for _, i := range idx {
+		r := s.prs[i].Repo
+		if _, ok := s.groupRows[r]; !ok && r != s.launch {
+			s.groupRepos = append(s.groupRepos, r)
+		}
+		s.groupRows[r] = append(s.groupRows[r], i)
 	}
-	if s.forceGroup || s.byAuthor || distinctAuthors(s.prs, idx) >= 2 {
-		s.grouped = true
-		s.setShownStacks(groupStackUnits(s.prs, units, nil, nil, s.state))
-		return
+	slices.SortStableFunc(s.groupRepos[1:], func(a, b string) int {
+		if c := latestUpdate(s.prs, s.groupRows[b]).Compare(latestUpdate(s.prs, s.groupRows[a])); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	shown := make([]int, 0, len(idx))
+	for g, repo := range s.groupRepos {
+		rows := s.groupRows[repo]
+		switch {
+		case len(rows) == 0:
+		case s.isFolded(repo):
+			shown = append(shown, -(g + 1))
+		case repo == s.launch:
+			shown = append(shown, s.orderUnits(rows)...)
+		default:
+			units := stackUnits(s.prs, rows)
+			slices.SortStableFunc(units, func(a, b []int) int {
+				return latestUpdate(s.prs, b).Compare(latestUpdate(s.prs, a))
+			})
+			shown = append(shown, flattenUnits(units)...)
+		}
 	}
-	s.grouped = false
-	s.setShownStacks(flattenUnits(units))
+	s.grouped = true
+	s.setShownStacks(shown)
+}
+
+func latestUpdate(prs []gh.PR, idx []int) time.Time {
+	var t time.Time
+	for _, i := range idx {
+		if prs[i].UpdatedAt.After(t) {
+			t = prs[i].UpdatedAt
+		}
+	}
+	return t
 }
 
 // expandStackMembers keeps a fuzzy hit from making its chain look shorter than
 // it is. A stack is a display unit, so matching any link shows every link the
 // section holds before grouping, connector selection, and triage run.
 func expandStackMembers(prs []gh.PR, idx []int) []int {
-	matched := map[int]bool{}
+	matched := map[string]bool{}
 	for _, i := range idx {
-		if p := prs[i]; p.Stack != nil {
-			matched[p.Stack.Number] = true
+		if k, ok := stackKey(prs[i]); ok {
+			matched[k] = true
 		}
 	}
 	if len(matched) == 0 {
@@ -354,7 +533,7 @@ func expandStackMembers(prs []gh.PR, idx []int) []int {
 		out = append(out, i)
 	}
 	for i, p := range prs {
-		if !seen[i] && p.Stack != nil && matched[p.Stack.Number] {
+		if k, ok := stackKey(p); ok && !seen[i] && matched[k] {
 			out = append(out, i)
 		}
 	}
@@ -365,24 +544,24 @@ func expandStackMembers(prs []gh.PR, idx []int) []int {
 // bottom-up. Its first occurrence in idx determines where the stack unit sits
 // among ordinary PRs.
 func stackUnits(prs []gh.PR, idx []int) [][]int {
-	byStack := map[int][]int{}
+	byStack := map[string][]int{}
 	units := make([][]int, 0, len(idx))
-	seen := map[int]bool{}
+	seen := map[string]bool{}
 	for _, i := range idx {
-		p := prs[i]
-		if p.Stack == nil {
+		k, ok := stackKey(prs[i])
+		if !ok {
 			units = append(units, []int{i})
 			continue
 		}
-		byStack[p.Stack.Number] = append(byStack[p.Stack.Number], i)
+		byStack[k] = append(byStack[k], i)
 	}
 	for _, i := range idx {
-		p := prs[i]
-		if p.Stack == nil || seen[p.Stack.Number] {
+		k, ok := stackKey(prs[i])
+		if !ok || seen[k] {
 			continue
 		}
-		seen[p.Stack.Number] = true
-		members := byStack[p.Stack.Number]
+		seen[k] = true
+		members := byStack[k]
 		slices.SortStableFunc(members, func(a, b int) int {
 			return prs[a].StackPosition - prs[b].StackPosition
 		})
@@ -407,6 +586,14 @@ func stackUnits(prs []gh.PR, idx []int) [][]int {
 	return units
 }
 
+// stackKey identifies p's stack: stack numbers are only unique within a repo.
+func stackKey(p gh.PR) (key string, ok bool) {
+	if p.Stack == nil {
+		return "", false
+	}
+	return p.Repo + "#" + strconv.Itoa(p.Stack.Number), true
+}
+
 func flattenUnits(units [][]int) []int {
 	out := make([]int, 0)
 	for _, unit := range units {
@@ -417,14 +604,14 @@ func flattenUnits(units [][]int) []int {
 
 // groupStackUnits uses the root's category and author. A stack is therefore one
 // unit even when its links cross categories or authors.
-func groupStackUnits(prs []gh.PR, units [][]int, cats map[int]string, order []string, state string) []int {
+func groupStackUnits(prs []gh.PR, units [][]int, cats map[gh.PRRef]string, order []string, state string) []int {
 	groups := map[string][][]int{}
 	keys := make([]string, 0)
 	for _, unit := range units {
 		root := prs[unit[0]]
 		cat := ""
 		if len(order) > 0 {
-			cat = cats[root.Number]
+			cat = cats[root.Ref()]
 		}
 		key := cat + "\x00" + root.Author.Login
 		if _, ok := groups[key]; !ok {
@@ -472,13 +659,16 @@ func groupStackUnits(prs []gh.PR, units [][]int, cats map[int]string, order []st
 
 func (s *PRSection) setShownStacks(shown []int) {
 	s.shown = shown
-	s.stackRoots = map[int]int{}
-	s.stackTrees = map[int]string{}
-	s.stackMissing = map[int]string{}
-	byStack := map[int][]int{}
+	s.stackRoots = map[gh.PRRef]int{}
+	s.stackTrees = map[gh.PRRef]string{}
+	s.stackMissing = map[gh.PRRef]string{}
+	byStack := map[string][]int{}
 	for _, i := range shown {
-		if p := s.prs[i]; p.Stack != nil {
-			byStack[p.Stack.Number] = append(byStack[p.Stack.Number], i)
+		if i < 0 {
+			continue
+		}
+		if k, ok := stackKey(s.prs[i]); ok {
+			byStack[k] = append(byStack[k], i)
 		}
 	}
 	for _, members := range byStack {
@@ -486,17 +676,18 @@ func (s *PRSection) setShownStacks(shown []int) {
 		missing := root.Stack.Size - len(members)
 		for n, i := range members {
 			p := s.prs[i]
-			s.stackRoots[p.Number] = root.Number
+			r := p.Ref()
+			s.stackRoots[r] = root.Number
 			switch {
 			case n == 0 && missing > 0:
-				s.stackTrees[p.Number] = stackRootGlyph
-				s.stackMissing[p.Number] = stackRootGlyph + "+" + strconv.Itoa(missing)
+				s.stackTrees[r] = stackRootGlyph
+				s.stackMissing[r] = stackRootGlyph + "+" + strconv.Itoa(missing)
 			case n == 0:
-				s.stackTrees[p.Number] = stackRootGlyph
+				s.stackTrees[r] = stackRootGlyph
 			case n == len(members)-1:
-				s.stackTrees[p.Number] = stackLastGlyph
+				s.stackTrees[r] = stackLastGlyph
 			default:
-				s.stackTrees[p.Number] = stackMidGlyph
+				s.stackTrees[r] = stackMidGlyph
 			}
 		}
 	}
@@ -597,6 +788,7 @@ func (s *IssueSection) issueAt(i int) gh.Issue { return s.issues[s.shown[i]] }
 // here — a category has no author sub-cluster.
 func (s *IssueSection) isGrouped() bool           { return s.grouped }
 func (s *IssueSection) groupLabelAt(i int) string { return s.cats[s.issueAt(i).Number] }
+func (s *IssueSection) groupKeyAt(i int) string   { return s.groupLabelAt(i) }
 func (s *IssueSection) unitLabelAt(i int) string  { return s.groupLabelAt(i) }
 
 func (s *IssueSection) RenderRow(i int, o RowOpts) string {
@@ -828,7 +1020,11 @@ func renderItemRow(o RowOpts, numStyle lipgloss.Style, num, title, ticket, autho
 	if tag != "" {
 		tags = dimStyle.Render(tag)
 	}
-	titleTxt := titleSt.Render(truncate(title, titleRoom)) + tags
+	prefix := ""
+	if pw := lipgloss.Width(o.TitlePrefix) + 1; o.TitlePrefix != "" && titleRoom-pw >= 1 {
+		prefix, titleRoom = dimStyle.Render(o.TitlePrefix+" "), titleRoom-pw
+	}
+	titleTxt := prefix + titleSt.Render(truncate(title, titleRoom)) + tags
 
 	gap := max(w-leftW-lipgloss.Width(titleTxt)-rightW, 1)
 	line := left + titleTxt + strings.Repeat(" ", gap) + right
@@ -961,8 +1157,8 @@ func diffstatWidth(s Section, compact bool) int {
 		render = diffstatCompact
 	}
 	w := 0
-	for _, i := range ps.shown {
-		w = max(w, lipgloss.Width(render(ps.prs[i].Additions, ps.prs[i].Deletions)))
+	for p := range ps.shownPRs() {
+		w = max(w, lipgloss.Width(render(p.Additions, p.Deletions)))
 	}
 	return w
 }
@@ -977,8 +1173,8 @@ func ticketWidth(s Section) int {
 		return 0
 	}
 	w := 0
-	for _, i := range ps.shown {
-		w = max(w, lipgloss.Width(ticketID(ps.prs[i].HeadRefName)))
+	for p := range ps.shownPRs() {
+		w = max(w, lipgloss.Width(ticketID(p.HeadRefName)))
 	}
 	return w
 }
@@ -993,8 +1189,8 @@ func authorColWidth(s Section, initials bool) int {
 		return 0
 	}
 	w := 0
-	for _, i := range ps.shown {
-		a := ps.prs[i].Author.Login
+	for p := range ps.shownPRs() {
+		a := p.Author.Login
 		if initials {
 			a = authorInitials(a)
 		}
@@ -1017,8 +1213,8 @@ func columnWidths(s Section) int {
 	w := 4
 	switch x := s.(type) {
 	case *PRSection:
-		for _, i := range x.shown {
-			w = max(w, len(fmt.Sprintf("#%d", x.prs[i].Number)))
+		for p := range x.shownPRs() {
+			w = max(w, len(fmt.Sprintf("#%d", p.Number)))
 		}
 	case *IssueSection:
 		for _, i := range x.shown {

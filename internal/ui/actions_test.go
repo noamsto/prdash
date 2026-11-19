@@ -417,9 +417,10 @@ func TestConfirmQuestionBulkShowsCount(t *testing.T) {
 // are about to start over.
 func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
-	m.ciRerun[13] = time.Now()
+	m.ciRerun[m.launchRef(13)] = time.Now()
 
 	got := m.applyCIRerun([]gh.PR{{
+		Repo:              m.repo,
 		Number:            13,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
@@ -433,9 +434,10 @@ func TestUpdateBranchPaintsChecksInProgress(t *testing.T) {
 
 func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now()
+	m.ciRerun[m.launchRef(13)] = time.Now()
 
 	got := m.applyCIRerun([]gh.PR{{
+		Repo:              m.repo,
 		Number:            99,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
@@ -453,15 +455,16 @@ func TestApplyCIRerunLeavesUnstampedPRsAlone(t *testing.T) {
 func TestApplyCIRerunClearsWhenRealPendingArrives(t *testing.T) {
 	m, _ := mutationModel(t, nil)
 	stamp := time.Now()
-	m.ciRerun[13] = stamp
+	m.ciRerun[m.launchRef(13)] = stamp
 
 	m.applyCIRerun([]gh.PR{{
+		Repo:   m.repo,
 		Number: 13,
 		StatusCheckRollup: []gh.Check{{
 			Name: "build", State: "IN_PROGRESS", StartedAt: stamp.Add(time.Second).Format(time.RFC3339),
 		}},
 	}})
-	if _, still := m.ciRerun[13]; still {
+	if _, still := m.ciRerun[m.launchRef(13)]; still {
 		t.Error("ciRerun[13] survived a check that started after the stamp")
 	}
 }
@@ -474,15 +477,16 @@ func TestApplyCIRerunClearsWhenRealPendingArrives(t *testing.T) {
 func TestApplyCIRerunKeepsPreExistingPending(t *testing.T) {
 	m, _ := mutationModel(t, nil)
 	stamp := time.Now()
-	m.ciRerun[13] = stamp
+	m.ciRerun[m.launchRef(13)] = stamp
 
 	got := m.applyCIRerun([]gh.PR{{
+		Repo:   m.repo,
 		Number: 13,
 		StatusCheckRollup: []gh.Check{{
 			Name: "build", State: "IN_PROGRESS", StartedAt: stamp.Add(-time.Minute).Format(time.RFC3339),
 		}},
 	}})
-	if _, still := m.ciRerun[13]; !still {
+	if _, still := m.ciRerun[m.launchRef(13)]; !still {
 		t.Error("ciRerun[13] cleared on a check that started before the stamp")
 	}
 	if len(got) != 1 {
@@ -497,9 +501,10 @@ func TestApplyCIRerunKeepsPreExistingPending(t *testing.T) {
 // (path filters, no push trigger) self-corrects instead of spinning forever.
 func TestApplyCIRerunExpires(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now().Add(-3 * time.Minute) // older than ciRerunWindow
+	m.ciRerun[m.launchRef(13)] = time.Now().Add(-3 * time.Minute) // older than ciRerunWindow
 
 	got := m.applyCIRerun([]gh.PR{{
+		Repo:              m.repo,
 		Number:            13,
 		StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}},
 	}})
@@ -509,7 +514,7 @@ func TestApplyCIRerunExpires(t *testing.T) {
 	if got[0].CIState() != "pass" {
 		t.Errorf("CIState = %q, want pass — the override expired", got[0].CIState())
 	}
-	if _, still := m.ciRerun[13]; still {
+	if _, still := m.ciRerun[m.launchRef(13)]; still {
 		t.Error("expired ciRerun entry was not pruned")
 	}
 }
@@ -519,7 +524,7 @@ func TestApplyCIRerunExpires(t *testing.T) {
 // than write through the caller's backing array.
 func TestApplyCIRerunDoesNotMutateInput(t *testing.T) {
 	m, _ := mutationModel(t, nil)
-	m.ciRerun[13] = time.Now()
+	m.ciRerun[m.launchRef(13)] = time.Now()
 
 	in := []gh.PR{{Number: 13, StatusCheckRollup: []gh.Check{{Name: "build", Conclusion: "SUCCESS"}}}}
 	m.applyCIRerun(in)
@@ -533,11 +538,11 @@ func TestApplyCIRerunDoesNotMutateInput(t *testing.T) {
 func TestUpdateBranchStampsCIRerun(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
 	m.actionStatus = statFor(action.DefaultPRActions()["u"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
-	if _, ok := m.ciRerun[13]; !ok {
+	if _, ok := m.ciRerun[m.launchRef(13)]; !ok {
 		t.Error("a successful update-branch must stamp ciRerun")
 	}
 }
@@ -545,11 +550,11 @@ func TestUpdateBranchStampsCIRerun(t *testing.T) {
 func TestMergeDoesNotStampCIRerun(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
 	m.actionStatus = statFor(action.DefaultPRActions()["m"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
-	if _, ok := m.ciRerun[13]; ok {
+	if _, ok := m.ciRerun[m.launchRef(13)]; ok {
 		t.Error("merge does not re-trigger checks and must not stamp ciRerun")
 	}
 }
@@ -557,11 +562,11 @@ func TestMergeDoesNotStampCIRerun(t *testing.T) {
 func TestFailedUpdateBranchDoesNotStampCIRerun(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
 	m.actionStatus = statFor(action.DefaultPRActions()["u"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{err: errors.New("boom")}))
 	m = u.(Model)
-	if _, ok := m.ciRerun[13]; ok {
+	if _, ok := m.ciRerun[m.launchRef(13)]; ok {
 		t.Error("a failed update-branch must not stamp ciRerun")
 	}
 }
@@ -610,7 +615,7 @@ func TestOptimisticAutoMergePaintsGlyph(t *testing.T) {
 	}})
 	m.width, m.height = 120, 40
 	m.actionStatus = statFor(action.DefaultPRActions()["A"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 	m.actionStatus.refresh = true
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
@@ -629,7 +634,7 @@ func TestOptimisticAutoMergePaintsGlyph(t *testing.T) {
 func TestFailedAutoMergeDoesNotPaintGlyph(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN"}})
 	m.actionStatus = statFor(action.DefaultPRActions()["A"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{err: errors.New("boom")}))
 	m = u.(Model)
@@ -645,7 +650,7 @@ func TestOptimisticDisableAutoMergeClearsGlyph(t *testing.T) {
 	}})
 	m.width, m.height = 120, 40
 	m.actionStatus = statFor(action.AutoMergeAction(true))
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 	m.actionStatus.refresh = true
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
@@ -664,7 +669,7 @@ func TestOptimisticDisableAutoMergeClearsGlyph(t *testing.T) {
 func TestOptimisticMarkReadyAndConvertDraftPaintDraftState(t *testing.T) {
 	m, _ := mutationModel(t, []gh.PR{{Number: 13, ID: "pr13node", State: "OPEN", IsDraft: true}})
 	m.actionStatus = statFor(action.ReadyAction(true))
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
@@ -673,7 +678,7 @@ func TestOptimisticMarkReadyAndConvertDraftPaintDraftState(t *testing.T) {
 	}
 
 	m.actionStatus = statFor(action.ReadyAction(false))
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 	u, _ = m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if !m.section.(*PRSection).prAt(0).IsDraft {
@@ -688,16 +693,16 @@ func TestOptimisticApprovePaintsReviewGlyph(t *testing.T) {
 	}})
 	m.width, m.height = 120, 40
 	m.viewerLogin = "me"
-	m.detail[13] = gh.PRDetail{} // empty reviews → upsert path
+	m.detail[m.launchRef(13)] = gh.PRDetail{} // empty reviews → upsert path
 	m.actionStatus = statFor(action.DefaultPRActions()["L"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "APPROVED" {
 		t.Fatalf("ReviewDecision = %q, want APPROVED", got)
 	}
-	d := m.detail[13]
+	d := m.detail[m.launchRef(13)]
 	found := false
 	for _, r := range d.LatestReviews {
 		if r.Author.Login == "me" && r.State == "APPROVED" {
@@ -720,14 +725,14 @@ func TestOptimisticApproveWithoutDetailDoesNotFabricateEntry(t *testing.T) {
 	}})
 	m.viewerLogin = "me"
 	m.actionStatus = statFor(action.DefaultPRActions()["L"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)
 	if got := m.section.(*PRSection).prAt(0).ReviewDecision; got != "APPROVED" {
 		t.Fatalf("ReviewDecision = %q, want APPROVED", got)
 	}
-	if _, ok := m.detail[13]; ok {
+	if _, ok := m.detail[m.launchRef(13)]; ok {
 		t.Fatal("approve without pre-seeded detail must not fabricate m.detail entry")
 	}
 }
@@ -737,7 +742,7 @@ func TestFailedApproveDoesNotPaint(t *testing.T) {
 		Number: 13, ID: "pr13node", State: "OPEN", ReviewDecision: "REVIEW_REQUIRED",
 	}})
 	m.actionStatus = statFor(action.DefaultPRActions()["L"])
-	m.actionStatus.nums = []int{13}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(13)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{err: errors.New("boom")}))
 	m = u.(Model)
@@ -752,7 +757,7 @@ func TestOptimisticAutoMergeBulkPatchesAllNums(t *testing.T) {
 		{Number: 2, ID: "n2", State: "OPEN"},
 	})
 	m.actionStatus = statFor(action.DefaultPRActions()["A"])
-	m.actionStatus.nums = []int{1, 2}
+	m.actionStatus.refs = []gh.PRRef{m.launchRef(1), m.launchRef(2)}
 
 	u, _ := m.Update(withStat(m, actionDoneMsg{}))
 	m = u.(Model)

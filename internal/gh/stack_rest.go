@@ -59,14 +59,14 @@ func (s GraphSource) doREST(req *http.Request) (restReply, error) {
 	return restReply{code: resp.StatusCode, status: resp.Status, body: body}, nil
 }
 
-// FetchStackForPR returns the stack containing prNumber; false when the PR is
-// not in one.
-func (s GraphSource) FetchStackForPR(prNumber int) (Stack, bool, error) {
-	owner, name, err := s.repoParts()
+// FetchStackForPR returns the stack containing pr; false when the PR is not in
+// one.
+func (s GraphSource) FetchStackForPR(pr PRRef) (Stack, bool, error) {
+	owner, name, err := splitRepo(pr.Repo)
 	if err != nil {
 		return Stack{}, false, err
 	}
-	req, err := s.restRequest(http.MethodGet, fmt.Sprintf("/repos/%s/%s/stacks?pull_request=%d", owner, name, prNumber))
+	req, err := s.restRequest(http.MethodGet, fmt.Sprintf("/repos/%s/%s/stacks?pull_request=%d", owner, name, pr.Number))
 	if err != nil {
 		return Stack{}, false, err
 	}
@@ -114,8 +114,8 @@ const baseMergeQueueQuery = `query($owner:String!,$name:String!,$branch:String!,
 
 // BaseUsesMergeQueue reports whether baseRef is merge-queue protected, either
 // through the branch's merge queue or a MERGE_QUEUE ruleset rule.
-func (s GraphSource) BaseUsesMergeQueue(baseRef string) (bool, error) {
-	owner, name, err := s.repoParts()
+func (s GraphSource) BaseUsesMergeQueue(repo, baseRef string) (bool, error) {
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return false, err
 	}
@@ -159,14 +159,14 @@ func (s GraphSource) BaseUsesMergeQueue(baseRef string) (bool, error) {
 	if len(parsed.Errors) > 0 {
 		return false, fmt.Errorf("graphql merge queue: %s", CleanLine(parsed.Errors[0].Message))
 	}
-	repo := parsed.Data.Repository
-	if repo.MergeQueue != nil {
+	repository := parsed.Data.Repository
+	if repository.MergeQueue != nil {
 		return true, nil
 	}
-	if repo.Ref == nil {
+	if repository.Ref == nil {
 		return false, nil
 	}
-	for _, rule := range repo.Ref.Rules.Nodes {
+	for _, rule := range repository.Ref.Rules.Nodes {
 		if rule.Type == "MERGE_QUEUE" {
 			return true, nil
 		}
@@ -192,11 +192,11 @@ func decodeStackMerge(body []byte) (StackMergeResult, error) {
 	return r, nil
 }
 
-// MergeStack asks GitHub to merge the stack up to and including prNumber:
+// MergeStack asks GitHub to merge the stack up to and including pr:
 // squash-merged directly, or enqueued when the base is merge-queue protected.
 // It takes the PR number (REST), not the node ID the GraphQL mutations use.
-func (s GraphSource) MergeStack(prNumber int, mergeQueue bool) (StackMergeResult, error) {
-	owner, name, err := s.repoParts()
+func (s GraphSource) MergeStack(pr PRRef, mergeQueue bool) (StackMergeResult, error) {
+	owner, name, err := splitRepo(pr.Repo)
 	if err != nil {
 		return StackMergeResult{}, err
 	}
@@ -211,7 +211,7 @@ func (s GraphSource) MergeStack(prNumber int, mergeQueue bool) (StackMergeResult
 	if err != nil {
 		return StackMergeResult{}, err
 	}
-	req, err := s.restRequestJSON(http.MethodPut, fmt.Sprintf("/repos/%s/%s/pulls/%d/merge-async", owner, name, prNumber), payload)
+	req, err := s.restRequestJSON(http.MethodPut, fmt.Sprintf("/repos/%s/%s/pulls/%d/merge-async", owner, name, pr.Number), payload)
 	if err != nil {
 		return StackMergeResult{}, err
 	}
@@ -231,12 +231,12 @@ func (s GraphSource) MergeStack(prNumber int, mergeQueue bool) (StackMergeResult
 }
 
 // StackMergeStatus probes an in-flight merge started by MergeStack.
-func (s GraphSource) StackMergeStatus(prNumber int, uuid string) (StackMergeResult, error) {
-	owner, name, err := s.repoParts()
+func (s GraphSource) StackMergeStatus(pr PRRef, uuid string) (StackMergeResult, error) {
+	owner, name, err := splitRepo(pr.Repo)
 	if err != nil {
 		return StackMergeResult{}, err
 	}
-	req, err := s.restRequest(http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/merge-async/%s", owner, name, prNumber, url.PathEscape(uuid)))
+	req, err := s.restRequest(http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/merge-async/%s", owner, name, pr.Number, url.PathEscape(uuid)))
 	if err != nil {
 		return StackMergeResult{}, err
 	}

@@ -9,12 +9,12 @@ import (
 )
 
 type fakeChecksSource struct {
-	got [][]int // numbers passed to each FetchChecks call
-	ret map[int][]gh.Check
+	got [][]gh.PRRef // refs passed to each FetchChecks call
+	ret map[gh.PRRef][]gh.Check
 }
 
-func (f *fakeChecksSource) FetchChecks(nums []int) (map[int][]gh.Check, error) {
-	f.got = append(f.got, append([]int(nil), nums...))
+func (f *fakeChecksSource) FetchChecks(refs []gh.PRRef) (map[gh.PRRef][]gh.Check, error) {
+	f.got = append(f.got, append([]gh.PRRef(nil), refs...))
 	return f.ret, nil
 }
 
@@ -81,10 +81,10 @@ func TestPollAsksOnlyForRunningRows(t *testing.T) {
 	if len(fc.got) != 1 {
 		t.Fatalf("want one call, got %d", len(fc.got))
 	}
-	want := map[int]bool{2: true, 3: true}
-	for _, n := range fc.got[0] {
-		if !want[n] {
-			t.Errorf("asked for #%d, which has no running check", n)
+	want := map[gh.PRRef]bool{{Repo: "owner/repo", Number: 2}: true, {Repo: "owner/repo", Number: 3}: true}
+	for _, r := range fc.got[0] {
+		if !want[r] {
+			t.Errorf("asked for %v, which has no running check", r)
 		}
 	}
 	if len(fc.got[0]) != 2 {
@@ -112,7 +112,7 @@ func TestChecksFetchedUpdatesRowWithoutReordering(t *testing.T) {
 	}
 
 	// #1's checks fail — the actionability sort would hoist it if a beat re-sorted.
-	u, _ := m.Update(checksFetchedMsg{checks: map[int][]gh.Check{1: {{State: "FAILURE"}}}})
+	u, _ := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{m.launchRef(1): {{State: "FAILURE"}}}})
 	ps = u.(Model).section.(*PRSection)
 	if len(before) != ps.Len() {
 		t.Fatalf("row count changed: %d -> %d", len(before), ps.Len())
@@ -172,10 +172,10 @@ func TestDetailFreshTTLTiersByAuthor(t *testing.T) {
 	})
 	m.viewerLogin = "me"
 	ps := m.section.(*PRSection)
-	if got := m.detailFreshTTL(ps, 1); got != launchFreshTTL {
+	if got := m.detailFreshTTL(ps, m.launchRef(1)); got != launchFreshTTL {
 		t.Errorf("own PR TTL = %v, want %v", got, launchFreshTTL)
 	}
-	if got := m.detailFreshTTL(ps, 2); got != pollIntervalCold {
+	if got := m.detailFreshTTL(ps, m.launchRef(2)); got != pollIntervalCold {
 		t.Errorf("other's PR TTL = %v, want %v", got, pollIntervalCold)
 	}
 }
@@ -184,7 +184,7 @@ func TestDetailFreshTTLTiersByAuthor(t *testing.T) {
 // rather than everything being hot.
 func TestDetailFreshTTLColdWithoutViewer(t *testing.T) {
 	m := pollModel(t, &fakeChecksSource{}, []gh.PR{{Number: 1, Author: author("me")}})
-	if got := m.detailFreshTTL(m.section.(*PRSection), 1); got != pollIntervalCold {
+	if got := m.detailFreshTTL(m.section.(*PRSection), m.launchRef(1)); got != pollIntervalCold {
 		t.Errorf("unknown viewer TTL = %v, want %v", got, pollIntervalCold)
 	}
 }
@@ -210,7 +210,7 @@ func TestCursorFetchIsASingleRequest(t *testing.T) {
 	if len(fd.got) != 1 {
 		t.Fatalf("want exactly one request for the cursor row, got %d", len(fd.got))
 	}
-	if len(msg.details[7].ReviewThreads) != 1 {
+	if len(msg.details[m.launchRef(7)].ReviewThreads) != 1 {
 		t.Error("review threads should arrive with the detail, not in a second fetch")
 	}
 }

@@ -25,7 +25,10 @@ func firstLabel(m Model) string {
 	return ""
 }
 
-func focusedNumber(m Model) int { return m.section.(numbered).numberAt(m.cursor) }
+func focusedNumber(m Model) int {
+	r, _ := m.refAt(m.cursor)
+	return r.Number
+}
 
 func groupByModel(t *testing.T) Model {
 	t.Helper()

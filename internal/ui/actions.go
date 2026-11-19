@@ -16,25 +16,50 @@ import (
 )
 
 // cursorVars returns the template vars for the row under the cursor, or
-// false if the cursor is out of range. Repo is injected from the model.
+// false if the cursor is out of range.
 func (m *Model) cursorVars() (action.Vars, bool) {
 	i := m.cursor
 	if i < 0 || i >= m.section.Len() {
 		return action.Vars{}, false
 	}
+	return m.varsAt(i), true
+}
+
+// varsAt is the section's VarsAt with the launch repo filled in for rows that
+// carry none (issue and run rows); a PR row keeps its own repo.
+func (m *Model) varsAt(i int) action.Vars {
 	v := m.section.VarsAt(i)
-	v.Repo = m.repo
-	return v, true
+	if v.Repo == "" {
+		v.Repo = m.repo
+	}
+	return v
 }
 
 // withSwitchRef resolves what `wt switch` can open for the PR row at i. It
 // shells out to git, so it stays off cursorVars — the render paths call that
 // every frame.
-func (m *Model) withSwitchRef(v action.Vars, i int) action.Vars {
+func (m *Model) withSwitchRef(v action.Vars, i int, dir string) action.Vars {
 	if ps, ok := m.section.(*PRSection); ok && i >= 0 && i < ps.Len() {
-		v.SwitchRef = gh.SwitchRef(m.dir, ps.prAt(i))
+		v.SwitchRef = gh.SwitchRef(dir, ps.prAt(i))
 	}
 	return v
+}
+
+var checkoutForFn = gh.CheckoutFor
+
+// checkoutDir is the local checkout git and wt run in for a row of repo: the
+// launch directory for the launch repo, the sibling checkout under reposRoot
+// for any other.
+func (m Model) checkoutDir(repo string) (string, error) {
+	if repo == "" || strings.EqualFold(repo, m.repo) {
+		return m.dir, nil
+	}
+	return checkoutForFn(m.reposRoot, repo)
+}
+
+// otherRepoSwitchArgv points a `wt switch` argv at the other repo's checkout.
+func otherRepoSwitchArgv(argv []string, dir string) []string {
+	return append([]string{"wt", "-C", dir}, argv[1:]...)
 }
 
 // clipboardText is the payload a copy action writes for one PR.
@@ -73,34 +98,37 @@ func copiedLabel(builtin string, n int, kind string) string {
 }
 
 // selectedOrCursor returns the selected row indices (sorted), or the cursor row
-// when nothing is selected.
+// when nothing is selected. A fold stop is never a target.
 func (m *Model) selectedOrCursor() []int {
 	idx := m.sel.indices()
 	if len(idx) == 0 {
-		return []int{m.cursor}
+		idx = []int{m.cursor}
+	}
+	if ps, ok := m.section.(*PRSection); ok {
+		idx = slices.DeleteFunc(idx, ps.isFoldStop)
 	}
 	slices.Sort(idx)
 	return idx
 }
 
-// targetNumbers returns the PR/issue numbers of selectedOrCursor's rows,
-// sorted, so confirmAnswer can tell whether the target set changed while a
-// confirm prompt was open.
-func (m *Model) targetNumbers() []int {
-	n, ok := m.section.(numbered)
-	if !ok {
-		return nil
-	}
+// targetRefs returns the PRs/issues of selectedOrCursor's rows, sorted, so
+// confirmAnswer can tell whether the target set changed while a confirm prompt
+// was open.
+func (m *Model) targetRefs() []gh.PRRef {
 	l := m.section.Len()
-	var nums []int
+	var refs []gh.PRRef
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= l {
 			continue
 		}
-		nums = append(nums, n.numberAt(i))
+		r, ok := m.refAt(i)
+		if !ok {
+			return nil
+		}
+		refs = append(refs, r)
 	}
-	slices.Sort(nums)
-	return nums
+	slices.SortFunc(refs, compareRefs)
+	return refs
 }
 
 // copyPayload joins the clipboard text for every selected row (or the cursor),
@@ -111,9 +139,7 @@ func (m *Model) copyPayload(builtin string) string {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
-		v := m.section.VarsAt(i)
-		v.Repo = m.repo
-		if s := clipboardText(builtin, v); s != "" {
+		if s := clipboardText(builtin, m.varsAt(i)); s != "" {
 			lines = append(lines, s)
 		}
 	}
@@ -135,6 +161,9 @@ func (m *Model) queueExit(key string, argv []string) {
 }
 
 func isWorktreeSwitch(argv []string) bool {
+	if len(argv) >= 4 && argv[0] == "wt" && argv[1] == "-C" {
+		return argv[3] == "switch"
+	}
 	return len(argv) >= 2 && argv[0] == "wt" && argv[1] == "switch"
 }
 
@@ -144,15 +173,16 @@ var preflightSwitchFn = gh.PreflightSwitch
 type switchItem struct {
 	argv   []string
 	branch string
+	dir    string
 }
 
 // switchPreflightCmd runs the (potentially slow) wt-list + git inspection for
 // each item in order off the Update goroutine, stopping at the first
 // collision. This is what keeps `enter`/`W` from freezing the TUI.
-func switchPreflightCmd(dir, key string, items []switchItem, exitsTUI bool) tea.Cmd {
+func switchPreflightCmd(key string, items []switchItem, exitsTUI bool) tea.Cmd {
 	return func() tea.Msg {
 		for i, it := range items {
-			r, err := preflightSwitchFn(dir, it.branch)
+			r, err := preflightSwitchFn(it.dir, it.branch)
 			if err != nil {
 				return switchPreflightMsg{notice: "Pre-flight could not inspect worktrunk or Git state:\n" + err.Error()}
 			}
@@ -192,6 +222,9 @@ func switchNoticeBody(r gh.SwitchPreflight, branch string) string {
 // runAction executes a single-scope action against the cursor row. exits-tui
 // actions hand off (or queue) the command and quit; inline actions run via the runner.
 func (m *Model) runAction(a action.Action) tea.Cmd {
+	if repo, stop := m.foldStop(); stop {
+		return m.hint("unfold " + repo + " with e first")
+	}
 	if m.cascade != nil && !a.ExitsTUI {
 		// A live cascade owns the mutation sequence; interleaving a second one
 		// would break the sequencing guarantee the whole feature exists for.
@@ -207,10 +240,22 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	}
 
 	if a.ExitsTUI {
-		argv, err := a.ExpandArgv(m.withSwitchRef(v, m.cursor))
+		dir, err := m.checkoutDir(v.Repo)
+		if err != nil {
+			m.switchNotice = err.Error()
+			return nil
+		}
+		argv, err := a.ExpandArgv(m.withSwitchRef(v, m.cursor, dir))
 		if err != nil {
 			m.err = err
 			return nil
+		}
+		if dir != m.dir {
+			if !isWorktreeSwitch(argv) {
+				m.switchNotice = fmt.Sprintf("%s runs only on %s rows", a.Key, m.repo)
+				return nil
+			}
+			argv = otherRepoSwitchArgv(argv, dir)
 		}
 		if !isWorktreeSwitch(argv) {
 			m.queueExit(a.Key, argv)
@@ -218,7 +263,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		// Test doubles and callers constructing a model before selecting a repo do
 		// not have a working directory yet; preserve the existing handoff behavior.
-		if _, err := os.Stat(m.dir); err != nil {
+		if _, err := os.Stat(dir); err != nil {
 			m.queueExit(a.Key, argv)
 			return tea.Quit
 		}
@@ -226,7 +271,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			return nil // a preflight is already in flight; ignore the repeat keypress
 		}
 		m.switchChecking = true
-		return tea.Batch(switchPreflightCmd(m.dir, a.Key, []switchItem{{argv: argv, branch: v.Branch}}, true), m.startSpinner())
+		return tea.Batch(switchPreflightCmd(a.Key, []switchItem{{argv: argv, branch: v.Branch, dir: dir}}, true), m.startSpinner())
 	}
 
 	switch a.Command.Builtin {
@@ -254,12 +299,17 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		if !ok || m.section.Len() == 0 {
 			return nil // issue board, or an empty one: no PR branch to clean up
 		}
-		p, dir := ps.prAt(m.cursor), m.dir
+		p, cwd := ps.prAt(m.cursor), m.dir
+		gitDir, err := m.checkoutDir(p.Repo)
+		if err != nil {
+			m.switchNotice = err.Error()
+			return nil
+		}
 		m.actionStatus = statFor(a)
-		m.actionStatus.nums = []int{p.Number}
+		m.actionStatus.refs = []gh.PRRef{p.Ref()}
 		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return cleanupDone(dir, p, stat)
+			return cleanupDone(gitDir, cwd, p, stat)
 		}, m.startSpinner())
 	case "rerun-run":
 		return m.rerunRunCmd(a)
@@ -272,16 +322,17 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 				return clearStatusCmd(m.actionStatus)
 			}
 		}
-		branch, native := v.HeadRefName, m.actionsSource
+		branch, native, repo := v.HeadRefName, m.actionsSource, v.Repo
+		ref := gh.PRRef{Repo: v.Repo, Number: v.Number}
 		m.actionStatus = statFor(a)
 		m.actionStatus.refresh = a.Refresh
-		m.actionStatus.nums = []int{v.Number}
+		m.actionStatus.refs = []gh.PRRef{ref}
 		if a.Refresh {
-			m.invalidateLaunchCache(v.Number)
+			m.invalidateLaunchCache(ref)
 		}
 		stat := m.actionStatus
 		return tea.Batch(func() tea.Msg {
-			return actionDoneMsg{stat: stat, err: action.RerunFailed(native, branch)}
+			return actionDoneMsg{stat: stat, err: action.RerunFailed(native, repo, branch)}
 		}, m.startSpinner())
 	default: // native mutation/open (merge, ready, update-branch, open-web)
 		if cmd, ok := m.singleNativeCmd(a, v); ok {
@@ -319,10 +370,10 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 	}
 	m.actionStatus = statFor(a)
 	m.actionStatus.refresh = a.Refresh
-	m.actionStatus.nums = []int{p.Number}
+	m.actionStatus.refs = []gh.PRRef{p.Ref()}
 	merge := a.Command.Native == "merge-squash"
 	if a.Refresh {
-		m.invalidateLaunchCache(p.Number)
+		m.invalidateLaunchCache(p.Ref())
 	}
 	stat := m.actionStatus
 	return tea.Batch(func() tea.Msg {
@@ -370,13 +421,13 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 			err := fmt.Errorf("PR #%d is not open", p.Number)
 			return func() error { return err }, true
 		}
-		d, hasDetail := m.detail[p.Number]
+		d, hasDetail := m.detail[p.Ref()]
 		mergeable, mss := mergeState(p, d, hasDetail)
-		detailSrc := m.detailSource
+		detailSrc, ref := m.detailSource, p.Ref()
 		return func() error {
 			if mergeUnresolved(mergeable) && detailSrc != nil {
-				if details, _, err := detailSrc.FetchDetails([]int{p.Number}); err == nil {
-					if fresh, ok := details[p.Number]; ok {
+				if details, _, err := detailSrc.FetchDetails([]gh.PRRef{ref}); err == nil {
+					if fresh, ok := details[ref]; ok {
 						mergeable, mss = fresh.Mergeable, fresh.MergeStateStatus
 					}
 				}
@@ -465,7 +516,7 @@ func (m *Model) mergePreCheck(p gh.PR) error {
 	if p.State != "OPEN" {
 		return fmt.Errorf("PR #%d is not open", p.Number)
 	}
-	d, hasDetail := m.detail[p.Number]
+	d, hasDetail := m.detail[p.Ref()]
 	mergeable, mss := mergeState(p, d, hasDetail)
 	if mergeConflicted(mergeable, mss) {
 		return fmt.Errorf("PR #%d has conflicts", p.Number)
@@ -481,11 +532,11 @@ type actionStat struct {
 	fail    string // shown on failure
 	settled bool
 	err     error
-	refresh bool   // true when the action mutated the PR(s) → refetch on success
-	rerunCI bool   // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
-	nums    []int  // PR numbers the action touched, for detail-freshness invalidation
-	native  string // a.Command.Native — drives optimistic row patches on success
-	partial []int  // PRs that succeeded even though the run as a whole failed
+	refresh bool       // true when the action mutated the PR(s) → refetch on success
+	rerunCI bool       // true when the action re-triggers CI → paint checks in-progress until GitHub catches up
+	refs    []gh.PRRef // PRs the action touched, for detail-freshness invalidation
+	native  string     // a.Command.Native — drives optimistic row patches on success
+	partial []gh.PRRef // PRs that succeeded even though the run as a whole failed
 }
 
 // statFor builds the running status for an action, falling back to its imperative
@@ -543,15 +594,15 @@ func reviewerDiff(current []string, picked map[string]bool) (add, remove []strin
 // prID is guarded the same way as nativeMutationFn's p.ID: a stale gh-CLI-era
 // cache entry can carry an empty node id, which would otherwise reach
 // RequestReviews and surface as a confusing raw GraphQL error.
-func (m Model) assignReviewersCmd(number int, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
+func (m Model) assignReviewersCmd(ref gh.PRRef, prID string, add, remove []string, picked map[string]bool) tea.Cmd {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
 	if prID == "" {
-		err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", number)
+		err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", ref.Number)
 		return func() tea.Msg { return fetchFailedMsg{err: err} }
 	}
-	delete(m.fresh, number) // reviewer set changed → summary must revalidate
+	delete(m.fresh, ref) // reviewer set changed → summary must revalidate
 	fetch := m.listFetchCmd(false)
 	src := m.mutationSource
 	var logins []string
@@ -587,11 +638,11 @@ func (m *Model) confirmAnswer(yes bool) tea.Cmd {
 		return m.runCascade(*a, p)
 	}
 	if a.Scope == "per-selected" {
-		if !slices.Equal(m.targetNumbers(), targets) {
+		if !slices.Equal(m.targetRefs(), targets) {
 			// A refetch held rows out from under the prompt or emptied the
 			// selection — firing on whatever selectedOrCursor falls back to now
 			// would mutate PRs the user never confirmed. (A reorder alone passes:
-			// targetNumbers sorts.)
+			// targetRefs sorts.)
 			m.actionStatus = &actionStat{fail: "selection changed — press again", err: errors.New("selection changed"), settled: true}
 			return clearStatusCmd(m.actionStatus)
 		}
@@ -608,6 +659,9 @@ const bulkWarnThreshold = 4
 // targets a PR the viewer didn't author or fans out across a bulk selection, would
 // cascade up a stack, or when it would open more than bulkWarnThreshold worktrees.
 func (m *Model) startBulk(a action.Action) tea.Cmd {
+	if repo, stop := m.foldStop(); stop {
+		return m.hint("unfold " + repo + " with e first")
+	}
 	if m.cascade != nil && !a.ExitsTUI {
 		return nil // a live cascade owns the mutation sequence
 	}
@@ -626,7 +680,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
 	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
 		m.pending = &a
-		m.pendingTargets = m.targetNumbers()
+		m.pendingTargets = m.targetRefs()
 		m.pendingStackMerge = nil
 		return nil
 	}
@@ -641,6 +695,9 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 		return false
 	}
 	targets := m.selectedOrCursor()
+	if len(targets) == 0 {
+		return false
+	}
 	if len(targets) > 1 {
 		return true
 	}
@@ -668,18 +725,34 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 	}
 	// The only non-native bulk actions are exits-TUI worktree fan-outs.
 	var items []switchItem
+	var unresolved []string
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
 		}
-		v := m.section.VarsAt(i)
-		v.Repo = m.repo
-		argv, err := a.ExpandArgv(m.withSwitchRef(v, i))
+		v := m.varsAt(i)
+		dir, err := m.checkoutDir(v.Repo)
+		if err != nil {
+			unresolved = append(unresolved, err.Error())
+			continue
+		}
+		argv, err := a.ExpandArgv(m.withSwitchRef(v, i, dir))
 		if err != nil {
 			m.err = err
 			continue
 		}
-		items = append(items, switchItem{argv: argv, branch: v.Branch})
+		if dir != m.dir {
+			if a.ExitsTUI && !isWorktreeSwitch(argv) {
+				m.switchNotice = fmt.Sprintf("%s runs only on %s rows. No actions were queued.", a.Key, m.repo)
+				return nil
+			}
+			argv = otherRepoSwitchArgv(argv, dir)
+		}
+		items = append(items, switchItem{argv: argv, branch: v.Branch, dir: dir})
+	}
+	if len(unresolved) > 0 {
+		m.switchNotice = "No switches were queued.\n" + strings.Join(unresolved, "\n")
+		return nil
 	}
 	if len(items) == 0 {
 		return nil
@@ -701,7 +774,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return nil
 	}
 	m.switchChecking = true
-	return tea.Batch(switchPreflightCmd(m.dir, a.Key, items, a.ExitsTUI), m.startSpinner())
+	return tea.Batch(switchPreflightCmd(a.Key, items, a.ExitsTUI), m.startSpinner())
 }
 
 func (m Model) resolvePRAction(a action.Action) action.Action {
@@ -728,9 +801,9 @@ func (m Model) resolvePRAction(a action.Action) action.Action {
 // skipped when the active board isn't the PR section.
 func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	var calls []func() error
-	var callNums []int // parallel to calls; 0 for open-web/open-issue entries
-	var nums []int
-	merging := map[int]gh.PR{}
+	var callRefs []gh.PRRef // parallel to calls; the zero ref for open-web/open-issue entries
+	var refs []gh.PRRef
+	merging := map[gh.PRRef]gh.PR{}
 	var noTicket int
 	var openerErr string
 	for _, i := range m.selectedOrCursor() {
@@ -740,7 +813,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		if a.Command.Native == "open-web" {
 			url := m.section.VarsAt(i).URL
 			calls = append(calls, func() error { return openURL(url) })
-			callNums = append(callNums, 0)
+			callRefs = append(callRefs, gh.PRRef{})
 			continue
 		}
 		if a.Command.Native == "open-issue" {
@@ -759,7 +832,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				continue
 			}
 			calls = append(calls, func() error { return openLinkedIssue(argv) })
-			callNums = append(callNums, 0)
+			callRefs = append(callRefs, gh.PRRef{})
 			continue
 		}
 		ps, ok := m.section.(*PRSection)
@@ -772,12 +845,12 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 			continue
 		}
 		calls = append(calls, fn)
-		callNums = append(callNums, p.Number)
-		nums = append(nums, p.Number)
+		callRefs = append(callRefs, p.Ref())
+		refs = append(refs, p.Ref())
 		if a.Command.Native == "merge-squash" {
 			// Snapshot now: once the merge lands, the refetch drops the PR from the
 			// open list and there is nothing left to keep showing.
-			merging[p.Number] = p
+			merging[p.Ref()] = p
 		}
 	}
 	if len(calls) == 0 {
@@ -794,9 +867,9 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 		m.actionStatus = statForBulk(a, n)
 	}
 	m.actionStatus.refresh = a.Refresh
-	m.actionStatus.nums = nums
+	m.actionStatus.refs = refs
 	if a.Refresh {
-		m.invalidateLaunchCache(nums...)
+		m.invalidateLaunchCache(refs...)
 	}
 	m.clearSelection() // the batch op consumes the selection
 	// The actionDoneMsg arm assigns err unconditionally, so a spawn that works
@@ -810,7 +883,7 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 	return tea.Batch(func() tea.Msg {
 		var failed int
 		var lastErr error
-		var landed []int
+		var landed []gh.PRRef
 		var mergedOK []gh.PR
 		for idx, fn := range calls {
 			if err := fn(); err != nil {
@@ -818,11 +891,11 @@ func (m *Model) runBulkNative(a action.Action) tea.Cmd {
 				lastErr = err
 				continue
 			}
-			if callNums[idx] == 0 {
+			if callRefs[idx] == (gh.PRRef{}) {
 				continue
 			}
-			landed = append(landed, callNums[idx])
-			if p, ok := merging[callNums[idx]]; ok {
+			landed = append(landed, callRefs[idx])
+			if p, ok := merging[callRefs[idx]]; ok {
 				mergedOK = append(mergedOK, p)
 			}
 		}
@@ -863,10 +936,7 @@ func statForBulk(a action.Action, n int) *actionStat {
 // the same way runBulkNative is, since prAt indexes s.shown unguarded — and
 // walks each seed's stack via the package-level buildCascadePlan.
 func (m *Model) buildCascadePlan(ps *PRSection) *cascadePlan {
-	shown := make([]gh.PR, ps.Len())
-	for i := range shown {
-		shown[i] = ps.prAt(i)
-	}
+	shown := slices.Collect(ps.shownPRs())
 	var seeds []gh.PR
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= ps.Len() {
@@ -875,7 +945,7 @@ func (m *Model) buildCascadePlan(ps *PRSection) *cascadePlan {
 		seeds = append(seeds, ps.prAt(i))
 	}
 	state := func(p gh.PR) (mergeable, mss string) {
-		d, hasDetail := m.detail[p.Number]
+		d, hasDetail := m.detail[p.Ref()]
 		return mergeState(p, d, hasDetail)
 	}
 	return buildCascadePlan(shown, seeds, state)
@@ -889,18 +959,18 @@ func (m *Model) runCascade(a action.Action, p *cascadePlan) tea.Cmd {
 	if p == nil {
 		return nil
 	}
-	nums := make([]int, 0, p.count())
+	refs := make([]gh.PRRef, 0, p.count())
 	for _, c := range p.chains {
 		for _, l := range c {
-			nums = append(nums, l.pr.Number)
+			refs = append(refs, l.pr.Ref())
 		}
 	}
 	stat := statForBulk(a, p.count())
 	stat.refresh = a.Refresh
-	stat.nums = nums
+	stat.refs = refs
 	m.cascade = &cascadeRun{plan: p, stat: stat, skipped: p.dropped} // plan.dropped seeds skipped — cascadeRun.failed() depends on it
 	m.actionStatus = stat
-	m.invalidateLaunchCache(nums...)
+	m.invalidateLaunchCache(refs...)
 	m.clearSelection() // the run consumes the selection, exactly as runBulkNative does
 	return tea.Batch(m.cascadeMutateCmd(), m.startSpinner())
 }

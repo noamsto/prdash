@@ -42,7 +42,7 @@ func TestOpenPickerFetchesAndPopulates(t *testing.T) {
 	if !m.showPicker || m.pickerMode != "author" {
 		t.Fatal("openPicker should show the picker in author mode")
 	}
-	m2, _ := m.Update(membersFetchedMsg{users: []gh.User{{Login: "alice"}}})
+	m2, _ := m.Update(membersFetchedMsg{repo: m.repo, users: []gh.User{{Login: "alice"}}})
 	m = m2.(Model)
 	if len(m.pick.cands) != 1 || m.pick.cands[0].Login != "alice" {
 		t.Fatalf("members msg should populate candidates: %+v", m.pick.cands)

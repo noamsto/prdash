@@ -52,7 +52,18 @@ func NewGraphSource(token, repo string) GraphSource {
 }
 
 func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
-	prs, err := s.query(context.Background(), filter, limit)
+	// gh pr list --search implicitly scopes to the repo and to PRs; the raw
+	// search API needs both qualifiers spelled out.
+	return s.fetchSearch(fmt.Sprintf("repo:%s is:pr %s", s.repo, filter), limit)
+}
+
+// FetchCrossRepoPRs lists PRs matching filter in every repo except s.repo.
+func (s GraphSource) FetchCrossRepoPRs(filter string, limit int) (prs []PR, raw []byte, err error) {
+	return s.fetchSearch(fmt.Sprintf("is:pr -repo:%s %s", s.repo, filter), limit)
+}
+
+func (s GraphSource) fetchSearch(q string, limit int) ([]PR, []byte, error) {
+	prs, err := s.search(context.Background(), q, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -93,6 +104,7 @@ type qlPR struct {
 	HeadRefName       string
 	BaseRefName       string
 	IsCrossRepository bool
+	Repository        struct{ NameWithOwner string }
 	ReviewDecision    string
 	Mergeable         string
 	MergeStateStatus  string
@@ -153,25 +165,23 @@ type qlCheckNode struct {
 	} `graphql:"... on StatusContext"`
 }
 
-func (s GraphSource) query(ctx context.Context, filter string, limit int) ([]PR, error) {
-	var q struct {
+func (s GraphSource) search(ctx context.Context, q string, limit int) ([]PR, error) {
+	var res struct {
 		Search struct {
 			Nodes []struct {
 				PR qlPR `graphql:"... on PullRequest"`
 			}
 		} `graphql:"search(query: $q, type: ISSUE, first: $limit)"`
 	}
-	// gh pr list --search implicitly scopes to the repo and to PRs; the raw
-	// search API needs both qualifiers spelled out.
 	vars := map[string]any{
-		"q":     githubv4.String(fmt.Sprintf("repo:%s is:pr %s", s.repo, filter)),
+		"q":     githubv4.String(q),
 		"limit": gqlInt(limit),
 	}
-	if err := s.client.Query(ctx, &q, vars); err != nil {
+	if err := s.client.Query(ctx, &res, vars); err != nil {
 		return nil, err
 	}
-	prs := make([]PR, 0, len(q.Search.Nodes))
-	for _, n := range q.Search.Nodes {
+	prs := make([]PR, 0, len(res.Search.Nodes))
+	for _, n := range res.Search.Nodes {
 		prs = append(prs, mapPR(n.PR))
 	}
 	return prs, nil
@@ -180,6 +190,7 @@ func (s GraphSource) query(ctx context.Context, filter string, limit int) ([]PR,
 func mapPR(g qlPR) PR {
 	p := PR{
 		ID:                g.ID,
+		Repo:              g.Repository.NameWithOwner,
 		Number:            g.Number,
 		Title:             g.Title,
 		Body:              g.Body,

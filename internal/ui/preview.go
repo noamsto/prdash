@@ -17,7 +17,7 @@ import (
 )
 
 type prDetailMsg struct {
-	number int
+	ref    gh.PRRef
 	detail gh.PRDetail
 	raw    []byte // cached to disk so the preview paints instantly next launch
 }
@@ -42,14 +42,14 @@ func issueDetailKey(repo string, number int) string {
 // fetchIssueDetailCmd lazily loads the selected issue's body through the
 // issue-detail source.
 func (m Model) fetchIssueDetailCmd(number int) tea.Cmd {
-	src := m.issueDetailSource
+	src, ref := m.issueDetailSource, m.launchRef(number)
 	if src == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		d, raw, err := src.FetchIssueDetail(number)
 		if err != nil {
-			return detailFailedMsg{err: err, numbers: []int{number}}
+			return detailFailedMsg{err: err, refs: []gh.PRRef{ref}}
 		}
 		return issueDetailMsg{number: number, detail: d, raw: raw}
 	}
@@ -70,10 +70,14 @@ func (m *Model) detailCmdForCursor() tea.Cmd {
 		}
 		return m.fetchIssueDetailCmd(v.Number)
 	case "pr":
-		if m.fresh[v.Number] || m.cacheFresh(detailKey(m.repo, v.Number)) {
+		if m.section.(*PRSection).isFoldStop(m.cursor) {
 			return nil
 		}
-		return m.batchDetailCmd([]int{v.Number})
+		r := gh.PRRef{Repo: v.Repo, Number: v.Number}
+		if m.fresh[r] || m.cacheFresh(detailKey(r.Repo, r.Number)) {
+			return nil
+		}
+		return m.batchDetailCmd([]gh.PRRef{r})
 	case "run":
 		return m.runJobsCmdForCursor()
 	}
@@ -90,28 +94,25 @@ func (m Model) warmDetailCmd() tea.Cmd {
 	if !ok {
 		return m.detailCmdForCursor()
 	}
-	cursorNum := -1
-	if v, ok := m.cursorVars(); ok {
-		cursorNum = v.Number
-	}
-	var rest []int
-	for _, n := range m.detailWindow(ps) {
-		if n != cursorNum {
-			rest = append(rest, n)
+	cursorRef, _ := m.cursorRef()
+	var rest []gh.PRRef
+	for _, r := range m.detailWindow(ps) {
+		if r != cursorRef {
+			rest = append(rest, r)
 		}
 	}
 	return tea.Batch(m.detailCmdForCursor(), m.batchDetailCmd(rest))
 }
 
-// detailWindow is the cursor-nearest set of shown PR numbers still needing detail
+// detailWindow is the cursor-nearest set of shown PRs still needing detail
 // (not refreshed this session, not fresh on disk), bounded by prefetchWindow.
-func (m Model) detailWindow(ps *PRSection) []int {
-	var out []int
-	for _, n := range prefetchNumbers(ps, m.cursor, m.fresh, prefetchWindow) {
-		if m.cacheFreshFor(detailKey(m.repo, n), m.detailFreshTTL(ps, n)) {
+func (m Model) detailWindow(ps *PRSection) []gh.PRRef {
+	var out []gh.PRRef
+	for _, r := range prefetchRefs(ps, m.cursor, m.fresh, prefetchWindow) {
+		if m.cacheFreshFor(detailKey(r.Repo, r.Number), m.detailFreshTTL(ps, r)) {
 			continue
 		}
-		out = append(out, n)
+		out = append(out, r)
 	}
 	return out
 }
@@ -121,37 +122,51 @@ func (m Model) detailWindow(ps *PRSection) []int {
 // spacing, which is already how stale the rest of the board is allowed to be.
 // The cursor row is not tiered — detailCmdForCursor always uses launchFreshTTL,
 // because the row you are looking at is the one you want current.
-func (m Model) detailFreshTTL(ps *PRSection, number int) time.Duration {
-	if m.viewerLogin != "" && ps.authorOf(number) == m.viewerLogin {
+func (m Model) detailFreshTTL(ps *PRSection, r gh.PRRef) time.Duration {
+	if m.viewerLogin != "" && ps.authorOf(r) == m.viewerLogin {
 		return launchFreshTTL
 	}
 	return pollIntervalCold
 }
 
-// batchDetailCmd fetches detail for numbers in a single request via the batched
-// source, emitting one detailsBatchMsg for the whole window.
-func (m Model) batchDetailCmd(numbers []int) tea.Cmd {
+// batchDetailCmd fetches detail for refs in a single request via the batched
+// source, emitting one detailsBatchMsg for the whole window. A partial result
+// (one repo failed) also emits detailFailedMsg for just the refs it lacks.
+func (m Model) batchDetailCmd(refs []gh.PRRef) tea.Cmd {
 	src := m.detailSource
-	if src == nil || len(numbers) == 0 {
+	if src == nil || len(refs) == 0 {
 		return nil
 	}
 	return func() tea.Msg {
-		details, raws, err := src.FetchDetails(numbers)
-		if err != nil {
-			return detailFailedMsg{err: err, numbers: numbers}
+		details, raws, err := src.FetchDetails(refs)
+		if err == nil {
+			return detailsBatchMsg{details: details, raws: raws}
 		}
-		return detailsBatchMsg{details: details, raws: raws}
+		var missing []gh.PRRef
+		for _, r := range refs {
+			if _, ok := details[r]; !ok {
+				missing = append(missing, r)
+			}
+		}
+		failed := detailFailedMsg{err: err, refs: missing}
+		if len(missing) == len(refs) {
+			return failed
+		}
+		return tea.BatchMsg{
+			func() tea.Msg { return detailsBatchMsg{details: details, raws: raws} },
+			func() tea.Msg { return failed },
+		}
 	}
 }
 
 // prefetchWindow bounds how many uncached PR details we fan out per settle.
 const prefetchWindow = 5
 
-// prefetchNumbers returns up to window PR numbers nearest the cursor whose
+// prefetchRefs returns up to window PRs nearest the cursor whose
 // detail hasn't been refreshed this session yet. Order is by |i - cursor|
 // ascending; on a tie the row below the cursor wins (preserves the old
 // downward bias for the first neighbor).
-func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) []int {
+func prefetchRefs(ps *PRSection, cursor int, fresh map[gh.PRRef]bool, window int) []gh.PRRef {
 	n := ps.Len()
 	if n == 0 || window <= 0 {
 		return nil
@@ -162,7 +177,7 @@ func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) 
 	if cursor >= n {
 		cursor = n - 1
 	}
-	var out []int
+	var out []gh.PRRef
 	// d == 0 yields only the cursor; d > 0 yields below then above.
 	for d := 0; len(out) < window && d < n; d++ {
 		candidates := []int{cursor + d}
@@ -170,14 +185,14 @@ func prefetchNumbers(ps *PRSection, cursor int, fresh map[int]bool, window int) 
 			candidates = append(candidates, cursor-d)
 		}
 		for _, i := range candidates {
-			if i < 0 || i >= n {
+			if i < 0 || i >= n || ps.isFoldStop(i) {
 				continue
 			}
-			num := ps.prAt(i).Number
-			if fresh[num] {
+			r := ps.refAt(i)
+			if fresh[r] {
 				continue
 			}
-			out = append(out, num)
+			out = append(out, r)
 			if len(out) >= window {
 				return out
 			}
@@ -313,11 +328,31 @@ func (m Model) previewParts() (head, body string) {
 	if !ok {
 		return "", ""
 	}
+	if ps.isFoldStop(m.cursor) {
+		return m.groupSummary(ps, w)
+	}
 	head = identityHeader(ps.prAt(m.cursor), w-2) + "\n\n" + renderTabBar(expandedTabs, m.expandedTab, w)
 	if m.expandedTab == tabOverview {
 		return head, m.renderOverview(w)
 	}
 	return head, m.expandedBody(w)
+}
+
+// groupSummary is the preview of a fold stop: the group's repo and its stage
+// buckets, from rows already on the board.
+func (m Model) groupSummary(ps *PRSection, w int) (head, body string) {
+	repo := ps.repoAt(m.cursor)
+	counts := ps.groupStages(repo)
+	head = truncate(sectionLabelStyle.Render(repo)+dimStyle.Render(fmt.Sprintf("  %d", counts.total())), w-2)
+	var lines []string
+	for i, n := range counts {
+		if n > 0 {
+			b := stageBucket(i)
+			lines = append(lines, fmt.Sprintf("%s %d %s", stageGlyph(b), n, stageLabel(b)))
+		}
+	}
+	lines = append(lines, "", dimStyle.Render("e to unfold"))
+	return head, strings.Join(lines, "\n")
 }
 
 // previewPane is the whole side pane, head and body together — the measurement
@@ -351,7 +386,8 @@ func (m Model) renderOverview(w int) string {
 	section := func(glyph, label, body string) string {
 		return sectionHeader(glyph, label, w) + "\n" + indentLines(strings.TrimRight(body, "\n"), 2)
 	}
-	d, cached := m.detail[v.Number]
+	ref := gh.PRRef{Repo: v.Repo, Number: v.Number}
+	d, cached := m.detail[ref]
 	var blocks []string
 	if ps, ok := m.section.(*PRSection); ok {
 		pr := ps.prAt(m.cursor)
@@ -373,7 +409,7 @@ func (m Model) renderOverview(w int) string {
 		}
 	}
 	if !cached {
-		if err := m.detailErr[v.Number]; err != nil {
+		if err := m.detailErr[ref]; err != nil {
 			blocks = append(blocks, failStyle.Render("  details failed: "+err.Error()))
 			return strings.Join(blocks, "\n\n")
 		}
@@ -381,7 +417,7 @@ func (m Model) renderOverview(w int) string {
 		return strings.Join(blocks, "\n\n")
 	}
 	blocks = append(blocks, section(reviewGlyph, "review", reviewRoster(d)))
-	if ts := m.detail[v.Number].ReviewThreads; len(ts) > 0 {
+	if ts := m.detail[ref].ReviewThreads; len(ts) > 0 {
 		label := fmt.Sprintf("threads  %d unresolved", len(preview.Unresolved(ts)))
 		if body := renderThreadsSummary(ts, m.previewN, bw); body != "" {
 			blocks = append(blocks, section(threadsGlyph, label, body))
@@ -399,7 +435,7 @@ func (m Model) issuePreviewParts(is *IssueSection, w, bw int) (head, body string
 	head = identityHeaderIssue(iss, bw)
 	d, cached := m.issueDetail[iss.Number]
 	if !cached {
-		if err := m.detailErr[iss.Number]; err != nil {
+		if err := m.detailErr[m.launchRef(iss.Number)]; err != nil {
 			return head, failStyle.Render("  details failed: " + err.Error())
 		}
 		return head, dimStyle.Render("  loading details…")

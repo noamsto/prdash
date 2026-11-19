@@ -207,9 +207,10 @@ func TestRunSectionVars(t *testing.T) {
 }
 
 func TestRunSectionIsNotNumbered(t *testing.T) {
-	var s Section = NewRunSection("", "recent")
-	if _, ok := s.(numbered); ok {
-		t.Error("RunSection must not implement numbered")
+	m := NewModel("/repo", "is:open", nil)
+	m.section = NewRunSection("", "recent")
+	if _, ok := m.refAt(0); ok {
+		t.Error("a RunSection row must have no PR ref")
 	}
 }
 

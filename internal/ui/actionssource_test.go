@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/noamsto/prdash/internal/action"
@@ -11,6 +12,8 @@ import (
 // the Actions rerun/job-log seam: it records calls instead of hitting
 // GitHub.
 type fakeActionsSource struct {
+	repos            []string // repo passed to each call, in order
+	branches         []string // branch passed to each ListRunsForBranch call
 	runs             []gh.WorkflowRun
 	rerunFailedCalls []int64
 	jobLogCalls      []struct {
@@ -20,16 +23,25 @@ type fakeActionsSource struct {
 	jobLogOut []byte
 }
 
-func (f *fakeActionsSource) ListRunsForBranch(string) ([]gh.WorkflowRun, error) { return f.runs, nil }
+func (f *fakeActionsSource) ListRunsForBranch(repo, branch string) ([]gh.WorkflowRun, error) {
+	f.repos = append(f.repos, repo)
+	f.branches = append(f.branches, branch)
+	return f.runs, nil
+}
 
-func (f *fakeActionsSource) RerunFailedJobs(runID int64) error {
+func (f *fakeActionsSource) RerunFailedJobs(repo string, runID int64) error {
+	f.repos = append(f.repos, repo)
 	f.rerunFailedCalls = append(f.rerunFailedCalls, runID)
 	return nil
 }
 
-func (f *fakeActionsSource) RerunJob(int64) error { return nil }
+func (f *fakeActionsSource) RerunJob(repo string, _ int64) error {
+	f.repos = append(f.repos, repo)
+	return nil
+}
 
-func (f *fakeActionsSource) JobLog(jobID int64, failedOnly bool) ([]byte, error) {
+func (f *fakeActionsSource) JobLog(repo string, jobID int64, failedOnly bool) ([]byte, error) {
+	f.repos = append(f.repos, repo)
 	f.jobLogCalls = append(f.jobLogCalls, struct {
 		jobID      int64
 		failedOnly bool
@@ -50,6 +62,9 @@ func TestRerunFailedRoutesToNativeSource(t *testing.T) {
 	}
 	if len(fs.rerunFailedCalls) != 1 || fs.rerunFailedCalls[0] != 200 {
 		t.Errorf("rerunFailedCalls = %v, want [200]", fs.rerunFailedCalls)
+	}
+	if !slices.Equal(fs.repos, []string{"owner/repo", "owner/repo"}) {
+		t.Errorf("repos = %v, want list and rerun both on owner/repo", fs.repos)
 	}
 }
 

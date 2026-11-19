@@ -46,7 +46,7 @@ func TestCleanupBranchRefusesUnmergedPR(t *testing.T) {
 	gitIn(t, dir, "branch", "feat/x")
 	p := gh.PR{Number: 61, State: "OPEN", HeadRefName: "feat/x"}
 
-	err := cleanupBranch(dir, p)
+	err := cleanupBranch(dir, dir, p)
 	if err == nil {
 		t.Fatal("cleaned up the branch of an open PR")
 	}
@@ -62,7 +62,7 @@ func TestCleanupBranchReportsMissingLocalBranch(t *testing.T) {
 	dir := cleanupRepo(t)
 	p := gh.PR{Number: 61, State: "MERGED", HeadRefName: "feat/gone"}
 
-	err := cleanupBranch(dir, p)
+	err := cleanupBranch(dir, dir, p)
 	if err == nil {
 		t.Fatal("reported success with no local branch to clean up")
 	}
@@ -78,7 +78,7 @@ func TestCleanupBranchRefusesItsOwnWorktree(t *testing.T) {
 	gitIn(t, dir, "worktree", "add", "-b", "feat/x", wt)
 	p := gh.PR{Number: 61, State: "MERGED", HeadRefName: "feat/x"}
 
-	err := cleanupBranch(wt, p) // prdash running *in* the worktree it would remove
+	err := cleanupBranch(wt, wt, p) // prdash running *in* the worktree it would remove
 	if err == nil {
 		t.Fatal("removed the worktree prdash is running in")
 	}
@@ -99,7 +99,7 @@ func TestCleanupBranchRemovesWorktreeThenBranch(t *testing.T) {
 	gitIn(t, dir, "worktree", "add", "-b", "feat/x", wt)
 	p := gh.PR{Number: 61, State: "MERGED", HeadRefName: "feat/x"}
 
-	if err := cleanupBranch(dir, p); err != nil {
+	if err := cleanupBranch(dir, dir, p); err != nil {
 		t.Fatalf("cleanupBranch: %v", err)
 	}
 	if _, ok := gh.WorktreeForBranch(dir, "feat/x"); ok {
@@ -120,7 +120,7 @@ func TestCleanupBranchKeepsBranchWhenWorktreeRemovalFails(t *testing.T) {
 	}
 	gitIn(t, wt, "add", "wip.txt")
 
-	if err := cleanupBranch(dir, p61()); err == nil {
+	if err := cleanupBranch(dir, dir, p61()); err == nil {
 		t.Fatal("cleaned up a worktree with uncommitted work")
 	}
 	if !gh.BranchExists(dir, "feat/x") {
@@ -137,7 +137,7 @@ func TestCleanupFailureSurfacesReasonInBadge(t *testing.T) {
 	m.width, m.height = 140, 40
 	m.actionStatus = &actionStat{run: "Cleaning up", ok: "Branch cleaned up", fail: "Cleanup failed"}
 
-	updated, _ := m.Update(cleanupDone(dir, p61(), m.actionStatus))
+	updated, _ := m.Update(cleanupDone(dir, dir, p61(), m.actionStatus))
 	m = updated.(Model)
 
 	if got := ansi.Strip(m.header()); !strings.Contains(got, "no local branch feat/x") {
@@ -149,7 +149,7 @@ func TestCleanupSuccessReportsNoFailure(t *testing.T) {
 	dir := cleanupRepo(t)
 	gitIn(t, dir, "branch", "feat/x")
 
-	msg, ok := cleanupDone(dir, p61(), nil).(actionDoneMsg)
+	msg, ok := cleanupDone(dir, dir, p61(), nil).(actionDoneMsg)
 	if !ok {
 		t.Fatalf("cleanupDone returned %T, want actionDoneMsg", msg)
 	}
