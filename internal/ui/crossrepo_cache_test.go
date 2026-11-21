@@ -74,7 +74,7 @@ func TestCrossRepoHydratesFromDiskCache(t *testing.T) {
 	cs := countLaunchSources(&m)
 	m.Hydrate()
 
-	want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "stop:c/d", "stop:a/b"}
+	want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "c/d#09", "c/d#08", "a/b#05"}
 	if got := boardLayout(m); !slices.Equal(got, want) {
 		t.Fatalf("hydrated layout = %v, want %v", got, want)
 	}
@@ -145,8 +145,8 @@ func TestCrossFetchIsOneSearch(t *testing.T) {
 	if _, ok := c.Get(prKey(m.repo, crossRepoFilter, crossRepoLimit)); !ok {
 		t.Error("handler did not write the cross cache key")
 	}
-	if got := boardLayout(m); !slices.Contains(got, "stop:c/d") || !slices.Contains(got, "stop:a/b") {
-		t.Errorf("layout = %v, want c/d and a/b stops", got)
+	if got := boardLayout(m); !slices.Contains(got, "c/d#09") || !slices.Contains(got, "a/b#05") {
+		t.Errorf("layout = %v, want the c/d and a/b rows", got)
 	}
 }
 
@@ -160,8 +160,8 @@ func TestCrossFetchFailureKeepsBoard(t *testing.T) {
 	u, _ := m.Update(good)
 	m = u.(Model)
 	before := boardLayout(m)
-	if !slices.Contains(before, "stop:c/d") {
-		t.Fatalf("setup: layout %v lacks the c/d stop", before)
+	if !slices.Contains(before, "c/d#09") {
+		t.Fatalf("setup: layout %v lacks the c/d rows", before)
 	}
 
 	countLaunchSources(&m)
@@ -181,8 +181,8 @@ func TestCrossFetchFailureKeepsBoard(t *testing.T) {
 	if m.err != nil {
 		t.Fatalf("m.err = %v, want nil", m.err)
 	}
-	if got := boardLayout(m); !slices.Contains(got, "stop:c/d") || !slices.Contains(got, "stop:a/b") {
-		t.Errorf("layout after failed cross fetch = %v, want the c/d and a/b stops kept", got)
+	if got := boardLayout(m); !slices.Contains(got, "c/d#09") || !slices.Contains(got, "a/b#05") {
+		t.Errorf("layout after failed cross fetch = %v, want the c/d and a/b rows kept", got)
 	}
 	if m.actionStatus == nil || !strings.Contains(m.actionStatus.fail, "Other repos: search down") {
 		t.Errorf("status = %+v, want an \"Other repos: search down\" hint", m.actionStatus)

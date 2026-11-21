@@ -17,7 +17,7 @@ func TestLaunchRepoCaseMismatch(t *testing.T) {
 	cross := []gh.PR{repoPR("a/b", 5, "zed", "2026-01-01")}
 	m.paintSections(review, nil, open, cross, "me", true, false)
 
-	want := []string{"Owner/Repo#01", "Owner/Repo#02", "Owner/Repo#03", "stop:a/b"}
+	want := []string{"Owner/Repo#01", "Owner/Repo#02", "Owner/Repo#03", "a/b#05"}
 	if got := boardLayout(m); !slices.Equal(got, want) {
 		t.Fatalf("layout = %v, want %v", got, want)
 	}

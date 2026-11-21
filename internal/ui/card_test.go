@@ -167,9 +167,10 @@ func TestCountStagesFromPreliminary(t *testing.T) {
 
 func TestRenderRepoHeader(t *testing.T) {
 	c := stageCounts{stageFailing: 1, stageRunning: 1, stageReady: 1}
-	if got, want := ansi.Strip(renderRepoHeader("owner/repo", c, 80, false)),
-		"owner/repo  3 · ✗1 "+ciRunningGlyph+"1 ✓1"; got != want {
-		t.Fatalf("wide header = %q, want %q", got, want)
+	head := "owner/repo  3 · ✗1 " + ciRunningGlyph + "1 ✓1"
+	if got := ansi.Strip(renderRepoHeader("owner/repo", c, 80, false)); !strings.HasPrefix(got, head) ||
+		lipgloss.Width(got) != 80 || !strings.HasSuffix(got, "─") {
+		t.Fatalf("wide header = %q, want %q plus a rule filling 80", got, head)
 	}
 	for w := 12; w <= 120; w++ {
 		out := renderRepoHeader("owner/repo", c, w, true)

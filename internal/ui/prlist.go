@@ -142,7 +142,7 @@ type Model struct {
 	previewMax        bool                 // z: preview takes full width, list hidden
 	hideDrafts        bool                 // D: exclude draft PRs from the board
 	byAuthor          bool                 // g: group the default board by author instead of Review/Mine/Others
-	repoFold          map[string]bool      // explicit per-repo fold state; an absent repo is folded iff not the launch repo
+	repoFold          map[string]bool      // explicit per-repo fold state; every group starts expanded
 	crossPRs          []gh.PR              // other repos' open PRs the default board groups below the launch repo's
 	showPicker        bool
 	pickerMode        string // "author" | "reviewer"
