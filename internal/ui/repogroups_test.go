@@ -69,29 +69,26 @@ func boardLayout(m Model) []string {
 func TestRepoGroupOrder(t *testing.T) {
 	_, _, cross := repoGroupFixture()
 
-	t.Run("launch group first, other repos folded by recency", func(t *testing.T) {
+	t.Run("launch group first, other repos expanded by recency", func(t *testing.T) {
 		m := repoGroupModel(t, cross)
 		ps := m.section.(*PRSection)
-		want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "stop:c/d", "stop:a/b"}
+		want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "c/d#09", "c/d#08", "a/b#05"}
 		if got := boardLayout(m); !slices.Equal(got, want) {
 			t.Fatalf("layout = %v, want %v", got, want)
 		}
 		if !ps.repoGrouped() {
 			t.Fatal("repoGrouped = false with cross-repo rows on the default board")
 		}
-		if ps.isFolded(launchRepo) {
-			t.Error("the launch repo's group is folded")
-		}
-		for _, r := range []string{"c/d", "a/b"} {
-			if !ps.isFolded(r) {
-				t.Errorf("%s is not folded by default", r)
+		for _, r := range []string{launchRepo, "c/d", "a/b"} {
+			if ps.isFolded(r) {
+				t.Errorf("%s is folded by default", r)
 			}
-			if i, ok := ps.stopIndex(r); !ok || !ps.isFoldStop(i) || ps.repoAt(i) != r {
-				t.Errorf("stopIndex(%s) = %d, %v", r, i, ok)
+			if _, ok := ps.stopIndex(r); ok {
+				t.Errorf("stopIndex(%s) found a stop in an expanded group", r)
 			}
 		}
-		if _, ok := ps.firstRowIndex("c/d"); ok {
-			t.Error("firstRowIndex on a folded group should report none")
+		if i, ok := ps.firstRowIndex("c/d"); !ok || i != 3 {
+			t.Errorf("firstRowIndex(c/d) = %d, %v, want 3", i, ok)
 		}
 		if i, ok := ps.firstRowIndex(launchRepo); !ok || i != 0 {
 			t.Errorf("firstRowIndex(launch) = %d, %v, want 0", i, ok)
@@ -102,21 +99,21 @@ func TestRepoGroupOrder(t *testing.T) {
 		}
 	})
 
-	t.Run("unfolding c/d lists its rows by recency before the a/b stop", func(t *testing.T) {
+	t.Run("folding c/d replaces its rows with one stop", func(t *testing.T) {
 		m := repoGroupModel(t, cross)
-		m.repoFold["c/d"] = false
+		m.repoFold["c/d"] = true
 		review, open, _ := repoGroupFixture()
 		m.paintSections(review, nil, open, cross, "me", true, false)
-		want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "c/d#09", "c/d#08", "stop:a/b"}
+		want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "stop:c/d", "a/b#05"}
 		if got := boardLayout(m); !slices.Equal(got, want) {
 			t.Fatalf("layout = %v, want %v", got, want)
 		}
 		ps := m.section.(*PRSection)
-		if i, ok := ps.firstRowIndex("c/d"); !ok || i != 3 {
-			t.Errorf("firstRowIndex(c/d) = %d, %v, want 3", i, ok)
+		if i, ok := ps.stopIndex("c/d"); !ok || !ps.isFoldStop(i) || ps.repoAt(i) != "c/d" {
+			t.Errorf("stopIndex(c/d) = %d, %v", i, ok)
 		}
-		if _, ok := ps.stopIndex("c/d"); ok {
-			t.Error("an unfolded group still has a stop")
+		if _, ok := ps.firstRowIndex("c/d"); ok {
+			t.Error("firstRowIndex on a folded group should report none")
 		}
 	})
 
@@ -129,8 +126,8 @@ func TestRepoGroupOrder(t *testing.T) {
 		m.paintSections(review, nil, open, cross, "me", true, false)
 		ps := m.section.(*PRSection)
 		layout := boardLayout(m)
-		if n := len(layout); n < 2 || layout[n-2] != "stop:c/d" || layout[n-1] != "stop:a/b" {
-			t.Fatalf("layout = %v, want the c/d and a/b stops last", layout)
+		if want := []string{"c/d#09", "c/d#08", "a/b#05"}; len(layout) < 3 || !slices.Equal(layout[len(layout)-3:], want) {
+			t.Fatalf("layout = %v, want the c/d then a/b rows last", layout)
 		}
 		labels := map[int]string{}
 		for i := range ps.Len() {
@@ -185,6 +182,8 @@ func TestFoldedGroupsCostNoFetch(t *testing.T) {
 	review, open, _ := repoGroupFixture()
 	m.paintSections(review, nil, open, cross, "me", true, false)
 	m.cursor = 0
+	m.repoFold["c/d"], m.repoFold["a/b"] = true, true
+	m.paintSections(review, nil, open, cross, "me", true, false)
 	ps := m.section.(*PRSection)
 
 	otherRepo := func(r gh.PRRef) bool { return r.Repo == "c/d" || r.Repo == "a/b" }
@@ -260,7 +259,6 @@ func TestFoldedGroupsCostNoFetch(t *testing.T) {
 func TestRepoGroupCategoryRange(t *testing.T) {
 	_, _, cross := repoGroupFixture()
 	m := repoGroupModel(t, cross)
-	m.repoFold["c/d"] = false
 	review, open, _ := repoGroupFixture()
 	m.paintSections(review, nil, open, cross, "me", true, false)
 	ps := m.section.(*PRSection)
@@ -342,10 +340,9 @@ func TestOtherRepoRowsRenderNewestFirstWhenArrivingOldestFirst(t *testing.T) {
 	_, _, cross := repoGroupFixture()
 	slices.SortFunc(cross, func(a, b gh.PR) int { return a.UpdatedAt.Compare(b.UpdatedAt) })
 	m := repoGroupModel(t, cross)
-	m.repoFold["c/d"] = false
 	review, open, _ := repoGroupFixture()
 	m.paintSections(review, nil, open, cross, "me", true, false)
-	want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "c/d#09", "c/d#08", "stop:a/b"}
+	want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03", "c/d#09", "c/d#08", "a/b#05"}
 	if got := boardLayout(m); !slices.Equal(got, want) {
 		t.Fatalf("layout = %v, want %v", got, want)
 	}

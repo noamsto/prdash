@@ -106,7 +106,8 @@ func countStages(prs []gh.PR, viewer string, parent func(gh.PR) int) stageCounts
 
 // renderRepoHeader lays out "repo  N · glyph count ..." within width, shedding
 // bucket counts right to left, then the separator, then the total, then
-// truncating the repo name.
+// truncating the repo name. A rule fills the rest of the line so each repo
+// group opens on a divider, unlike the shorter rule under a category header.
 func renderRepoHeader(repo string, c stageCounts, width int, focused bool) string {
 	if width <= 0 {
 		return ""
@@ -134,11 +135,21 @@ func renderRepoHeader(repo string, c stageCounts, width int, focused bool) strin
 			}
 		}
 	}
+	line = rulePad(line, width)
 	if !focused {
 		return line
 	}
 	line += strings.Repeat(" ", max(width-lipgloss.Width(line), 0))
 	return rowBgWrap(line, theme.RowBg)
+}
+
+// rulePad fills the remainder of a header line with a separator rule.
+func rulePad(line string, width int) string {
+	n := width - lipgloss.Width(line) - 1
+	if n < 1 {
+		return line
+	}
+	return line + " " + sepStyle.Render(strings.Repeat("─", n))
 }
 
 // runningRow is one in-flight check: glyph, label and elapsed time. Shared by the

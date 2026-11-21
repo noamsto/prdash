@@ -32,10 +32,16 @@ func foldCross() []gh.PR {
 	return cross
 }
 
+// foldModel is the repo-group board with both other-repo groups folded, so the
+// stop-row paths have a stop to act on. Groups are expanded on the real board.
 func foldModel(t *testing.T) Model {
 	t.Helper()
 	t.Setenv("PRDASH_ACTION_FILE", filepath.Join(t.TempDir(), "action"))
-	return repoGroupModel(t, foldCross())
+	m := repoGroupModel(t, foldCross())
+	m.repoFold["c/d"], m.repoFold["a/b"] = true, true
+	review, open, _ := repoGroupFixture()
+	m.paintSections(review, nil, open, foldCross(), "me", true, false)
+	return m
 }
 
 func press(m Model, keys ...string) Model {

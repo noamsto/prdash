@@ -77,10 +77,10 @@ type PRSection struct {
 
 	// Repo grouping partitions the categorized board by repo. A folded group is
 	// one synthetic stop in shown, encoded -(g+1) for groupRepos[g]; prs holds
-	// only real PRs.
+	// only real PRs. Groups are expanded unless the user folds one.
 	launch       string           // launch repo; its group leads and keeps the category/author sub-grouping
 	viewer       string           // splits Mine in groupStages
-	folded       map[string]bool  // the Model's explicit fold state; an absent repo is folded iff not launch
+	folded       map[string]bool  // the Model's explicit fold state; an absent repo is expanded
 	repoGrouping bool             // the shown set is partitioned by repo (see setShownOrdered)
 	groupRepos   []string         // repo per group, in display order
 	groupRows    map[string][]int // repo → prs indices its group shows, or would show unfolded
@@ -205,12 +205,9 @@ func (s *PRSection) repoAt(i int) string {
 // emptied board.
 func (s *PRSection) isFoldStop(i int) bool { return i >= 0 && i < len(s.shown) && s.shown[i] < 0 }
 
-func (s *PRSection) isFolded(repo string) bool {
-	if f, ok := s.folded[repo]; ok {
-		return f
-	}
-	return repo != s.launch
-}
+// isFolded reports the group's fold state. Only an explicit fold counts: the
+// board shows every group's rows so a repo never reduces to a count line.
+func (s *PRSection) isFolded(repo string) bool { return s.folded[repo] }
 
 // otherRepo reports whether row i sits in a repo group other than launch's.
 func (s *PRSection) otherRepo(i int) bool { return s.repoGrouping && s.repoAt(i) != s.launch }

@@ -107,12 +107,15 @@ pointer is over the visible preview pane.
 ## Repo groups
 
 The default PR board (state `open`, no typed qualifier) groups PRs by
-repository. The current repo's group comes first, expanded, with its Review
-requested / Mine / Others sections (or by author under `g`). Below it is one
-folded group per other repo where you have an open PR that `involves:@me`
+repository. The current repo's group comes first, with its Review
+requested / Mine / Others sections (or by author under `g`). Below it, one
+group per other repo where you have an open PR that `involves:@me`
 (author, reviewer, assignee, commenter, mentioned), newest activity first.
+Every group is expanded: its rows sit under its header, and a blank line
+separates the groups.
 
-A folded group is one line: `owner/repo  N · <stage counts>`. The stage glyphs:
+A group header is `owner/repo  N · <stage counts>` with a rule filling the
+rest of the line. The stage glyphs:
 
 | Glyph | Bucket |
 |-------|--------|
@@ -125,11 +128,11 @@ A folded group is one line: `owner/repo  N · <stage counts>`. The stage glyphs:
 | `•` | anything else |
 
 Counts come from the list rows alone. prdash fetches a PR's detail and checks
-only when you focus it or unfold its group.
+for the rows it shows, so folding a group takes its PRs out of that work.
 
-- `e` folds or unfolds the focused group; `enter` on a folded header unfolds it.
-  Other actions on a folded header do nothing. Folding drops that group's
-  selection.
+- `e` folds a group to its header line, or unfolds it again; `enter` on a
+  folded header unfolds it. Other actions on a folded header do nothing.
+  Folding drops that group's selection.
 - `/` matches PRs inside folded groups, and reveals the group when you clear or
   leave the filter on a match.
 - **Worktrees on another repo:** `enter`, `W` and `X` use the checkout at
