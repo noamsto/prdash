@@ -167,7 +167,7 @@ func TestCountStagesFromPreliminary(t *testing.T) {
 
 func TestRenderRepoHeader(t *testing.T) {
 	c := stageCounts{stageFailing: 1, stageRunning: 1, stageReady: 1}
-	head := "owner/repo  3 · ✗1 " + ciRunningGlyph + "1 ✓1"
+	head := "owner/repo  3 · ✗ 1 " + ciRunningGlyph + " 1 ✓ 1"
 	if got := ansi.Strip(renderRepoHeader("owner/repo", c, 80, false)); !strings.HasPrefix(got, head) ||
 		lipgloss.Width(got) != 80 || !strings.HasSuffix(got, "─") {
 		t.Fatalf("wide header = %q, want %q plus a rule filling 80", got, head)
@@ -186,6 +186,21 @@ func TestRenderRepoHeader(t *testing.T) {
 	}
 	if got := ansi.Strip(renderRepoHeader("owner/repo", c, 11, false)); got != "owner/repo" {
 		t.Fatalf("width 11 = %q, want %q", got, "owner/repo")
+	}
+}
+
+func TestRenderRepoHeaderSpacesGlyphFromCount(t *testing.T) {
+	c := stageCounts{stageFailing: 2, stageReady: 3}
+	fail := ansi.Strip(stageGlyph(stageFailing))
+	ready := ansi.Strip(stageGlyph(stageReady))
+	wide := ansi.Strip(renderRepoHeader("owner/repo", c, 80, false))
+	if !strings.HasPrefix(wide, "owner/repo  5 · "+fail+" 2 "+ready+" 3") {
+		t.Fatalf("wide header = %q, want glyph and count spaced", wide)
+	}
+	// 19 columns fit "repo  5 · ✗ 2" but not the second bucket, so it sheds right to left.
+	narrow := ansi.Strip(renderRepoHeader("owner/repo", c, 19, false))
+	if narrow != "owner/repo  5 · "+fail+" 2" {
+		t.Fatalf("width 19 = %q, want first bucket only", narrow)
 	}
 }
 
