@@ -115,7 +115,8 @@ Every group is expanded: its rows sit under its header, and a blank line
 separates the groups.
 
 A group header is `owner/repo  N · <stage counts>` with a rule filling the
-rest of the line. The stage glyphs:
+rest of the line. The `owner/` prefix stays dim so the repo names — the part
+that differs — read apart at a glance. The stage glyphs:
 
 | Glyph | Bucket |
 |-------|--------|

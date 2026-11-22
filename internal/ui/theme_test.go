@@ -64,6 +64,18 @@ func TestDraftColorStaysOutOfAuthorPalette(t *testing.T) {
 	}
 }
 
+// The repo name in a group header is a role color, so no author may render in it:
+// the board shows both at once, and one hue would then mean two things.
+func TestRepoColorStaysOutOfAuthorPalette(t *testing.T) {
+	for _, th := range []Theme{Mocha(), Latte()} {
+		for _, c := range th.Author {
+			if c == th.Repo {
+				t.Fatalf("repo name color %q must stay out of the author rotation", c)
+			}
+		}
+	}
+}
+
 func TestLightText(t *testing.T) {
 	if !lightText("000000") {
 		t.Error("black bg should use light text")

@@ -29,6 +29,7 @@ type Theme struct {
 	Pending string // yellow
 	Draft   string // peach — the [draft] tag; kept out of the author rotation
 	Section string // sapphire — section/group divider labels
+	Repo    string // lavender — repo name in a repo-group header (the desktop palette's lavender)
 	Base    string // base — dark text on filled status badges
 	Author  []string
 }
@@ -39,13 +40,12 @@ func Mocha() Theme {
 		Accent: "#94e2d5", Run: "#89b4fa", Issue: "#fab387", Header: "#cba6f7", Focus: "#89dceb", Select: "#f5c2e7",
 		Text: "#cdd6f4", Meta: "#a6adc8", Rule: "#585b70", RowBg: "#313244",
 		Pass: "#a6e3a1", Fail: "#f38ba8", Pending: "#f9e2af", Draft: "#fab387",
-		Section: "#74c7ec", Base: "#1e1e2e",
+		Section: "#74c7ec", Repo: "#b4befe", Base: "#1e1e2e",
 		// Distinct author hues — deliberately excludes teal (accent), mauve (header),
 		// sky (focus), pink (select), peach (draft/issue accent), sapphire (section
-		// labels), and the green/red/yellow state colors.
+		// labels), lavender (repo names), and the green/red/yellow state colors.
 		Author: []string{
-			"#b4befe", "#eba0ac", "#f5e0dc",
-			"#f2cdcd", "#89b4fa",
+			"#eba0ac", "#f5e0dc", "#f2cdcd", "#89b4fa",
 		},
 	}
 }
@@ -57,10 +57,9 @@ func Latte() Theme {
 		Accent: "#179299", Run: "#1e66f5", Issue: "#fe640b", Header: "#8839ef", Focus: "#0480b3", Select: "#b84a9e",
 		Text: "#4c4f69", Meta: "#6c6f85", Rule: "#acb0be", RowBg: "#ccd0da",
 		Pass: "#358023", Fail: "#d20f39", Pending: "#996b00", Draft: "#c24b00",
-		Section: "#1a7d8f", Base: "#eff1f5",
+		Section: "#1a7d8f", Repo: "#5a6ad4", Base: "#eff1f5",
 		Author: []string{
-			"#5a6ad4", "#c0364a", "#a85847",
-			"#b54545", "#1e66f5",
+			"#c0364a", "#a85847", "#b54545", "#1e66f5",
 		},
 	}
 }
@@ -92,6 +91,8 @@ var (
 	mergedStyle       lipgloss.Style // mauve — the merged-PR status mark
 	statusBarStyle    lipgloss.Style
 	sectionLabelStyle lipgloss.Style
+	repoNameStyle     lipgloss.Style // lavender, bold — the name half of a repo group header
+	repoOwnerStyle    lipgloss.Style // dim — the owner/ prefix, so repeated owners recede
 	draftTagStyle     lipgloss.Style
 	refreshStyle      lipgloss.Style // ambient revalidation; brighter than dim, unfilled
 	badgeBase         lipgloss.Style // dark base text on a bright role-color fill
@@ -122,6 +123,8 @@ func applyTheme(t Theme) {
 	mergedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Header))
 	statusBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	sectionLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Section)).Bold(true)
+	repoNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Repo)).Bold(true)
+	repoOwnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Meta))
 	draftTagStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Draft))
 	refreshStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Focus))
 	badgeBase = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Base)).Bold(true).Padding(0, 1)
