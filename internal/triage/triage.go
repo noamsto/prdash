@@ -46,7 +46,8 @@ type Card struct {
 	Running     []RunningCheck // in-progress checks
 	ActionKey   string         // key the user presses to act ("" if none)
 	ActionLabel string
-	AutoMerge   bool // GitHub auto-merge is armed on this PR (display-only)
+	Alt         string // secondary hint line shown dim under the action ("" if none)
+	AutoMerge   bool   // GitHub auto-merge is armed on this PR (display-only)
 }
 
 // Compute returns the highest-priority triage card for pr given its detail.
@@ -74,16 +75,16 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing []FailedCheck, pen
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
 			ActionKey: "M", ActionLabel: "Mark ready"}
 	case mss == "DIRTY" || d.Mergeable == "CONFLICTING":
-		return Card{Kind: KindConflict, Headline: "Conflicts with base",
-			ActionKey: "enter", ActionLabel: "worktree to resolve"}
+		return forDependabot(Card{Kind: KindConflict, Headline: "Conflicts with base",
+			ActionKey: "enter", ActionLabel: "worktree to resolve"}, pr)
 	case len(failing) > 0:
-		return checksFailingCard(failing, pending)
+		return forDependabot(checksFailingCard(failing, pending), pr)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: changesRequestedHeadline(d),
 			ActionKey: "enter", ActionLabel: "worktree to address"}
 	case mss == "BEHIND":
-		return Card{Kind: KindBehind, Headline: "Behind base",
-			ActionKey: "u", ActionLabel: "update branch"}
+		return forDependabot(Card{Kind: KindBehind, Headline: "Behind base",
+			ActionKey: "u", ActionLabel: "update branch"}, pr)
 	// BLOCKED is often caused by a missing review; when so, the next case shows
 	// the specific "awaiting review" card. Reserve this generic one for BLOCKED
 	// from other protections (e.g. unresolved threads).
@@ -124,7 +125,7 @@ func preliminaryCard(pr gh.PR, viewer string, parentNumber int) Card {
 		return Card{Kind: KindDraft, Headline: "Draft — not ready",
 			ActionKey: "M", ActionLabel: "Mark ready"}
 	case len(failing) > 0:
-		return checksFailingCard(failing, pending)
+		return forDependabot(checksFailingCard(failing, pending), pr)
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		return Card{Kind: KindChangesRequested, Headline: "Changes requested",
 			ActionKey: "enter", ActionLabel: "worktree to address"}
@@ -136,6 +137,24 @@ func preliminaryCard(pr gh.PR, viewer string, parentNumber int) Card {
 	default:
 		return Card{Kind: KindFallback, Headline: ""}
 	}
+}
+
+// forDependabot swaps the human fix on a Dependabot PR's card: a worktree
+// resolve or `u` merge commit would stop Dependabot maintaining the branch, so
+// conflict/behind suggest asking it to rebase, and failing checks keep `r` but
+// point at the rebase for a stale failure.
+func forDependabot(c Card, pr gh.PR) Card {
+	if !gh.IsDependabot(pr.Author.Login) {
+		return c
+	}
+	switch c.Kind {
+	case KindConflict, KindBehind:
+		c.ActionKey, c.ActionLabel = "d", "ask Dependabot to rebase"
+	case KindChecksFailing:
+		c.Alt = "d: ask Dependabot to rebase if the failure is stale"
+	default:
+	}
+	return c
 }
 
 // checksFailingCard builds the failing-checks card, folding any still-running

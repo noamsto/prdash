@@ -20,6 +20,7 @@ import (
 type fakeMutationSource struct {
 	mergeCalls, autoMergeCalls, disableAutoMergeCalls, markReadyCalls, convertToDraftCalls, updateBranchCalls, approveCalls []string
 	reviewCalls                                                                                                             []reviewCall
+	commentCalls                                                                                                            []commentCall
 	err                                                                                                                     error // returned by every call, to test failure propagation
 
 	stackMergeCalls  []stackMergeCall
@@ -38,6 +39,10 @@ type stackMergeCall struct {
 type stackPollCall struct {
 	ref  gh.PRRef
 	uuid string
+}
+
+type commentCall struct {
+	id, body string
 }
 
 type reviewCall struct {
@@ -70,6 +75,11 @@ func (f *fakeMutationSource) ConvertToDraft(prID string) error {
 
 func (f *fakeMutationSource) UpdateBranch(prID string) error {
 	f.updateBranchCalls = append(f.updateBranchCalls, prID)
+	return f.err
+}
+
+func (f *fakeMutationSource) AddComment(prID, body string) error {
+	f.commentCalls = append(f.commentCalls, commentCall{id: prID, body: body})
 	return f.err
 }
 
@@ -671,5 +681,82 @@ func TestRequestReviewsSkipsWhenNodeIDEmpty(t *testing.T) {
 	}
 	if len(fs.reviewCalls) != 0 {
 		t.Errorf("reviewCalls = %+v, want none — the empty-id guard must short-circuit before firing", fs.reviewCalls)
+	}
+}
+
+func authoredPR(number int, id, login string) gh.PR {
+	p := gh.PR{Number: number, ID: id, State: "OPEN"}
+	p.Author.Login = login
+	return p
+}
+
+func TestDependabotRebaseCommentsOnEachSelectedDependabotPR(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{
+		authoredPR(1, "n1", "app/dependabot"),
+		authoredPR(2, "n2", "noamsto"),
+		authoredPR(3, "n3", "app/dependabot"),
+	})
+	for i := range m.section.Len() {
+		if n := m.section.VarsAt(i).Number; n == 1 || n == 3 {
+			m.sel.toggle(i)
+		}
+	}
+	cmd := m.runBulk(action.DefaultPRActions()["d"])
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c != nil {
+				c()
+			}
+		}
+	}
+	want := []commentCall{{"n1", "@dependabot rebase"}, {"n3", "@dependabot rebase"}}
+	slices.SortFunc(fs.commentCalls, func(a, b commentCall) int { return strings.Compare(a.id, b.id) })
+	if !slices.Equal(fs.commentCalls, want) {
+		t.Errorf("commentCalls = %v, want %v", fs.commentCalls, want)
+	}
+}
+
+func TestDependabotRebaseSkipsHumanPR(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{authoredPR(2, "n2", "noamsto")})
+	msg := driveBulk(t, m.runBulk(action.DefaultPRActions()["d"]))
+	if done, ok := msg.(actionDoneMsg); !ok || done.err == nil {
+		t.Fatalf("msg = %+v, want a failed actionDoneMsg", msg)
+	}
+	if len(fs.commentCalls) != 0 {
+		t.Errorf("commentCalls = %v, want none", fs.commentCalls)
+	}
+}
+
+func TestDependabotRecreateCommentBody(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{authoredPR(1, "n1", "app/dependabot")})
+	driveBulk(t, m.runBulk(action.DefaultPRActions()["x"]))
+	want := []commentCall{{"n1", "@dependabot recreate"}}
+	if !slices.Equal(fs.commentCalls, want) {
+		t.Errorf("commentCalls = %v, want %v", fs.commentCalls, want)
+	}
+}
+
+func TestUpdateBranchOnDependabotPRPromptsFirst(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{authoredPR(1, "n1", "app/dependabot")})
+	m.startBulk(action.DefaultPRActions()["u"])
+	if m.pending == nil {
+		t.Fatal("u on a Dependabot PR must set pending, got a direct run")
+	}
+	if len(fs.updateBranchCalls) != 0 {
+		t.Errorf("updateBranchCalls = %v, want none before confirm", fs.updateBranchCalls)
+	}
+	if q := m.confirmQuestion(); !strings.Contains(q, "Dependabot") {
+		t.Errorf("confirmQuestion = %q, want a Dependabot warning", q)
+	}
+}
+
+func TestUpdateBranchOnHumanPRRunsDirectly(t *testing.T) {
+	m, fs := mutationModel(t, []gh.PR{authoredPR(1, "n1", "noamsto")})
+	driveBulk(t, m.startBulk(action.DefaultPRActions()["u"]))
+	if m.pending != nil {
+		t.Error("u on a human PR must not prompt")
+	}
+	if len(fs.updateBranchCalls) != 1 {
+		t.Errorf("updateBranchCalls = %v, want one direct call", fs.updateBranchCalls)
 	}
 }

@@ -403,13 +403,13 @@ func (m *Model) singleNativeCmd(a action.Action, v action.Vars) (tea.Cmd, bool) 
 func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bool) {
 	if p.ID == "" {
 		switch native {
-		case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
+		case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve", "dependabot-rebase", "dependabot-recreate":
 			err := fmt.Errorf("PR #%d node id unavailable (stale cache) — refresh and retry", p.Number)
 			return func() error { return err }, true
 		}
 	}
 	switch native {
-	case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve":
+	case "merge-squash", "auto-merge-squash", "disable-auto-merge", "mark-ready", "convert-to-draft", "update-branch", "approve", "dependabot-rebase", "dependabot-recreate":
 		if err := m.mutable(p); err != nil {
 			return func() error { return err }, true
 		}
@@ -476,6 +476,20 @@ func (m *Model) nativeMutationFn(native string, p gh.PR) (fn func() error, ok bo
 		return func() error { return src.ConvertToDraft(p.ID) }, true
 	case "update-branch":
 		return func() error { return src.UpdateBranch(p.ID) }, true
+	case "dependabot-rebase", "dependabot-recreate":
+		if p.State != "OPEN" {
+			err := fmt.Errorf("PR #%d is not open", p.Number)
+			return func() error { return err }, true
+		}
+		if !gh.IsDependabot(p.Author.Login) {
+			err := fmt.Errorf("PR #%d is not a Dependabot PR", p.Number)
+			return func() error { return err }, true
+		}
+		body := "@dependabot rebase"
+		if native == "dependabot-recreate" {
+			body = "@dependabot recreate"
+		}
+		return func() error { return src.AddComment(p.ID, body) }, true
 	case "approve":
 		if p.State != "OPEN" {
 			err := fmt.Errorf("PR #%d is not open", p.Number)
@@ -678,7 +692,7 @@ func (m *Model) startBulk(a action.Action) tea.Cmd {
 	}
 
 	overThreshold := a.ExitsTUI && len(m.selectedOrCursor()) > bulkWarnThreshold
-	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() {
+	if a.Confirm || overThreshold || m.needsOthersConfirm(a) || m.pendingCascade.cascades() || m.needsDependabotConfirm(a) {
 		m.pending = &a
 		m.pendingTargets = m.targetRefs()
 		m.pendingStackMerge = nil
@@ -709,6 +723,20 @@ func (m *Model) needsOthersConfirm(a action.Action) bool {
 		return true
 	}
 	return m.section.VarsAt(i).Author != m.viewerLogin
+}
+
+// needsDependabotConfirm reports whether update-branch targets a Dependabot PR:
+// the merge commit it pushes makes Dependabot stop maintaining the branch.
+func (m *Model) needsDependabotConfirm(a action.Action) bool {
+	if a.Command.Native != "update-branch" {
+		return false
+	}
+	for _, i := range m.selectedOrCursor() {
+		if i >= 0 && i < m.section.Len() && gh.IsDependabot(m.section.VarsAt(i).Author) {
+			return true
+		}
+	}
+	return false
 }
 
 // runBulk applies a per-selected action to each selected row (or the cursor row

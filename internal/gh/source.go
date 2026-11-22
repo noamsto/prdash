@@ -88,6 +88,7 @@ type MutationSource interface {
 	MarkReady(prID string) error
 	ConvertToDraft(prID string) error
 	UpdateBranch(prID string) error
+	AddComment(prID, body string) error
 	ApprovePR(prID string) error
 	RequestReviews(prID string, logins []string) error
 	MergeStack(pr PRRef, mergeQueue bool) (StackMergeResult, error)

@@ -3648,14 +3648,31 @@ func (m Model) confirmQuestion() string {
 	if len(targets) == 0 {
 		return fmt.Sprintf("%s?", a.Label)
 	}
+	dependabot := a.Command.Native == "update-branch" && m.pendingDependabot(targets)
 	if len(targets) > 1 {
+		if dependabot {
+			return fmt.Sprintf("%s for %d PRs (includes Dependabot — breaks its rebasing)?", a.Label, len(targets))
+		}
 		return fmt.Sprintf("%s for %d PRs?", a.Label, len(targets))
 	}
 	r := targets[0]
+	if dependabot {
+		return fmt.Sprintf("%s #%d (Dependabot — breaks its rebasing; d rebases instead)?", a.Label, r.Number)
+	}
 	if author, ok := m.authorOfRef(r); ok && a.ConfirmOthers && author != "" && author != m.viewerLogin {
 		return fmt.Sprintf("%s #%d by %s?", a.Label, r.Number, author)
 	}
 	return fmt.Sprintf("%s #%d?", a.Label, r.Number)
+}
+
+// pendingDependabot reports whether any pending target is a Dependabot PR.
+func (m Model) pendingDependabot(targets []gh.PRRef) bool {
+	for _, r := range targets {
+		if author, ok := m.authorOfRef(r); ok && gh.IsDependabot(author) {
+			return true
+		}
+	}
+	return false
 }
 
 // authorOfRef returns the author of the shown row r; ok is false once that row
@@ -4046,7 +4063,7 @@ func (m Model) keyPanes() []legendGroup {
 	}
 	if m.mode == "pr" {
 		actions = append(actions, keyHint{"O", "issue", nil}, keyHint{"m", "merge", nil}, keyHint{"S", "stack merge", nil}, keyHint{"r", "rerun", nil},
-			keyHint{"u", "update", nil}, keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil},
+			keyHint{"u", "update", nil}, keyHint{"d", "dependabot rebase", nil}, keyHint{"x", "dependabot recreate", nil}, keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil},
 			keyHint{"X", "cleanup branch", nil})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
@@ -4196,7 +4213,7 @@ func renderLegendPanes(title string, left, right []legendGroup, example string, 
 
 // actionOrder is the display order for the docked panel's actions section, so
 // it doesn't jump around with Go's random map iteration.
-var actionOrder = []string{"enter", "m", "S", "A", "r", "u", "M", "L", "W", "y", "Y", "b", "o", "O", "X"}
+var actionOrder = []string{"enter", "m", "S", "A", "r", "u", "d", "x", "M", "L", "W", "y", "Y", "b", "o", "O", "X"}
 
 type keyHint struct {
 	key, label string
