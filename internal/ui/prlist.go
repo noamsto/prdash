@@ -1805,6 +1805,16 @@ func runningCheckRows(ps *PRSection, held map[gh.PRRef]string) []int {
 	return out
 }
 
+// runningRefs is runningCheckRows keyed by PR identity, for comparing before
+// and after a rollup update that may reorder nothing but can change what runs.
+func runningRefs(ps *PRSection, held map[gh.PRRef]string) map[gh.PRRef]struct{} {
+	out := map[gh.PRRef]struct{}{}
+	for _, i := range runningCheckRows(ps, held) {
+		out[ps.refAt(i)] = struct{}{}
+	}
+	return out
+}
+
 // focusedHasTimedPending reports whether the focused PR shows an elapsed time.
 func (m Model) focusedHasTimedPending() bool {
 	ps, ok := m.section.(*PRSection)
@@ -2573,14 +2583,26 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		before := runningRefs(ps, m.held)
 		ps.ApplyChecks(msg.checks)
+		after := runningRefs(ps, m.held)
+		var settled []gh.PRRef
+		for r := range before {
+			if _, still := after[r]; !still {
+				settled = append(settled, r)
+				delete(m.fresh, r)
+			}
+		}
 		m.repaintActive()
 		// No reschedule: the tick armed alongside this fetch is still in flight, and
 		// it retires the loop itself once nothing is pending.
+		// The cached detail's merge state was read while CI ran; the poll stops once
+		// nothing is pending, so nothing else would refresh it.
+		refetch := m.batchDetailCmd(settled)
 		if msg.err != nil {
-			return m, m.hint("Checks: " + msg.err.Error())
+			return m, tea.Batch(m.hint("Checks: "+msg.err.Error()), refetch)
 		}
-		return m, nil
+		return m, refetch
 	case themePollMsg:
 		// This is the only tick that runs for the whole session, so the header's
 		// budget countdown rides it rather than arming a second one-second loop.

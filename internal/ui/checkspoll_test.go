@@ -1,11 +1,15 @@
 package ui
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/triage"
 )
 
 type fakeChecksSource struct {
@@ -311,5 +315,114 @@ func TestThemePollUnaffectedByIdlePause(t *testing.T) {
 	_, cmd := m.Update(themePollMsg{lastMod: m.themeModTime})
 	if cmd == nil {
 		t.Fatal("theme watch tick must keep rearming regardless of checks-poll idle state")
+	}
+}
+
+// settleModel has #1..#3 running with a detail cached while CI ran (UNSTABLE),
+// the state the poll leaves behind once the rollups turn green.
+func settleModel(t *testing.T, fd *fakeDetailSource) Model {
+	t.Helper()
+	m := pollModel(t, &fakeChecksSource{}, []gh.PR{
+		{Number: 1, StatusCheckRollup: pending()},
+		{Number: 2, StatusCheckRollup: pending()},
+		{Number: 3, StatusCheckRollup: pending()},
+	})
+	m.SetDetailSource(fd)
+	m.width, m.height = 100, 30
+	for n := 1; n <= 3; n++ {
+		m.detail[m.launchRef(n)] = gh.PRDetail{MergeStateStatus: "UNSTABLE"}
+		m.fresh[m.launchRef(n)] = true
+	}
+	return m
+}
+
+// batchedMsgs flattens a possibly batched cmd into the messages it yields.
+func batchedMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	b, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var out []tea.Msg
+	for _, c := range b {
+		out = append(out, batchedMsgs(c)...)
+	}
+	return out
+}
+
+func TestSettledChecksRefetchDetailOncePerBeat(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{
+		1: {MergeStateStatus: "CLEAN"}, 2: {MergeStateStatus: "CLEAN"},
+	}}
+	m := settleModel(t, fd)
+
+	u, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{
+		m.launchRef(1): passing(), m.launchRef(2): passing(), m.launchRef(3): pending(),
+	}})
+	m = u.(Model)
+	for _, n := range []int{1, 2} {
+		if m.fresh[m.launchRef(n)] {
+			t.Errorf("#%d settled but its detail is still marked fresh", n)
+		}
+	}
+	if !m.fresh[m.launchRef(3)] {
+		t.Error("#3 is still running; its detail must stay fresh")
+	}
+
+	var details []tea.Msg
+	for _, msg := range batchedMsgs(cmd) {
+		if _, ok := msg.(detailsBatchMsg); ok {
+			details = append(details, msg)
+		}
+	}
+	if len(fd.got) != 1 {
+		t.Fatalf("want exactly one FetchDetails call for the beat, got %d: %v", len(fd.got), fd.got)
+	}
+	if got := fd.got[0]; len(got) != 2 || !slices.Contains(got, m.launchRef(1)) || !slices.Contains(got, m.launchRef(2)) {
+		t.Fatalf("FetchDetails refs = %v, want #1 and #2", got)
+	}
+
+	for _, msg := range details {
+		u, _ = m.Update(msg)
+		m = u.(Model)
+	}
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	card, ok := m.cursorCard()
+	if !ok {
+		t.Fatal("cursor PR has no cached detail")
+	}
+	if card.Kind == triage.KindChecksRunning {
+		t.Errorf("card still claims %q after checks settled and detail refreshed", card.Headline)
+	}
+}
+
+func TestNoSettleNoDetailFetch(t *testing.T) {
+	fd := &fakeDetailSource{}
+	m := settleModel(t, fd)
+	_, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{m.launchRef(1): pending()}})
+	batchedMsgs(cmd)
+	if len(fd.got) != 0 {
+		t.Errorf("no PR settled, yet FetchDetails ran: %v", fd.got)
+	}
+}
+
+func TestExpandedOverviewRefreshesOnDetailsBatch(t *testing.T) {
+	m := settleModel(t, &fakeDetailSource{})
+	ps := m.section.(*PRSection)
+	ps.ApplyChecks(map[gh.PRRef][]gh.Check{m.launchRef(1): passing(), m.launchRef(2): passing(), m.launchRef(3): passing()})
+	m.cursor = rowIndexOf(t, ps, 1)
+	m.expanded = true
+	m.expandedTab = tabOverview
+	m.reflowExpanded()
+
+	u, _ := m.Update(detailsBatchMsg{details: map[gh.PRRef]gh.PRDetail{
+		m.launchRef(1): {MergeStateStatus: "CLEAN"},
+	}})
+	got := ansi.Strip(u.(Model).vp.GetContent())
+	if !strings.Contains(got, "Ready to merge") {
+		t.Errorf("expanded Overview did not re-render with the fresh detail:\n%s", got)
 	}
 }
