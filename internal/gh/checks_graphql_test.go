@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildChecksQueryAliasesEachNumber(t *testing.T) {
-	q := buildChecksQuery([]int{7, 12})
+	q, _ := buildBatchQuery([]repoGroup{{Repo: "a/x", Numbers: []int{7, 12}}}, checksSpec)
 	for _, want := range []string{"pr7:pullRequest(number:7)", "pr12:pullRequest(number:12)"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q:\n%s", want, q)
@@ -25,18 +25,19 @@ func TestBuildChecksQueryAliasesEachNumber(t *testing.T) {
 }
 
 func TestParseChecksMapsBothContextKinds(t *testing.T) {
-	body := `{"data":{"repository":{
+	body := `{"data":{"r0":{
 		"pr1":{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
 			{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","detailsUrl":"d",
 			 "startedAt":"2026-07-30T09:00:00Z","completedAt":"2026-07-30T09:01:20Z","checkSuite":{"workflowRun":{"workflow":{"name":"CI"}}}},
 			{"__typename":"StatusContext","context":"legacy","state":"PENDING","targetUrl":"t"}
 		]}}}}]}}
 	}}}`
-	got, err := parseChecks([]byte(body), []int{1})
+	s := serveBody(t, body)
+	got, err := s.FetchChecks([]PRRef{{"a/x", 1}})
 	if err != nil {
 		t.Fatalf("parseChecks: %v", err)
 	}
-	checks := got[1]
+	checks := got[PRRef{"a/x", 1}]
 	if len(checks) != 2 {
 		t.Fatalf("want 2 checks, got %d: %+v", len(checks), checks)
 	}
@@ -58,12 +59,13 @@ func TestParseChecksMapsBothContextKinds(t *testing.T) {
 // the poll has to be able to paint, and a missing key would leave the stale
 // pending glyph on the row forever.
 func TestParseChecksNullRollupYieldsPresentEmptyEntry(t *testing.T) {
-	body := `{"data":{"repository":{"pr4":{"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}}`
-	got, err := parseChecks([]byte(body), []int{4})
+	body := `{"data":{"r0":{"pr4":{"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}}`
+	s := serveBody(t, body)
+	got, err := s.FetchChecks([]PRRef{{"a/x", 4}})
 	if err != nil {
 		t.Fatalf("parseChecks: %v", err)
 	}
-	c, ok := got[4]
+	c, ok := got[PRRef{"a/x", 4}]
 	if !ok {
 		t.Fatal("PR 4 must be present in the result map")
 	}
@@ -73,7 +75,8 @@ func TestParseChecksNullRollupYieldsPresentEmptyEntry(t *testing.T) {
 }
 
 func TestParseChecksSurfacesGraphQLErrors(t *testing.T) {
-	_, err := parseChecks([]byte(`{"errors":[{"message":"boom"}]}`), []int{1})
+	s := serveBody(t, `{"errors":[{"message":"boom"}]}`)
+	_, err := s.FetchChecks([]PRRef{{"a/x", 1}})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("want the GraphQL error surfaced, got %v", err)
 	}

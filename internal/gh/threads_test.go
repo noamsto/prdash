@@ -14,11 +14,11 @@ func threadsFixture(t *testing.T) []ReviewThread {
 	if err != nil {
 		t.Fatal(err)
 	}
-	details, _, err := parseDetails(b, []int{1})
+	details, _, err := serveBody(t, string(b)).FetchDetails(refsOf("a/x", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return details[1].ReviewThreads
+	return details[PRRef{"a/x", 1}].ReviewThreads
 }
 
 func TestDetailParsesReviewThreads(t *testing.T) {
@@ -62,7 +62,7 @@ func TestDetailParsesThreadDiffHunk(t *testing.T) {
 // One request, not two: the detail selection must carry the threads fields, or the
 // preview goes back to costing a second round trip per row.
 func TestDetailQueryIncludesReviewThreads(t *testing.T) {
-	q := buildDetailQuery([]int{3})
+	q, _ := buildBatchQuery([]repoGroup{{Repo: "a/x", Numbers: []int{3}}}, detailSpec)
 	for _, want := range []string{"reviewThreads(", "diffHunk", "originalLine"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("detail query missing %q:\n%s", want, q)

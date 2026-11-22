@@ -150,15 +150,15 @@ func TestParseSanitizesChecks(t *testing.T) {
 	for _, row := range payloadRows {
 		t.Run(row.name, func(t *testing.T) {
 			v := jstr(t, row.value)
-			body := `{"data":{"repository":{"pr1":{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[` +
+			body := `{"data":{"r0":{"pr1":{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[` +
 				`{"__typename":"CheckRun","name":` + v + `},{"__typename":"StatusContext","context":` + v + `}]}}}}]}}}}}`
-			got, err := parseChecks([]byte(body), []int{1})
+			got, err := serveBody(t, body).FetchChecks(refsOf("a/x", 1))
 			if err != nil {
 				t.Fatal(err)
 			}
 			row.check(t, []parsedField{
-				{"check.name", got[1][0].Name, false},
-				{"check.context", got[1][1].Context, false},
+				{"check.name", got[PRRef{"a/x", 1}][0].Name, false},
+				{"check.context", got[PRRef{"a/x", 1}][1].Context, false},
 			})
 		})
 	}
@@ -168,18 +168,18 @@ func TestParseSanitizesDetails(t *testing.T) {
 	for _, row := range payloadRows {
 		t.Run(row.name, func(t *testing.T) {
 			v := jstr(t, row.value)
-			body := `{"data":{"repository":{"pr1":{` +
+			body := `{"data":{"r0":{"pr1":{` +
 				`"comments":{"nodes":[{"author":{"login":` + v + `},"body":` + v + `}]},` +
 				`"reviews":{"nodes":[{"author":{"login":` + v + `},"body":` + v + `}]},` +
 				`"reviewRequests":{"nodes":[{"requestedReviewer":{"login":` + v + `}}]},` +
 				`"files":{"nodes":[{"path":` + v + `}]},` +
 				`"reviewThreads":{"nodes":[{"path":` + v + `,"comments":{"nodes":[{"author":{"login":` + v + `},"body":` + v + `,"diffHunk":` + v + `}]}}]}` +
 				`}}}}`
-			details, raws, err := parseDetails([]byte(body), []int{1})
+			details, raws, err := serveBody(t, body).FetchDetails(refsOf("a/x", 1))
 			if err != nil {
 				t.Fatal(err)
 			}
-			d := details[1]
+			d := details[PRRef{"a/x", 1}]
 			fields := func(d PRDetail) []parsedField {
 				th := d.ReviewThreads[0]
 				return []parsedField{
@@ -198,7 +198,7 @@ func TestParseSanitizesDetails(t *testing.T) {
 			row.check(t, fields(d))
 
 			var cached PRDetail
-			if err := json.Unmarshal(raws[1], &cached); err != nil {
+			if err := json.Unmarshal(raws[PRRef{"a/x", 1}], &cached); err != nil {
 				t.Fatal(err)
 			}
 			row.check(t, fields(cached))
@@ -336,11 +336,11 @@ func TestParseSanitizesStates(t *testing.T) {
 	for _, row := range payloadRows {
 		t.Run(row.name, func(t *testing.T) {
 			v := jstr(t, row.value)
-			got, err := parseStates([]byte(`{"data":{"repository":{"n1":{"state":`+v+`}}}}`), []int{1})
+			got, err := serveBody(t, `{"data":{"r0":{"n1":{"state":`+v+`}}}}`).FetchStates(refsOf("a/x", 1))
 			if err != nil {
 				t.Fatal(err)
 			}
-			row.check(t, []parsedField{{"state", got[1].State, false}})
+			row.check(t, []parsedField{{"state", got[PRRef{"a/x", 1}].State, false}})
 		})
 	}
 }
@@ -350,7 +350,7 @@ func TestErrorBodySanitized(t *testing.T) {
 
 	t.Run("parseDetails errors", func(t *testing.T) {
 		body := `{"errors":[{"message":` + jstr(t, evil) + `}]}`
-		_, _, err := parseDetails([]byte(body), []int{1})
+		_, _, err := serveBody(t, body).FetchDetails(refsOf("a/x", 1))
 		if err == nil {
 			t.Fatal("want error")
 		}

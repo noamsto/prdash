@@ -42,7 +42,7 @@ type ItemState struct {
 }
 
 // StateSource looks up the current state of issues/PRs in one aliased request
-// per repo, for the held-row lookup: a departed row's real state without a full
+// per chunk (all repos together), for the held-row lookup: a departed row's real state without a full
 // list refetch. Partial results follow DetailSource.
 type StateSource interface {
 	FetchStates(refs []PRRef) (map[PRRef]ItemState, error)
