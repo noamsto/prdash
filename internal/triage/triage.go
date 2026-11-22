@@ -97,7 +97,7 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing []FailedCheck, pen
 	case mss == "CLEAN" || mss == "HAS_HOOKS":
 		return Card{Kind: KindReady, Headline: "Ready to merge",
 			ActionKey: "m", ActionLabel: "merge (squash)"}
-	// UNSTABLE with nothing pending is a merge state read while CI still ran.
+	// UNSTABLE with nothing pending is usually a merge state read while CI ran.
 	case mss == "UNKNOWN" || mss == "" || mss == "UNSTABLE":
 		return Card{Kind: KindPending, Headline: "Merge state pending…"}
 	default:

@@ -394,8 +394,47 @@ func TestSettledChecksRefetchDetailOncePerBeat(t *testing.T) {
 	if !ok {
 		t.Fatal("cursor PR has no cached detail")
 	}
-	if card.Kind == triage.KindChecksRunning {
-		t.Errorf("card still claims %q after checks settled and detail refreshed", card.Headline)
+	if card.Kind != triage.KindReady {
+		t.Errorf("card = %v %q after checks settled and detail refreshed, want KindReady", card.Kind, card.Headline)
+	}
+}
+
+func TestUnresolvedSettleRefetchStaysUnfreshAndRetries(t *testing.T) {
+	fd := &sequencedDetailSource{readings: []gh.PRDetail{
+		{MergeStateStatus: "UNSTABLE"}, {MergeStateStatus: "CLEAN"},
+	}}
+	m := settleModel(t, &fakeDetailSource{})
+	m.SetDetailSource(fd)
+	ref := m.launchRef(1)
+
+	u, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{
+		ref: passing(), m.launchRef(2): pending(), m.launchRef(3): pending(),
+	}})
+	m = u.(Model)
+	for _, msg := range batchedMsgs(cmd) {
+		u, _ = m.Update(msg)
+		m = u.(Model)
+	}
+	if m.fresh[ref] {
+		t.Fatal("unresolved UNSTABLE refetch was marked fresh; it would never be retried")
+	}
+
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	retry := m.detailCmdForCursor()
+	if retry == nil {
+		t.Fatal("cursor visit did not refetch the unresolved detail")
+	}
+	u, _ = m.Update(retry())
+	m = u.(Model)
+	if fd.calls != 2 {
+		t.Fatalf("FetchDetails calls = %d, want 2", fd.calls)
+	}
+	if !m.fresh[ref] {
+		t.Error("resolved CLEAN detail should be fresh")
+	}
+	card, ok := m.cursorCard()
+	if !ok || card.Kind != triage.KindReady {
+		t.Errorf("card = %v, want KindReady", card.Kind)
 	}
 }
 

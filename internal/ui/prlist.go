@@ -1805,6 +1805,34 @@ func runningCheckRows(ps *PRSection, held map[gh.PRRef]string) []int {
 	return out
 }
 
+// mergeStateUnresolved reports a merge state that cannot be trusted yet:
+// unknown, or UNSTABLE on a row with nothing pending (UNSTABLE while CI ran).
+func (m Model) mergeStateUnresolved(r gh.PRRef, d gh.PRDetail) bool {
+	switch d.MergeStateStatus {
+	case "UNKNOWN", "":
+		return true
+	case "UNSTABLE":
+	default:
+		return false
+	}
+	ps, ok := m.section.(*PRSection)
+	if !ok {
+		return false
+	}
+	for i := 0; i < ps.Len(); i++ {
+		p := ps.prAt(i)
+		if p.Ref() != r {
+			continue
+		}
+		for _, c := range p.Checks() {
+			if c.Result() == "pending" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // runningRefs is runningCheckRows keyed by PR identity, for comparing before
 // and after a rollup update that may reorder nothing but can change what runs.
 func runningRefs(ps *PRSection, held map[gh.PRRef]string) map[gh.PRRef]struct{} {
@@ -2500,6 +2528,11 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for r, d := range msg.details {
 			m.detail[r] = d
 			delete(m.detailErr, r)
+			// GitHub computes mergeability lazily; an unresolved read stays
+			// unfresh (in memory and on disk) so the next cursor visit retries.
+			if m.mergeStateUnresolved(r, d) {
+				continue
+			}
 			m.fresh[r] = true
 			if m.cache != nil {
 				if raw := msg.raws[r]; raw != nil {
