@@ -223,16 +223,25 @@ func TestFullCrossPageMarksHeldPageFull(t *testing.T) {
 // involves:@me scope is not hydrated into the narrower authored/owned board.
 func TestCrossRepoIgnoresInvolvesCache(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
-	_, _, cross := repoGroupFixture()
+	review, open, cross := repoGroupFixture()
 
 	c := cache.Open(path)
-	c.Set(prKey(launchRepo, "is:open involves:@me archived:false sort:updated-desc", crossRepoLimit), mustJSON(t, cross))
+	seed := NewModel("/repo", "is:open author:@me", c)
+	seed.SetRepo(launchRepo)
+	c.Set(prKey(seed.repo, searchFor("pr", seed.state, reviewBody), defaultLimit), mustJSON(t, review))
+	c.Set(prKey(seed.repo, searchFor("pr", seed.state, reviewedBody), defaultLimit), json.RawMessage("[]"))
+	c.Set(prKey(seed.repo, "is:open", openListLimit), mustJSON(t, open))
+	c.Set(prKey(seed.repo, "is:open involves:@me archived:false sort:updated-desc", crossRepoLimit), mustJSON(t, cross))
+	c.Set(viewerKey(), json.RawMessage(`"me"`))
 	c.Flush()
 
 	m := NewModel("/repo", "is:open author:@me", cache.Open(path))
 	m.SetRepo(launchRepo)
+	m.width, m.height = 100, 40
+	m.SetCrossRepoSource(&fakeCrossSource{})
 	m.Hydrate()
-	if len(m.crossPRs) != 0 {
-		t.Fatalf("hydrated %d cross-repo PRs from the old involves:@me entry, want 0", len(m.crossPRs))
+	want := []string{"owner/repo#01", "owner/repo#02", "owner/repo#03"}
+	if got := boardLayout(m); !slices.Equal(got, want) {
+		t.Fatalf("layout = %v, want launch-repo rows only %v", got, want)
 	}
 }

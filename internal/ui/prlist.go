@@ -4472,8 +4472,7 @@ const openListLimit = 100
 // crossRepoFilter and crossRepoLimit are the default board's cross-repo
 // search (PRs you authored plus PRs in repos you own; the source adds the
 // author:/user: scopes); the fetch, cache write, hydrate and launch gate all
-// key on them. Dropping involves:@me changed the string, so entries cached
-// under the old scope are never hydrated.
+// key on them.
 const (
 	crossRepoFilter = "is:open archived:false sort:updated-desc"
 	crossRepoLimit  = 100
