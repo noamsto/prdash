@@ -4063,7 +4063,7 @@ func (m Model) keyPanes() []legendGroup {
 	}
 	if m.mode == "pr" {
 		actions = append(actions, keyHint{"O", "issue", nil}, keyHint{"m", "merge", nil}, keyHint{"S", "stack merge", nil}, keyHint{"r", "rerun", nil},
-			keyHint{"u", "update", nil}, keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil},
+			keyHint{"u", "update", nil}, keyHint{"d", "dependabot rebase", nil}, keyHint{"x", "dependabot recreate", nil}, keyHint{"M", "ready", nil}, keyHint{"L", "approve", nil},
 			keyHint{"X", "cleanup branch", nil})
 	}
 	groups = append(groups, legendGroup{"actions", actions})
