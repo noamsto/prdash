@@ -253,3 +253,54 @@ func TestPreliminaryAwaitingReviewSuggestsApprove(t *testing.T) {
 		t.Errorf("ActionKey = %q on own PR, want empty", got)
 	}
 }
+
+func dependabotPR(rollup ...gh.Check) gh.PR {
+	p := pr(rollup...)
+	p.Author.Login = "app/dependabot"
+	return p
+}
+
+func TestDependabotConflictAndBehindSuggestRebase(t *testing.T) {
+	pass := gh.Check{State: "SUCCESS"}
+	for name, d := range map[string]gh.PRDetail{
+		"dirty":       {MergeStateStatus: "DIRTY"},
+		"conflicting": {Mergeable: "CONFLICTING"},
+		"behind":      {MergeStateStatus: "BEHIND"},
+	} {
+		c := Compute(dependabotPR(pass), d, "", 0)
+		if c.ActionKey != "d" || c.ActionLabel != "ask Dependabot to rebase" {
+			t.Errorf("%s: action = %q/%q, want d/ask Dependabot to rebase", name, c.ActionKey, c.ActionLabel)
+		}
+	}
+	if c := Compute(dependabotPR(pass), gh.PRDetail{MergeStateStatus: "DIRTY"}, "", 0); c.Kind != KindConflict {
+		t.Errorf("Kind = %v, want KindConflict", c.Kind)
+	}
+	if c := Compute(dependabotPR(pass), gh.PRDetail{MergeStateStatus: "BEHIND"}, "", 0); c.Kind != KindBehind {
+		t.Errorf("Kind = %v, want KindBehind", c.Kind)
+	}
+}
+
+func TestNonDependabotConflictAndBehindUnchanged(t *testing.T) {
+	pass := gh.Check{State: "SUCCESS"}
+	if c := Compute(pr(pass), gh.PRDetail{MergeStateStatus: "DIRTY"}, "", 0); c.ActionKey != "enter" || c.Alt != "" {
+		t.Errorf("conflict action = %q alt = %q, want enter and no alt", c.ActionKey, c.Alt)
+	}
+	if c := Compute(pr(pass), gh.PRDetail{MergeStateStatus: "BEHIND"}, "", 0); c.ActionKey != "u" {
+		t.Errorf("behind action = %q, want u", c.ActionKey)
+	}
+}
+
+func TestDependabotFailingKeepsRerunWithAlt(t *testing.T) {
+	p := dependabotPR(gh.Check{State: "FAILURE"})
+	for name, c := range map[string]Card{
+		"compute":     Compute(p, gh.PRDetail{MergeStateStatus: "BLOCKED"}, "", 0),
+		"preliminary": Preliminary(p, "", 0),
+	} {
+		if c.ActionKey != "r" || c.Alt == "" {
+			t.Errorf("%s: action = %q alt = %q, want r with an alt hint", name, c.ActionKey, c.Alt)
+		}
+	}
+	if c := Compute(pr(gh.Check{State: "FAILURE"}), gh.PRDetail{}, "", 0); c.Alt != "" {
+		t.Errorf("human failing card alt = %q, want none", c.Alt)
+	}
+}

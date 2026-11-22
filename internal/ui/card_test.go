@@ -205,3 +205,11 @@ func TestRenderRepoName(t *testing.T) {
 		t.Errorf("a repo without an owner lost its hue: %q", got)
 	}
 }
+
+func TestRenderCardShowsAlt(t *testing.T) {
+	c := triage.Card{Kind: triage.KindChecksFailing, Headline: "1 check failing",
+		ActionKey: "r", ActionLabel: "rerun checks", Alt: "d: ask Dependabot to rebase if the failure is stale"}
+	if out := renderCard(c, 60, time.Now()); !strings.Contains(out, "ask Dependabot to rebase") {
+		t.Fatalf("alt hint missing: %q", out)
+	}
+}

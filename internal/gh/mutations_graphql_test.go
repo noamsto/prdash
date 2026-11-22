@@ -108,3 +108,19 @@ func TestRequestReviewsByLoginInputUsesUnionFalse(t *testing.T) {
 		t.Errorf("RequestReviewsByLoginInput JSON = %s, want union:false", raw)
 	}
 }
+
+func TestAddCommentInputCarriesSubjectAndBody(t *testing.T) {
+	input := githubv4.AddCommentInput{
+		SubjectID: githubv4.ID("PR_test"),
+		Body:      githubv4.String("@dependabot rebase"),
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"subjectId":"PR_test"`, `"body":"@dependabot rebase"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("AddCommentInput JSON = %s, want %s", raw, want)
+		}
+	}
+}

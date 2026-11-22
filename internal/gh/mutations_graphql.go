@@ -105,6 +105,21 @@ func (s GraphSource) UpdateBranch(prID string) error {
 	return s.client.Mutate(context.Background(), &m, input, nil)
 }
 
+// AddComment posts body as a new comment on the PR (or issue) with node id
+// prID. Dependabot commands (`@dependabot rebase`) are comments.
+func (s GraphSource) AddComment(prID, body string) error {
+	var m struct {
+		AddComment struct {
+			ClientMutationID string
+		} `graphql:"addComment(input: $input)"`
+	}
+	input := githubv4.AddCommentInput{
+		SubjectID: githubv4.ID(prID),
+		Body:      githubv4.String(body),
+	}
+	return s.client.Mutate(context.Background(), &m, input, nil)
+}
+
 // RequestReviews replaces the PR's requested-reviewer set with logins in a
 // single call (union:false — see research/request-reviews.md). logins is the
 // full desired set, not a diff: an empty (but non-nil) slice is the valid

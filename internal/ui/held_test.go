@@ -79,6 +79,7 @@ func (f *partialMergeSource) UpdateBranch(prID string) error {
 	f.updateBranchCalls = append(f.updateBranchCalls, prID)
 	return f.failFor[prID]
 }
+func (f *partialMergeSource) AddComment(string, string) error { return nil }
 func (f *partialMergeSource) ApprovePR(prID string) error {
 	f.approveCalls = append(f.approveCalls, prID)
 	return f.failFor[prID]

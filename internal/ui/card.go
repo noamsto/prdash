@@ -188,6 +188,9 @@ func renderCard(c triage.Card, width int, now time.Time) string {
 	if c.ActionKey != "" {
 		b.WriteString(dimStyle.Render(c.ActionLabel+" → ") + accentStyle.Render(c.ActionKey) + "\n")
 	}
+	if c.Alt != "" {
+		b.WriteString(dimStyle.Render(c.Alt) + "\n")
+	}
 	if c.AutoMerge {
 		b.WriteString("  " + autoMergeGlyph(true) + " " + dimStyle.Render("auto-merge armed") + "\n")
 	}
