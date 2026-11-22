@@ -4469,9 +4469,11 @@ const defaultLimit = 20
 // partition needs more than the focused review/terminal boards' defaultLimit.
 const openListLimit = 100
 
-// crossRepoFilter and crossRepoLimit are the default board's one cross-repo
-// search; the fetch, cache write, hydrate and launch gate all key on them.
+// crossRepoFilter and crossRepoLimit are the default board's cross-repo
+// search (PRs you authored plus PRs in repos you own; the source adds the
+// author:/user: scopes); the fetch, cache write, hydrate and launch gate all
+// key on them.
 const (
-	crossRepoFilter = "is:open involves:@me archived:false sort:updated-desc"
+	crossRepoFilter = "is:open archived:false sort:updated-desc"
 	crossRepoLimit  = 100
 )
