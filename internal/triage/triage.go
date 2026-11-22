@@ -91,13 +91,14 @@ func computeCard(pr gh.PR, d gh.PRDetail, mss string, failing []FailedCheck, pen
 		return Card{Kind: KindBlocked, Headline: "Blocked by branch protection"}
 	case pr.ReviewDecision == "REVIEW_REQUIRED":
 		return awaitingReviewCard(awaitingHeadline(d), pr.Author.Login, viewer)
-	case len(pending) > 0 || mss == "UNSTABLE":
+	case len(pending) > 0:
 		return Card{Kind: KindChecksRunning, Headline: "Checks running…",
 			Running: pending}
 	case mss == "CLEAN" || mss == "HAS_HOOKS":
 		return Card{Kind: KindReady, Headline: "Ready to merge",
 			ActionKey: "m", ActionLabel: "merge (squash)"}
-	case mss == "UNKNOWN" || mss == "":
+	// UNSTABLE with nothing pending is usually a merge state read while CI ran.
+	case mss == "UNKNOWN" || mss == "" || mss == "UNSTABLE":
 		return Card{Kind: KindPending, Headline: "Merge state pending…"}
 	default:
 		return Card{Kind: KindFallback, Headline: ""}

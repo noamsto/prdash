@@ -1,11 +1,17 @@
 package ui
 
 import (
+	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
+	"github.com/noamsto/prdash/internal/triage"
 )
 
 type fakeChecksSource struct {
@@ -311,5 +317,245 @@ func TestThemePollUnaffectedByIdlePause(t *testing.T) {
 	_, cmd := m.Update(themePollMsg{lastMod: m.themeModTime})
 	if cmd == nil {
 		t.Fatal("theme watch tick must keep rearming regardless of checks-poll idle state")
+	}
+}
+
+// settleModel has #1..#3 running with a detail cached while CI ran (UNSTABLE),
+// the state the poll leaves behind once the rollups turn green.
+func settleModel(t *testing.T, fd *fakeDetailSource) Model {
+	t.Helper()
+	m := pollModel(t, &fakeChecksSource{}, []gh.PR{
+		{Number: 1, StatusCheckRollup: pending()},
+		{Number: 2, StatusCheckRollup: pending()},
+		{Number: 3, StatusCheckRollup: pending()},
+	})
+	m.SetDetailSource(fd)
+	m.width, m.height = 100, 30
+	for n := 1; n <= 3; n++ {
+		m.detail[m.launchRef(n)] = gh.PRDetail{MergeStateStatus: "UNSTABLE"}
+		m.fresh[m.launchRef(n)] = true
+	}
+	return m
+}
+
+// batchedMsgs flattens a possibly batched cmd into the messages it yields.
+func batchedMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	b, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var out []tea.Msg
+	for _, c := range b {
+		out = append(out, batchedMsgs(c)...)
+	}
+	return out
+}
+
+func TestSettledChecksRefetchDetailOncePerBeat(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{
+		1: {MergeStateStatus: "CLEAN"}, 2: {MergeStateStatus: "CLEAN"},
+	}}
+	m := settleModel(t, fd)
+
+	u, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{
+		m.launchRef(1): passing(), m.launchRef(2): passing(), m.launchRef(3): pending(),
+	}})
+	m = u.(Model)
+	for _, n := range []int{1, 2} {
+		if m.fresh[m.launchRef(n)] {
+			t.Errorf("#%d settled but its detail is still marked fresh", n)
+		}
+	}
+	if !m.fresh[m.launchRef(3)] {
+		t.Error("#3 is still running; its detail must stay fresh")
+	}
+
+	var details []tea.Msg
+	for _, msg := range batchedMsgs(cmd) {
+		if _, ok := msg.(detailsBatchMsg); ok {
+			details = append(details, msg)
+		}
+	}
+	if len(fd.got) != 1 {
+		t.Fatalf("want exactly one FetchDetails call for the beat, got %d: %v", len(fd.got), fd.got)
+	}
+	if got := fd.got[0]; len(got) != 2 || !slices.Contains(got, m.launchRef(1)) || !slices.Contains(got, m.launchRef(2)) {
+		t.Fatalf("FetchDetails refs = %v, want #1 and #2", got)
+	}
+
+	for _, msg := range details {
+		u, _ = m.Update(msg)
+		m = u.(Model)
+	}
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	card, ok := m.cursorCard()
+	if !ok {
+		t.Fatal("cursor PR has no cached detail")
+	}
+	if card.Kind != triage.KindReady {
+		t.Errorf("card = %v %q after checks settled and detail refreshed, want KindReady", card.Kind, card.Headline)
+	}
+}
+
+func TestUnresolvedSettleRefetchStaysUnfreshAndRetries(t *testing.T) {
+	fd := &sequencedDetailSource{readings: []gh.PRDetail{
+		{MergeStateStatus: "UNSTABLE"}, {MergeStateStatus: "CLEAN"},
+	}}
+	m := settleModel(t, &fakeDetailSource{})
+	m.SetDetailSource(fd)
+	ref := m.launchRef(1)
+
+	u, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{
+		ref: passing(), m.launchRef(2): pending(), m.launchRef(3): pending(),
+	}})
+	m = u.(Model)
+	for _, msg := range batchedMsgs(cmd) {
+		u, _ = m.Update(msg)
+		m = u.(Model)
+	}
+	if m.fresh[ref] {
+		t.Fatal("unresolved UNSTABLE refetch was marked fresh; it would never be retried")
+	}
+
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	retry := m.detailCmdForCursor()
+	if retry == nil {
+		t.Fatal("cursor visit did not refetch the unresolved detail")
+	}
+	u, _ = m.Update(retry())
+	m = u.(Model)
+	if fd.calls != 2 {
+		t.Fatalf("FetchDetails calls = %d, want 2", fd.calls)
+	}
+	if !m.fresh[ref] {
+		t.Error("resolved CLEAN detail should be fresh")
+	}
+	card, ok := m.cursorCard()
+	if !ok || card.Kind != triage.KindReady {
+		t.Errorf("card = %v, want KindReady", card.Kind)
+	}
+}
+
+// settleOnce drives one settle beat for PR 1 and applies the refetch results.
+func settleOnce(t *testing.T, m Model) Model {
+	t.Helper()
+	u, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{
+		m.launchRef(1): passing(), m.launchRef(2): pending(), m.launchRef(3): pending(),
+	}})
+	m = u.(Model)
+	for _, msg := range batchedMsgs(cmd) {
+		u, _ = m.Update(msg)
+		m = u.(Model)
+	}
+	return m
+}
+
+func TestUnresolvedSettleRetryBypassesOlderDiskEntry(t *testing.T) {
+	fd := &sequencedDetailSource{readings: []gh.PRDetail{
+		{MergeStateStatus: "UNSTABLE"}, {MergeStateStatus: "CLEAN"},
+	}}
+	m := batchModel(t, &fakeDetailSource{}, []gh.PR{
+		{Number: 1, StatusCheckRollup: pending()},
+		{Number: 2, StatusCheckRollup: pending()},
+		{Number: 3, StatusCheckRollup: pending()},
+	})
+	m.SetDetailSource(fd)
+	m.width, m.height = 100, 30
+	m.polling = true
+	ref := m.launchRef(1)
+	key := detailKey(ref.Repo, ref.Number)
+	m.cache.Set(key, json.RawMessage(`{"mergeStateStatus":"UNSTABLE"}`))
+	if !m.cache.Fresh(key, time.Hour) {
+		t.Fatal("setup: seeded cache entry should be fresh")
+	}
+	m.fresh[ref] = true
+
+	m = settleOnce(t, m)
+	if m.fresh[ref] || m.cache.Fresh(key, time.Hour) {
+		t.Fatal("unresolved settle read left the detail fresh in memory or on disk")
+	}
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	if m.detailCmdForCursor() == nil {
+		t.Fatal("cursor visit did not refetch despite the older disk entry")
+	}
+}
+
+func TestLegitimateUnstableOutsideSettleIsFreshAndCached(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{5: {MergeStateStatus: "UNSTABLE"}}}
+	m := batchModel(t, fd, []gh.PR{{Number: 5, StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}})
+	ref := m.launchRef(5)
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 5)
+
+	u, _ := m.Update(m.batchDetailCmd([]gh.PRRef{ref})())
+	m = u.(Model)
+	if !m.fresh[ref] || !m.cache.Fresh(detailKey(ref.Repo, ref.Number), time.Hour) {
+		t.Fatal("UNSTABLE detail from a normal fetch should be fresh and cached")
+	}
+	calls := len(fd.got)
+	for i := range 2 {
+		m.detailSeq = i + 1
+		u, cmd := m.Update(detailDebounceMsg{seq: i + 1})
+		m = u.(Model)
+		batchedMsgs(cmd)
+	}
+	if len(fd.got) != calls {
+		t.Errorf("cursor visits refetched a fresh UNSTABLE PR: %d extra FetchDetails calls", len(fd.got)-calls)
+	}
+}
+
+func TestStillUnresolvedAfterRetryBecomesFresh(t *testing.T) {
+	fd := &sequencedDetailSource{readings: []gh.PRDetail{{MergeStateStatus: "UNSTABLE"}}}
+	m := settleModel(t, &fakeDetailSource{})
+	m.SetDetailSource(fd)
+	ref := m.launchRef(1)
+
+	m = settleOnce(t, m)
+	if m.fresh[ref] {
+		t.Fatal("settle read should stay unfresh for one retry")
+	}
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	retry := m.detailCmdForCursor()
+	if retry == nil {
+		t.Fatal("no retry issued")
+	}
+	u, _ := m.Update(retry())
+	m = u.(Model)
+	if !m.fresh[ref] {
+		t.Fatal("still-UNSTABLE retry should be fresh")
+	}
+	if m.detailCmdForCursor() != nil {
+		t.Error("cursor refetches again after the one retry")
+	}
+}
+
+func TestNoSettleNoDetailFetch(t *testing.T) {
+	fd := &fakeDetailSource{}
+	m := settleModel(t, fd)
+	_, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{m.launchRef(1): pending()}})
+	batchedMsgs(cmd)
+	if len(fd.got) != 0 {
+		t.Errorf("no PR settled, yet FetchDetails ran: %v", fd.got)
+	}
+}
+
+func TestExpandedOverviewRefreshesOnDetailsBatch(t *testing.T) {
+	m := settleModel(t, &fakeDetailSource{})
+	ps := m.section.(*PRSection)
+	ps.ApplyChecks(map[gh.PRRef][]gh.Check{m.launchRef(1): passing(), m.launchRef(2): passing(), m.launchRef(3): passing()})
+	m.cursor = rowIndexOf(t, ps, 1)
+	m.expanded = true
+	m.expandedTab = tabOverview
+	m.reflowExpanded()
+
+	u, _ := m.Update(detailsBatchMsg{details: map[gh.PRRef]gh.PRDetail{
+		m.launchRef(1): {MergeStateStatus: "CLEAN"},
+	}})
+	got := ansi.Strip(u.(Model).vp.GetContent())
+	if !strings.Contains(got, "Ready to merge") {
+		t.Errorf("expanded Overview did not re-render with the fresh detail:\n%s", got)
 	}
 }

@@ -93,6 +93,7 @@ type Model struct {
 	detail            map[gh.PRRef]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
 	detailErr         map[gh.PRRef]error       // per-row background detail failure; never becomes the board error
 	fresh             map[gh.PRRef]bool        // PRs whose detail was refetched this session; gates revalidation
+	settling          map[gh.PRRef]bool        // PRs with a settle refetch in flight; its unresolved read gets one retry
 	reviewRequested   map[gh.PRRef]bool        // PRs in the latest review-requested half; gates the ◐ marker off on re-request
 	reviewedSet       map[gh.PRRef]bool        // PRs in the latest reviewed-by-me half; the ◐ marker's candidates
 	ciRerun           map[gh.PRRef]time.Time   // PR → stamp time when its checks-in-progress override was applied
@@ -184,7 +185,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		cache:   c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
-		detail:  map[gh.PRRef]gh.PRDetail{}, detailErr: map[gh.PRRef]error{}, fresh: map[gh.PRRef]bool{},
+		detail:  map[gh.PRRef]gh.PRDetail{}, detailErr: map[gh.PRRef]error{}, fresh: map[gh.PRRef]bool{}, settling: map[gh.PRRef]bool{},
 		reviewRequested: map[gh.PRRef]bool{}, reviewedSet: map[gh.PRRef]bool{},
 		ciRerun: map[gh.PRRef]time.Time{},
 		held:    map[gh.PRRef]string{}, sessionMerged: map[gh.PRRef]time.Time{},
@@ -1805,6 +1806,16 @@ func runningCheckRows(ps *PRSection, held map[gh.PRRef]string) []int {
 	return out
 }
 
+// runningRefs is runningCheckRows keyed by PR identity, so a rollup update can
+// be diffed for the PRs that stopped running.
+func runningRefs(ps *PRSection, held map[gh.PRRef]string) map[gh.PRRef]struct{} {
+	out := map[gh.PRRef]struct{}{}
+	for _, i := range runningCheckRows(ps, held) {
+		out[ps.refAt(i)] = struct{}{}
+	}
+	return out
+}
+
 // focusedHasTimedPending reports whether the focused PR shows an elapsed time.
 func (m Model) focusedHasTimedPending() bool {
 	ps, ok := m.section.(*PRSection)
@@ -2490,6 +2501,18 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for r, d := range msg.details {
 			m.detail[r] = d
 			delete(m.detailErr, r)
+			// GitHub computes mergeability lazily, so a settle refetch can read a
+			// stale state; keep it unfresh (and drop the older disk entry) for one retry.
+			if m.settling[r] {
+				delete(m.settling, r)
+				switch d.MergeStateStatus {
+				case "UNKNOWN", "", "UNSTABLE":
+					if m.cache != nil {
+						m.cache.Invalidate(detailKey(r.Repo, r.Number))
+					}
+					continue
+				}
+			}
 			m.fresh[r] = true
 			if m.cache != nil {
 				if raw := msg.raws[r]; raw != nil {
@@ -2573,14 +2596,27 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		before := runningRefs(ps, m.held)
 		ps.ApplyChecks(msg.checks)
+		after := runningRefs(ps, m.held)
+		var settled []gh.PRRef
+		for r := range before {
+			if _, still := after[r]; !still {
+				settled = append(settled, r)
+				delete(m.fresh, r)
+				m.settling[r] = true
+			}
+		}
 		m.repaintActive()
 		// No reschedule: the tick armed alongside this fetch is still in flight, and
 		// it retires the loop itself once nothing is pending.
+		// The cached detail's merge state was read while CI ran; the poll stops once
+		// nothing is pending, so nothing else would refresh it.
+		refetch := m.batchDetailCmd(settled)
 		if msg.err != nil {
-			return m, m.hint("Checks: " + msg.err.Error())
+			return m, tea.Batch(m.hint("Checks: "+msg.err.Error()), refetch)
 		}
-		return m, nil
+		return m, refetch
 	case themePollMsg:
 		// This is the only tick that runs for the whole session, so the header's
 		// budget countdown rides it rather than arming a second one-second loop.

@@ -29,6 +29,8 @@ func TestLadderPriority(t *testing.T) {
 		{"awaiting review", gh.PR{ReviewDecision: "REVIEW_REQUIRED", StatusCheckRollup: []gh.Check{pass}},
 			gh.PRDetail{MergeStateStatus: "BLOCKED", ReviewRequests: []gh.ReviewRequest{{Login: "x"}}}, KindAwaitingReview},
 		{"pending", pr(gh.Check{State: "PENDING"}), gh.PRDetail{MergeStateStatus: "UNSTABLE"}, KindChecksRunning},
+		{"stale unstable, no pending", pr(pass), gh.PRDetail{MergeStateStatus: "UNSTABLE"}, KindPending},
+		{"unstable with action-required rollup", pr(gh.Check{Conclusion: "ACTION_REQUIRED"}), gh.PRDetail{MergeStateStatus: "UNSTABLE"}, KindPending},
 		{"ready", pr(pass), gh.PRDetail{MergeStateStatus: "CLEAN"}, KindReady},
 		{"unknown", pr(pass), gh.PRDetail{MergeStateStatus: "UNKNOWN"}, KindPending},
 	}
