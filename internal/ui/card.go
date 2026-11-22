@@ -104,6 +104,17 @@ func countStages(prs []gh.PR, viewer string, parent func(gh.PR) int) stageCounts
 	return c
 }
 
+// renderRepoName colors a repo for a group header. The owner/ prefix recedes so
+// the names that actually differ stand out — most groups on the board share one
+// owner — and the repo carries the group hue.
+func renderRepoName(repo string) string {
+	owner, name, has := strings.Cut(repo, "/")
+	if !has {
+		return repoNameStyle.Render(repo)
+	}
+	return repoOwnerStyle.Render(owner+"/") + repoNameStyle.Render(name)
+}
+
 // renderRepoHeader lays out "repo  N · glyph count ..." within width, shedding
 // bucket counts right to left, then the separator, then the total, then
 // truncating the repo name. A rule fills the rest of the line so each repo
@@ -120,7 +131,7 @@ func renderRepoHeader(repo string, c stageCounts, width int, focused bool) strin
 	}
 	total := "  " + strconv.Itoa(c.total())
 	const sep = " · "
-	name := sectionLabelStyle.Render(repo)
+	name := renderRepoName(repo)
 	var line string
 	switch {
 	case lipgloss.Width(name+total) > width:

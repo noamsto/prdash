@@ -343,7 +343,7 @@ func (m Model) previewParts() (head, body string) {
 func (m Model) groupSummary(ps *PRSection, w int) (head, body string) {
 	repo := ps.repoAt(m.cursor)
 	counts := ps.groupStages(repo)
-	head = truncate(sectionLabelStyle.Render(repo)+dimStyle.Render(fmt.Sprintf("  %d", counts.total())), w-2)
+	head = truncate(renderRepoName(repo)+dimStyle.Render(fmt.Sprintf("  %d", counts.total())), w-2)
 	var lines []string
 	for i, n := range counts {
 		if n > 0 {

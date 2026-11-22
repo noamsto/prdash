@@ -188,3 +188,20 @@ func TestRenderRepoHeader(t *testing.T) {
 		t.Fatalf("width 11 = %q, want %q", got, "owner/repo")
 	}
 }
+
+func TestRenderRepoName(t *testing.T) {
+	for _, repo := range []string{"owner/repo", "solo", "a/b/c"} {
+		if got := ansi.Strip(renderRepoName(repo)); got != repo {
+			t.Errorf("renderRepoName(%q) = %q, want the text unchanged", repo, got)
+		}
+	}
+	// The owner recedes and the name carries the hue, so groups that share an
+	// owner still read apart at a glance.
+	if got := renderRepoName("owner/repo"); !strings.Contains(got, repoOwnerStyle.Render("owner/")) ||
+		!strings.Contains(got, repoNameStyle.Render("repo")) {
+		t.Errorf("repo header is not two-tone: %q", got)
+	}
+	if got := renderRepoName("solo"); !strings.Contains(got, repoNameStyle.Render("solo")) {
+		t.Errorf("a repo without an owner lost its hue: %q", got)
+	}
+}
