@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/shurcooL/githubv4"
@@ -57,9 +58,55 @@ func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
 	return s.fetchSearch(fmt.Sprintf("repo:%s is:pr %s", s.repo, filter), limit)
 }
 
-// FetchCrossRepoPRs lists PRs matching filter in every repo except s.repo.
+// FetchCrossRepoPRs lists PRs matching filter in every repo except s.repo that
+// the viewer authored or that live under their account. GitHub search can't OR
+// author: with user:, so the two searches share one aliased request and merge
+// here: deduped by PR, newest first, capped at limit.
 func (s GraphSource) FetchCrossRepoPRs(filter string, limit int) (prs []PR, raw []byte, err error) {
-	return s.fetchSearch(fmt.Sprintf("is:pr -repo:%s %s", s.repo, filter), limit)
+	base := fmt.Sprintf("is:pr -repo:%s %s", s.repo, filter)
+	var res struct {
+		Authored struct {
+			Nodes []struct {
+				PR qlPR `graphql:"... on PullRequest"`
+			}
+		} `graphql:"authored: search(query: $authored, type: ISSUE, first: $limit)"`
+		Owned struct {
+			Nodes []struct {
+				PR qlPR `graphql:"... on PullRequest"`
+			}
+		} `graphql:"owned: search(query: $owned, type: ISSUE, first: $limit)"`
+	}
+	vars := map[string]any{
+		"authored": githubv4.String(base + " author:@me"),
+		"owned":    githubv4.String(base + " user:@me"),
+		"limit":    gqlInt(limit),
+	}
+	if err := s.client.Query(context.Background(), &res, vars); err != nil {
+		return nil, nil, err
+	}
+	seen := map[PRRef]bool{}
+	merged := make([]PR, 0, len(res.Authored.Nodes)+len(res.Owned.Nodes))
+	for _, nodes := range [][]struct {
+		PR qlPR `graphql:"... on PullRequest"`
+	}{res.Authored.Nodes, res.Owned.Nodes} {
+		for _, n := range nodes {
+			p := mapPR(n.PR)
+			if seen[p.Ref()] {
+				continue
+			}
+			seen[p.Ref()] = true
+			merged = append(merged, p)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].UpdatedAt.After(merged[j].UpdatedAt) })
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	raw, err = json.Marshal(merged)
+	if err != nil {
+		return nil, nil, err
+	}
+	return merged, raw, nil
 }
 
 func (s GraphSource) fetchSearch(q string, limit int) ([]PR, []byte, error) {

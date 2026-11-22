@@ -2,9 +2,11 @@ package gh
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -144,32 +146,74 @@ func TestFetchPRsSendsMergeInfoHeaderAndParsesMergeState(t *testing.T) {
 }
 
 func TestFetchCrossRepoPRs(t *testing.T) {
-	var vars struct {
+	type crossReq struct {
+		Query     string `json:"query"`
 		Variables struct {
-			Q     string `json:"q"`
-			Limit int    `json:"limit"`
+			Authored string `json:"authored"`
+			Owned    string `json:"owned"`
+			Limit    int    `json:"limit"`
 		} `json:"variables"`
+	}
+	var reqs []crossReq
+	node := func(n int, repo, ts string) string {
+		return fmt.Sprintf(`{"number":%d,"repository":{"nameWithOwner":%q},"updatedAt":%q}`, n, repo, ts)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &vars)
+		var req struct {
+			Query     string `json:"query"`
+			Variables struct {
+				Authored string `json:"authored"`
+				Owned    string `json:"owned"`
+				Limit    int    `json:"limit"`
+			} `json:"variables"`
+		}
+		_ = json.Unmarshal(b, &req)
+		reqs = append(reqs, req)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"search":{"nodes":[{"number":3,"repository":{"nameWithOwner":"a/b"}},{"number":4,"repository":{"nameWithOwner":"c/d"}}]}}}`))
+		// own/repo#1 is authored by me in my own repo, so both searches hit it.
+		_, _ = fmt.Fprintf(w, `{"data":{"authored":{"nodes":[%s,%s]},"owned":{"nodes":[%s,%s,%s]}}}`,
+			node(1, "me/own", "2026-01-02T00:00:00Z"), node(2, "up/stream", "2026-01-01T00:00:00Z"),
+			node(3, "me/own", "2026-01-05T00:00:00Z"), node(1, "me/own", "2026-01-02T00:00:00Z"),
+			node(4, "me/own", "2026-01-03T00:00:00Z"))
 	}))
 	defer srv.Close()
 
 	s := testQuerySource(srv, "owner/repo")
-	prs, _, err := s.FetchCrossRepoPRs("is:open involves:@me archived:false sort:updated-desc", 100)
+	prs, raw, err := s.FetchCrossRepoPRs("is:open archived:false sort:updated-desc", 3)
 	if err != nil {
 		t.Fatalf("FetchCrossRepoPRs: %v", err)
 	}
-	if want := "is:pr -repo:owner/repo is:open involves:@me archived:false sort:updated-desc"; vars.Variables.Q != want {
-		t.Errorf("q = %q, want %q", vars.Variables.Q, want)
+	if len(reqs) != 1 {
+		t.Fatalf("HTTP requests = %d, want exactly 1", len(reqs))
 	}
-	if vars.Variables.Limit != 100 {
-		t.Errorf("limit = %d, want 100", vars.Variables.Limit)
+	q := reqs[0].Query
+	if !strings.Contains(q, "authored: search(") || !strings.Contains(q, "owned: search(") {
+		t.Errorf("query lacks both aliased searches: %s", q)
 	}
-	if len(prs) != 2 || prs[0].Repo != "a/b" || prs[1].Repo != "c/d" {
-		t.Errorf("prs = %+v, want rows for a/b and c/d", prs)
+	v := reqs[0].Variables
+	if want := "is:pr -repo:owner/repo is:open archived:false sort:updated-desc author:@me"; v.Authored != want {
+		t.Errorf("authored q = %q, want %q", v.Authored, want)
+	}
+	if want := "is:pr -repo:owner/repo is:open archived:false sort:updated-desc user:@me"; v.Owned != want {
+		t.Errorf("owned q = %q, want %q", v.Owned, want)
+	}
+	if strings.Contains(v.Authored+v.Owned, "involves:") {
+		t.Error("cross-repo queries must not use involves:")
+	}
+	if v.Limit != 3 {
+		t.Errorf("limit = %d, want 3", v.Limit)
+	}
+	var got []int
+	for _, p := range prs {
+		got = append(got, p.Number)
+	}
+	// #1 deduped, newest first (3, 4, 1, 2), capped at 3 → 3, 4, 1.
+	if want := []int{3, 4, 1}; !slices.Equal(got, want) {
+		t.Errorf("PR numbers = %v, want %v", got, want)
+	}
+	var back []PR
+	if err := json.Unmarshal(raw, &back); err != nil || len(back) != 3 {
+		t.Errorf("raw round-trip = %d PRs, err %v; want 3", len(back), err)
 	}
 }

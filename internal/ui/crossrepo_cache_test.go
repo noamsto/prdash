@@ -218,3 +218,21 @@ func TestFullCrossPageMarksHeldPageFull(t *testing.T) {
 		t.Error("heldPageFull = false with a full cross page")
 	}
 }
+
+// TestCrossRepoIgnoresInvolvesCache pins that a board cached under the old
+// involves:@me scope is not hydrated into the narrower authored/owned board.
+func TestCrossRepoIgnoresInvolvesCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	_, _, cross := repoGroupFixture()
+
+	c := cache.Open(path)
+	c.Set(prKey(launchRepo, "is:open involves:@me archived:false sort:updated-desc", crossRepoLimit), mustJSON(t, cross))
+	c.Flush()
+
+	m := NewModel("/repo", "is:open author:@me", cache.Open(path))
+	m.SetRepo(launchRepo)
+	m.Hydrate()
+	if len(m.crossPRs) != 0 {
+		t.Fatalf("hydrated %d cross-repo PRs from the old involves:@me entry, want 0", len(m.crossPRs))
+	}
+}

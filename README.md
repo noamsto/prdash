@@ -111,8 +111,8 @@ repository. The current repo's group comes first, with its Review
 requested / Mine / Others sections (or by author under `g`). It always leads
 the board and is always expanded; with no open PRs of its own it shows its
 header with a muted `no open PRs` line. Below it, one
-group per other repo where you have an open PR that `involves:@me`
-(author, reviewer, assignee, commenter, mentioned), newest activity first.
+group per other repo with an open PR you opened, or any open PR in a repo
+you own, newest activity first.
 Every group is expanded: its rows sit under its header, and a blank line
 separates the groups.
 
