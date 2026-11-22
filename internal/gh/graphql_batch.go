@@ -29,7 +29,8 @@ type batchSpec struct {
 	field       string // PR lookup field: "pullRequest", "issueOrPullRequest"
 	selection   string
 	maxPRs      int
-	// strict fails a repo on any error scoped to it. Non-strict (states) fails
+	// strict fails a repo's PRs in the request on any error scoped to it (a repo
+	// split across chunks fails per chunk). Non-strict (states) fails
 	// it only when its block resolved to null, so a null PR alias doesn't
 	// discard the siblings that did resolve.
 	strict bool

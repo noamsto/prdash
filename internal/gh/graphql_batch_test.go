@@ -194,8 +194,9 @@ func TestFetchChecksOneRepoErrorsOthersSucceed(t *testing.T) {
 	}
 }
 
-// A strict kind fails the whole repo when any of its aliases errors, as the
-// per-repo request did: a half-resolved repo would paint stale rows as fresh.
+// A strict kind drops a repo's PRs from the request when any of its aliases
+// errors: a half-resolved block would paint stale rows as fresh. Under the chunk
+// cap that is the whole repo; a repo split across chunks fails per chunk.
 func TestStrictKindFailsWholeRepoOnScopedAliasError(t *testing.T) {
 	body := `{"data":{"r0":{"pr1":{"commits":{"nodes":[]}},"pr2":null}},
 		"errors":[{"message":"Could not resolve to a PullRequest with the number of 2.","path":["r0","pr2"]}]}`
