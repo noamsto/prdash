@@ -496,7 +496,7 @@ func TestLegitimateUnstableOutsideSettleIsFreshAndCached(t *testing.T) {
 		t.Fatal("UNSTABLE detail from a normal fetch should be fresh and cached")
 	}
 	calls := len(fd.got)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		m.detailSeq = i + 1
 		u, cmd := m.Update(detailDebounceMsg{seq: i + 1})
 		m = u.(Model)
