@@ -52,7 +52,7 @@ go build -o prdash . && ./prdash
 | `R` | assign reviewers (PR only) |
 | `D` | toggle drafts (PR only) |
 | `g` | group the default board by author instead of Review requested / Mine / Others (PR only) |
-| `e` | fold / unfold the focused repo group (default PR board) |
+| `e` | fold / unfold the focused repo group (default PR board); the current repo's group stays expanded |
 | `/` | fuzzy find · `space` select · `V` select cluster → category → all → none |
 | `a` | actions menu · `?` legend · `q` quit · `ctrl+c` quits from anywhere, prompts and overlays included |
 
@@ -108,7 +108,9 @@ pointer is over the visible preview pane.
 
 The default PR board (state `open`, no typed qualifier) groups PRs by
 repository. The current repo's group comes first, with its Review
-requested / Mine / Others sections (or by author under `g`). Below it, one
+requested / Mine / Others sections (or by author under `g`). It always leads
+the board and is always expanded; with no open PRs of its own it shows its
+header with a muted `no open PRs` line. Below it, one
 group per other repo where you have an open PR that `involves:@me`
 (author, reviewer, assignee, commenter, mentioned), newest activity first.
 Every group is expanded: its rows sit under its header, and a blank line
@@ -133,7 +135,8 @@ for the rows it shows, so folding a group takes its PRs out of that work.
 
 - `e` folds a group to its header line, or unfolds it again; `enter` on a
   folded header unfolds it. Other actions on a folded header do nothing.
-  Folding drops that group's selection.
+  Folding drops that group's selection. The current repo's group never
+  folds: `e` on it is a no-op with a status hint.
 - `/` matches PRs inside folded groups, and reveals the group when you clear or
   leave the filter on a match.
 - **Worktrees on another repo:** `enter`, `W` and `X` use the checkout at

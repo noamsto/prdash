@@ -206,8 +206,17 @@ func (s *PRSection) repoAt(i int) string {
 func (s *PRSection) isFoldStop(i int) bool { return i >= 0 && i < len(s.shown) && s.shown[i] < 0 }
 
 // isFolded reports the group's fold state. Only an explicit fold counts: the
-// board shows every group's rows so a repo never reduces to a count line.
-func (s *PRSection) isFolded(repo string) bool { return s.folded[repo] }
+// board shows every group's rows so a repo never reduces to a count line. The
+// launch group never folds, so a stale entry for it is ignored.
+func (s *PRSection) isFolded(repo string) bool {
+	return (s.launch == "" || repo != s.launch) && s.folded[repo]
+}
+
+// launchEmpty reports a launch group with no rows: the view still draws its
+// header and a placeholder, neither of which is in the shown set.
+func (s *PRSection) launchEmpty() bool {
+	return s.repoGrouping && s.launch != "" && len(s.groupRows[s.launch]) == 0
+}
 
 // otherRepo reports whether row i sits in a repo group other than launch's.
 func (s *PRSection) otherRepo(i int) bool { return s.repoGrouping && s.repoAt(i) != s.launch }

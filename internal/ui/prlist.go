@@ -878,6 +878,13 @@ func (m *Model) renderList() {
 	var b strings.Builder
 	line, prevGroup, prevRepo := 0, "", ""
 	prevStop := false
+	launchEmpty := repoGrouped && n > 0 && ps.launchEmpty()
+	if launchEmpty {
+		b.WriteString(renderRepoHeader(ps.launch, stageCounts{}, innerW, false) + "\n")
+		b.WriteString(dimStyle.Render(truncate("  no open PRs", innerW)) + "\n")
+		line += 2
+		prevRepo = ps.launch
+	}
 	for i := range n {
 		headerLine := -1 // this row's group header line, when it opens a new group
 		stop := repoGrouped && ps.isFoldStop(i)
@@ -941,6 +948,9 @@ func (m *Model) renderList() {
 			m.cursorTop = line
 			if headerLine >= 0 {
 				m.cursorTop = headerLine
+			}
+			if launchEmpty && i == 0 {
+				m.cursorTop = 0 // the empty launch group's header leads the board
 			}
 		}
 		b.WriteString(row)
@@ -3011,6 +3021,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ps, ok := m.section.(*PRSection); !ok || !ps.repoGrouped() {
 				return m.statusHint("Repo groups only fold on the default board")
 			}
+			if ps, _ := m.section.(*PRSection); m.cursor >= 0 && m.cursor < ps.Len() && ps.repoAt(m.cursor) == ps.launch {
+				return m.statusHint(ps.launch + " stays expanded")
+			}
 			m.toggleFold()
 			return m, nil
 		case "s":
@@ -3268,6 +3281,9 @@ func (m *Model) toggleFold() {
 		return
 	}
 	repo := ps.repoAt(m.cursor)
+	if repo == ps.launch {
+		return
+	}
 	fold := !ps.isFolded(repo)
 	m.repoFold[repo] = fold
 	refs, wasHeld := m.selectedRows()
