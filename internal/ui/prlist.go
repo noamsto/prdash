@@ -1806,8 +1806,8 @@ func runningCheckRows(ps *PRSection, held map[gh.PRRef]string) []int {
 	return out
 }
 
-// runningRefs is runningCheckRows keyed by PR identity, for comparing before
-// and after a rollup update that may reorder nothing but can change what runs.
+// runningRefs is runningCheckRows keyed by PR identity, so a rollup update can
+// be diffed for the PRs that stopped running.
 func runningRefs(ps *PRSection, held map[gh.PRRef]string) map[gh.PRRef]struct{} {
 	out := map[gh.PRRef]struct{}{}
 	for _, i := range runningCheckRows(ps, held) {
