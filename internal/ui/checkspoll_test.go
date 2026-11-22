@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -435,6 +437,98 @@ func TestUnresolvedSettleRefetchStaysUnfreshAndRetries(t *testing.T) {
 	card, ok := m.cursorCard()
 	if !ok || card.Kind != triage.KindReady {
 		t.Errorf("card = %v, want KindReady", card.Kind)
+	}
+}
+
+// settleOnce drives one settle beat for PR 1 and applies the refetch results.
+func settleOnce(t *testing.T, m Model) Model {
+	t.Helper()
+	u, cmd := m.Update(checksFetchedMsg{checks: map[gh.PRRef][]gh.Check{
+		m.launchRef(1): passing(), m.launchRef(2): pending(), m.launchRef(3): pending(),
+	}})
+	m = u.(Model)
+	for _, msg := range batchedMsgs(cmd) {
+		u, _ = m.Update(msg)
+		m = u.(Model)
+	}
+	return m
+}
+
+func TestUnresolvedSettleRetryBypassesOlderDiskEntry(t *testing.T) {
+	fd := &sequencedDetailSource{readings: []gh.PRDetail{
+		{MergeStateStatus: "UNSTABLE"}, {MergeStateStatus: "CLEAN"},
+	}}
+	m := batchModel(t, &fakeDetailSource{}, []gh.PR{
+		{Number: 1, StatusCheckRollup: pending()},
+		{Number: 2, StatusCheckRollup: pending()},
+		{Number: 3, StatusCheckRollup: pending()},
+	})
+	m.SetDetailSource(fd)
+	m.width, m.height = 100, 30
+	m.polling = true
+	ref := m.launchRef(1)
+	key := detailKey(ref.Repo, ref.Number)
+	m.cache.Set(key, json.RawMessage(`{"mergeStateStatus":"UNSTABLE"}`))
+	if !m.cache.Fresh(key, time.Hour) {
+		t.Fatal("setup: seeded cache entry should be fresh")
+	}
+	m.fresh[ref] = true
+
+	m = settleOnce(t, m)
+	if m.fresh[ref] || m.cache.Fresh(key, time.Hour) {
+		t.Fatal("unresolved settle read left the detail fresh in memory or on disk")
+	}
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	if m.detailCmdForCursor() == nil {
+		t.Fatal("cursor visit did not refetch despite the older disk entry")
+	}
+}
+
+func TestLegitimateUnstableOutsideSettleIsFreshAndCached(t *testing.T) {
+	fd := &fakeDetailSource{ret: map[int]gh.PRDetail{5: {MergeStateStatus: "UNSTABLE"}}}
+	m := batchModel(t, fd, []gh.PR{{Number: 5, StatusCheckRollup: []gh.Check{{State: "FAILURE"}}}})
+	ref := m.launchRef(5)
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 5)
+
+	u, _ := m.Update(m.batchDetailCmd([]gh.PRRef{ref})())
+	m = u.(Model)
+	if !m.fresh[ref] || !m.cache.Fresh(detailKey(ref.Repo, ref.Number), time.Hour) {
+		t.Fatal("UNSTABLE detail from a normal fetch should be fresh and cached")
+	}
+	calls := len(fd.got)
+	for i := 0; i < 2; i++ {
+		m.detailSeq = i + 1
+		u, cmd := m.Update(detailDebounceMsg{seq: i + 1})
+		m = u.(Model)
+		batchedMsgs(cmd)
+	}
+	if len(fd.got) != calls {
+		t.Errorf("cursor visits refetched a fresh UNSTABLE PR: %d extra FetchDetails calls", len(fd.got)-calls)
+	}
+}
+
+func TestStillUnresolvedAfterRetryBecomesFresh(t *testing.T) {
+	fd := &sequencedDetailSource{readings: []gh.PRDetail{{MergeStateStatus: "UNSTABLE"}}}
+	m := settleModel(t, &fakeDetailSource{})
+	m.SetDetailSource(fd)
+	ref := m.launchRef(1)
+
+	m = settleOnce(t, m)
+	if m.fresh[ref] {
+		t.Fatal("settle read should stay unfresh for one retry")
+	}
+	m.cursor = rowIndexOf(t, m.section.(*PRSection), 1)
+	retry := m.detailCmdForCursor()
+	if retry == nil {
+		t.Fatal("no retry issued")
+	}
+	u, _ := m.Update(retry())
+	m = u.(Model)
+	if !m.fresh[ref] {
+		t.Fatal("still-UNSTABLE retry should be fresh")
+	}
+	if m.detailCmdForCursor() != nil {
+		t.Error("cursor refetches again after the one retry")
 	}
 }
 

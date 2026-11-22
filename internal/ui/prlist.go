@@ -93,6 +93,7 @@ type Model struct {
 	detail            map[gh.PRRef]gh.PRDetail // painted detail (fresh this session or hydrated from disk)
 	detailErr         map[gh.PRRef]error       // per-row background detail failure; never becomes the board error
 	fresh             map[gh.PRRef]bool        // PRs whose detail was refetched this session; gates revalidation
+	settling          map[gh.PRRef]bool        // PRs with a settle refetch in flight; its unresolved read gets one retry
 	reviewRequested   map[gh.PRRef]bool        // PRs in the latest review-requested half; gates the ◐ marker off on re-request
 	reviewedSet       map[gh.PRRef]bool        // PRs in the latest reviewed-by-me half; the ◐ marker's candidates
 	ciRerun           map[gh.PRRef]time.Time   // PR → stamp time when its checks-in-progress override was applied
@@ -184,7 +185,7 @@ func NewModel(dir, filter string, c *cache.Cache) Model {
 		cache:   c, section: NewPRSection(resolved),
 		vp: viewport.New(), filterInput: ti, actionFilter: af,
 		actions: action.DefaultPRActions(),
-		detail:  map[gh.PRRef]gh.PRDetail{}, detailErr: map[gh.PRRef]error{}, fresh: map[gh.PRRef]bool{},
+		detail:  map[gh.PRRef]gh.PRDetail{}, detailErr: map[gh.PRRef]error{}, fresh: map[gh.PRRef]bool{}, settling: map[gh.PRRef]bool{},
 		reviewRequested: map[gh.PRRef]bool{}, reviewedSet: map[gh.PRRef]bool{},
 		ciRerun: map[gh.PRRef]time.Time{},
 		held:    map[gh.PRRef]string{}, sessionMerged: map[gh.PRRef]time.Time{},
@@ -1805,34 +1806,6 @@ func runningCheckRows(ps *PRSection, held map[gh.PRRef]string) []int {
 	return out
 }
 
-// mergeStateUnresolved reports a merge state that cannot be trusted yet:
-// unknown, or UNSTABLE on a row with nothing pending (UNSTABLE while CI ran).
-func (m Model) mergeStateUnresolved(r gh.PRRef, d gh.PRDetail) bool {
-	switch d.MergeStateStatus {
-	case "UNKNOWN", "":
-		return true
-	case "UNSTABLE":
-	default:
-		return false
-	}
-	ps, ok := m.section.(*PRSection)
-	if !ok {
-		return false
-	}
-	for i := 0; i < ps.Len(); i++ {
-		p := ps.prAt(i)
-		if p.Ref() != r {
-			continue
-		}
-		for _, c := range p.Checks() {
-			if c.Result() == "pending" {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // runningRefs is runningCheckRows keyed by PR identity, for comparing before
 // and after a rollup update that may reorder nothing but can change what runs.
 func runningRefs(ps *PRSection, held map[gh.PRRef]string) map[gh.PRRef]struct{} {
@@ -2528,10 +2501,17 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for r, d := range msg.details {
 			m.detail[r] = d
 			delete(m.detailErr, r)
-			// GitHub computes mergeability lazily; an unresolved read stays
-			// unfresh (in memory and on disk) so the next cursor visit retries.
-			if m.mergeStateUnresolved(r, d) {
-				continue
+			// GitHub computes mergeability lazily, so a settle refetch can read a
+			// stale state; keep it unfresh (and drop the older disk entry) for one retry.
+			if m.settling[r] {
+				delete(m.settling, r)
+				switch d.MergeStateStatus {
+				case "UNKNOWN", "", "UNSTABLE":
+					if m.cache != nil {
+						m.cache.Invalidate(detailKey(r.Repo, r.Number))
+					}
+					continue
+				}
 			}
 			m.fresh[r] = true
 			if m.cache != nil {
@@ -2624,6 +2604,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, still := after[r]; !still {
 				settled = append(settled, r)
 				delete(m.fresh, r)
+				m.settling[r] = true
 			}
 		}
 		m.repaintActive()
