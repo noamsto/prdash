@@ -881,7 +881,11 @@ func (m *Model) renderList() {
 	launchEmpty := repoGrouped && n > 0 && ps.launchEmpty()
 	if launchEmpty {
 		b.WriteString(renderRepoHeader(ps.launch, stageCounts{}, innerW, false) + "\n")
-		b.WriteString(dimStyle.Render(truncate("  no open PRs", innerW)) + "\n")
+		empty := "  no open PRs"
+		if ps.hideDrafts {
+			empty = "  no PRs shown (drafts hidden)"
+		}
+		b.WriteString(dimStyle.Render(truncate(empty, innerW)) + "\n")
 		line += 2
 		prevRepo = ps.launch
 	}

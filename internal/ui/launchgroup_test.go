@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/prdash/internal/gh"
@@ -46,6 +47,37 @@ func TestLaunchGroupEmptyPlaceholder(t *testing.T) {
 	if m.cursor != 0 || ps.isFoldStop(0) || ps.repoAt(0) != "c/d" {
 		t.Fatalf("cursor %d is not the first real PR row", m.cursor)
 	}
+	for _, w := range []int{20, 40, 100} {
+		m := otherOnlyModel(t, 60)
+		m.width = w
+		m.renderList()
+		inner := m.layout().ListInner
+		lines := strings.Split(ansi.Strip(m.vp.GetContent()), "\n")
+		checked := lines
+		if w < 40 {
+			checked = lines[:2] // PR rows have a column floor wider than a 20-col list; only the launch group is ours
+		}
+		for i, ln := range checked {
+			if got := lipgloss.Width(ln); got > inner {
+				t.Fatalf("w=%d line %d width %d > inner %d: %q", w, i, got, inner, ln)
+			}
+		}
+		if len(lines) < 2 || strings.HasPrefix(lines[0], "  no") || strings.TrimSpace(lines[0]) == "" ||
+			!strings.HasPrefix(lines[1], "  no") {
+			t.Fatalf("w=%d: first two lines are not header+placeholder: %q", w, lines[:min(2, len(lines))])
+		}
+	}
+}
+
+func TestLaunchGroupEmptyPlaceholderHiddenDrafts(t *testing.T) {
+	m := otherOnlyModel(t, 60)
+	m.hideDrafts = true
+	m.section.(*PRSection).SetHideDrafts(true)
+	m.renderList()
+	out := ansi.Strip(m.View().Content)
+	if !strings.Contains(out, "  no PRs shown (drafts hidden)") || strings.Contains(out, "no open PRs") {
+		t.Fatalf("want drafts-hidden placeholder, got\n%s", out)
+	}
 }
 
 func TestLaunchGroupNeverFolds(t *testing.T) {
@@ -61,6 +93,9 @@ func TestLaunchGroupNeverFolds(t *testing.T) {
 	m = press(m, "e")
 	if got := boardLayout(m); !slices.Equal(got, before) {
 		t.Fatalf("e on launch row changed layout: %v -> %v", before, got)
+	}
+	if m.actionStatus == nil || m.actionStatus.fail != launchRepo+" stays expanded" {
+		t.Fatalf("status = %+v, want %q hint", m.actionStatus, launchRepo+" stays expanded")
 	}
 	// Other groups still fold and unfold.
 	ps := m.section.(*PRSection)
