@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,6 +37,16 @@ func (s RateSnapshot) fraction() float64 {
 type rateStore struct {
 	mu sync.Mutex
 	by map[string]RateSnapshot
+	// reqs counts every HTTP round trip through the transport, JobLog's redirect
+	// hops included. It exists so tests can pin requests-per-operation.
+	reqs atomic.Int64
+}
+
+func (s *rateStore) requests() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.reqs.Load()
 }
 
 func newRateStore() *rateStore { return &rateStore{by: map[string]RateSnapshot{}} }
@@ -128,6 +139,9 @@ func (t *rateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		r2.Header = req.Header.Clone()
 		r2.Header.Set("Accept", "application/vnd.github.merge-info-preview+json")
 		req = &r2
+	}
+	if t.store != nil {
+		t.store.reqs.Add(1)
 	}
 	resp, err := t.next.RoundTrip(req)
 	if err != nil {

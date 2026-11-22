@@ -95,7 +95,7 @@ func splitRepo(repo string) (owner, name string, err error) {
 }
 
 // groupRefs buckets refs by repo for the batched sources, which issue one
-// aliased request per repo; repos come back sorted so requests go out in a
+// aliased repository block per repo; repos come back sorted so blocks go out in a
 // stable order.
 func groupRefs(refs []PRRef) (repos []string, numbers map[string][]int) {
 	numbers = map[string][]int{}

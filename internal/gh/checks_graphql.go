@@ -1,13 +1,7 @@
 package gh
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 )
 
@@ -18,71 +12,29 @@ const checksFields = "commits(last:1){nodes{commit{statusCheckRollup{contexts(fi
 	" ... on CheckRun{name conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}}" +
 	" ... on StatusContext{context state targetUrl}}}}}}}"
 
-// FetchChecks fetches just the status-check rollup with one aliased request per
-// repo. This is the CI poll's query: a full list refetch costs a point per 25
-// rows per nested connection it selects, while one aliased pullRequest per PR
-// costs one point for the whole batch. A failing repo leaves the others' results
-// in the map and joins its error into err.
+// checksSpec batches the CI poll: one aliased pullRequest per PR costs one
+// point for the whole batch, while a full list refetch costs a point per 25 rows
+// per nested connection it selects. 50 PRs × 100 contexts stays far below the
+// node limit.
+var checksSpec = batchSpec{
+	label: "checks", aliasPrefix: "pr", field: "pullRequest",
+	selection: checksFields, maxPRs: 50, strict: true,
+}
+
+// FetchChecks fetches just the status-check rollup, batching every repo into
+// one aliased request per chunk. A failing repo leaves the others' results in
+// the map and joins its error into err.
 func (s GraphSource) FetchChecks(refs []PRRef) (map[PRRef][]Check, error) {
 	out := make(map[PRRef][]Check, len(refs))
-	repos, numbers := groupRefs(refs)
-	var errs []error
-	for _, repo := range repos {
-		checks, err := s.fetchRepoChecks(repo, numbers[repo])
-		if err != nil {
-			errs = append(errs, err)
-			continue
+	err := s.fetchAliased(checksSpec, refs, func(ref PRRef, raw json.RawMessage) error {
+		var ql qlChecks
+		if err := json.Unmarshal(raw, &ql); err != nil {
+			return err
 		}
-		for n, c := range checks {
-			out[PRRef{Repo: repo, Number: n}] = c
-		}
-	}
-	return out, errors.Join(errs...)
-}
-
-func (s GraphSource) fetchRepoChecks(repo string, numbers []int) (map[int][]Check, error) {
-	owner, name, err := splitRepo(repo)
-	if err != nil {
-		return nil, err
-	}
-	reqBody, err := json.Marshal(map[string]any{
-		"query":     buildChecksQuery(numbers),
-		"variables": map[string]string{"owner": owner, "name": name},
+		out[ref] = mapChecks(ql)
+		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, githubGraphQLURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("graphql checks: %s: %s", resp.Status, cleanBody(body))
-	}
-	return parseChecks(body, numbers)
-}
-
-// buildChecksQuery aliases one pullRequest(number:) per number under a single
-// repository query, mirroring buildDetailQuery. Numbers are ints, so inlining
-// them is injection-safe.
-func buildChecksQuery(numbers []int) string {
-	var b strings.Builder
-	b.WriteString("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){")
-	for _, n := range numbers {
-		fmt.Fprintf(&b, "pr%d:pullRequest(number:%d){%s}", n, n, checksFields)
-	}
-	b.WriteString("}}")
-	return b.String()
+	return out, err
 }
 
 // qlCheckContext is one statusCheckRollup context in JSON form. CheckRun and
@@ -117,33 +69,6 @@ type qlChecks struct {
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
-}
-
-// parseChecks maps the aliased response back per number. A PR whose rollup is
-// null yields an empty (non-nil) slice: "no checks" is an answer the poll must
-// be able to apply, distinct from "this PR wasn't in the response".
-func parseChecks(body []byte, numbers []int) (map[int][]Check, error) {
-	var resp struct {
-		Data struct {
-			Repository map[string]qlChecks `json:"repository"`
-		} `json:"data"`
-		Errors []struct{ Message string } `json:"errors"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse checks: %w", err)
-	}
-	if len(resp.Errors) > 0 {
-		return nil, fmt.Errorf("graphql checks: %s", CleanLine(resp.Errors[0].Message))
-	}
-	out := make(map[int][]Check, len(numbers))
-	for _, n := range numbers {
-		ql, ok := resp.Data.Repository[fmt.Sprintf("pr%d", n)]
-		if !ok {
-			continue
-		}
-		out[n] = mapChecks(ql)
-	}
-	return out, nil
 }
 
 // mapChecks flattens the rollup union into []Check, matching the field layout

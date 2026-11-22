@@ -1,13 +1,7 @@
 package gh
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 )
 
@@ -16,70 +10,28 @@ import (
 // key need, nothing else.
 const statesFields = "__typename ... on PullRequest{state mergedAt closedAt} ... on Issue{state closedAt}"
 
-// FetchStates looks up the current state of every ref with one aliased request
-// per repo. This is the held-row lookup: a departed or stale row's real state
-// without a full list refetch. A failing repo leaves the others' results in the
-// map and joins its error into err.
+// statesSpec is non-strict: an alias resolving to null (deleted, transferred)
+// carries a scoped error that must not discard its siblings.
+var statesSpec = batchSpec{
+	label: "states", aliasPrefix: "n", field: "issueOrPullRequest",
+	selection: statesFields, maxPRs: 100,
+}
+
+// FetchStates looks up the current state of every ref, batching every repo into
+// one aliased request per chunk. This is the held-row lookup: a departed or
+// stale row's real state without a full list refetch. A failing repo leaves the
+// others' results in the map and joins its error into err.
 func (s GraphSource) FetchStates(refs []PRRef) (map[PRRef]ItemState, error) {
 	out := make(map[PRRef]ItemState, len(refs))
-	repos, numbers := groupRefs(refs)
-	var errs []error
-	for _, repo := range repos {
-		states, err := s.fetchRepoStates(repo, numbers[repo])
-		if err != nil {
-			errs = append(errs, err)
-			continue
+	err := s.fetchAliased(statesSpec, refs, func(ref PRRef, raw json.RawMessage) error {
+		var ql qlState
+		if err := json.Unmarshal(raw, &ql); err != nil {
+			return err
 		}
-		for n, st := range states {
-			out[PRRef{Repo: repo, Number: n}] = st
-		}
-	}
-	return out, errors.Join(errs...)
-}
-
-func (s GraphSource) fetchRepoStates(repo string, numbers []int) (map[int]ItemState, error) {
-	owner, name, err := splitRepo(repo)
-	if err != nil {
-		return nil, err
-	}
-	reqBody, err := json.Marshal(map[string]any{
-		"query":     buildStatesQuery(numbers),
-		"variables": map[string]string{"owner": owner, "name": name},
+		out[ref] = mapState(ql)
+		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, githubGraphQLURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("graphql states: %s: %s", resp.Status, cleanBody(body))
-	}
-	return parseStates(body, numbers)
-}
-
-// buildStatesQuery aliases one issueOrPullRequest(number:) per number under a
-// single repository query, mirroring buildChecksQuery. Numbers are ints, so
-// inlining them is injection-safe.
-func buildStatesQuery(numbers []int) string {
-	var b strings.Builder
-	b.WriteString("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){")
-	for _, n := range numbers {
-		fmt.Fprintf(&b, "n%d:issueOrPullRequest(number:%d){%s}", n, n, statesFields)
-	}
-	b.WriteString("}}")
-	return b.String()
+	return out, err
 }
 
 // qlState is one issueOrPullRequest lookup result. PR and Issue share no
@@ -92,38 +44,14 @@ type qlState struct {
 	ClosedAt *time.Time `json:"closedAt"`
 }
 
-// parseStates maps the aliased response back per number. An alias resolving
-// to null (deleted, transferred) is simply absent from the result. Partial
-// GraphQL errors alongside data still yield the numbers that resolved; it
-// errors only when errors is present and repository is null/absent.
-func parseStates(body []byte, numbers []int) (map[int]ItemState, error) {
-	var resp struct {
-		Data struct {
-			Repository map[string]*qlState `json:"repository"`
-		} `json:"data"`
-		Errors []struct{ Message string } `json:"errors"`
+func mapState(ql qlState) ItemState {
+	st := ItemState{State: ql.State}
+	if ql.MergedAt != nil {
+		st.MergedAt = *ql.MergedAt
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse states: %w", err)
+	if ql.ClosedAt != nil {
+		st.ClosedAt = *ql.ClosedAt
 	}
-	if len(resp.Errors) > 0 && resp.Data.Repository == nil {
-		return nil, fmt.Errorf("graphql states: %s", CleanLine(resp.Errors[0].Message))
-	}
-	out := make(map[int]ItemState, len(numbers))
-	for _, n := range numbers {
-		ql, ok := resp.Data.Repository[fmt.Sprintf("n%d", n)]
-		if !ok || ql == nil {
-			continue
-		}
-		st := ItemState{State: ql.State}
-		if ql.MergedAt != nil {
-			st.MergedAt = *ql.MergedAt
-		}
-		if ql.ClosedAt != nil {
-			st.ClosedAt = *ql.ClosedAt
-		}
-		sanitize(&st)
-		out[n] = st
-	}
-	return out, nil
+	sanitize(&st)
+	return st
 }

@@ -1,13 +1,7 @@
 package gh
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 )
 
@@ -22,74 +16,35 @@ const detailFields = "comments(last:100){nodes{author{login __typename}body crea
 	"reviewRequests(first:100){nodes{requestedReviewer{__typename ... on User{login} ... on Bot{login} ... on Team{name}}}}" +
 	"files(first:100){nodes{path additions deletions}}" + threadsFields
 
-// FetchDetails fetches per-PR detail with one aliased GraphQL request per repo.
-// It returns the mapped details plus, per ref, the JSON bytes to cache
-// (marshalled PRDetail, so the hydrate path round-trips). A failing repo leaves
-// the others' results in the maps and joins its error into err.
+// detailSpec's 20-PR cap keeps a chunk near 50k of GitHub's 500k nodes: each PR
+// costs ~2.4k (threadsFields' 20 threads × 100 comments dominates).
+var detailSpec = batchSpec{
+	label: "detail", accept: "application/vnd.github.merge-info-preview+json",
+	aliasPrefix: "pr", field: "pullRequest",
+	selection: detailFields, maxPRs: 20, strict: true,
+}
+
+// FetchDetails fetches per-PR detail, batching every repo into one aliased
+// GraphQL request per chunk. It returns the mapped details plus, per ref, the
+// JSON bytes to cache (marshalled PRDetail, so the hydrate path round-trips). A
+// failing repo leaves the others' results in the maps and joins its error into
+// err.
 func (s GraphSource) FetchDetails(refs []PRRef) (map[PRRef]PRDetail, map[PRRef][]byte, error) {
 	details := make(map[PRRef]PRDetail, len(refs))
 	raws := make(map[PRRef][]byte, len(refs))
-	repos, numbers := groupRefs(refs)
-	var errs []error
-	for _, repo := range repos {
-		d, r, err := s.fetchRepoDetails(repo, numbers[repo])
-		if err != nil {
-			errs = append(errs, err)
-			continue
+	err := s.fetchAliased(detailSpec, refs, func(ref PRRef, raw json.RawMessage) error {
+		var ql qlDetail
+		if err := json.Unmarshal(raw, &ql); err != nil {
+			return err
 		}
-		for n, v := range d {
-			details[PRRef{Repo: repo, Number: n}] = v
+		d := mapDetail(ql)
+		details[ref] = d
+		if b, err := json.Marshal(d); err == nil {
+			raws[ref] = b
 		}
-		for n, v := range r {
-			raws[PRRef{Repo: repo, Number: n}] = v
-		}
-	}
-	return details, raws, errors.Join(errs...)
-}
-
-func (s GraphSource) fetchRepoDetails(repo string, numbers []int) (map[int]PRDetail, map[int][]byte, error) {
-	owner, name, err := splitRepo(repo)
-	if err != nil {
-		return nil, nil, err
-	}
-	reqBody, err := json.Marshal(map[string]any{
-		"query":     buildDetailQuery(numbers),
-		"variables": map[string]string{"owner": owner, "name": name},
+		return nil
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, githubGraphQLURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/vnd.github.merge-info-preview+json")
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("graphql detail: %s: %s", resp.Status, cleanBody(body))
-	}
-	return parseDetails(body, numbers)
-}
-
-// buildDetailQuery aliases one pullRequest(number:) selection per number under a
-// single repository query. Numbers are ints, so inlining them is injection-safe.
-func buildDetailQuery(numbers []int) string {
-	var b strings.Builder
-	b.WriteString("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){")
-	for _, n := range numbers {
-		fmt.Fprintf(&b, "pr%d:pullRequest(number:%d){%s}", n, n, detailFields)
-	}
-	b.WriteString("}}")
-	return b.String()
+	return details, raws, err
 }
 
 type qlActor struct {
@@ -133,35 +88,6 @@ type qlDetail struct {
 		}
 	} `json:"files"`
 	ReviewThreads qlThreads `json:"reviewThreads"`
-}
-
-func parseDetails(body []byte, numbers []int) (map[int]PRDetail, map[int][]byte, error) {
-	var resp struct {
-		Data struct {
-			Repository map[string]qlDetail `json:"repository"`
-		} `json:"data"`
-		Errors []struct{ Message string } `json:"errors"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, nil, fmt.Errorf("parse detail: %w", err)
-	}
-	if len(resp.Errors) > 0 {
-		return nil, nil, fmt.Errorf("graphql detail: %s", CleanLine(resp.Errors[0].Message))
-	}
-	details := make(map[int]PRDetail, len(numbers))
-	raws := make(map[int][]byte, len(numbers))
-	for _, n := range numbers {
-		ql, ok := resp.Data.Repository[fmt.Sprintf("pr%d", n)]
-		if !ok {
-			continue
-		}
-		d := mapDetail(ql)
-		details[n] = d
-		if raw, err := json.Marshal(d); err == nil {
-			raws[n] = raw
-		}
-	}
-	return details, raws, nil
 }
 
 func mapDetail(q qlDetail) PRDetail {
