@@ -147,10 +147,12 @@ func forDependabot(c Card, pr gh.PR) Card {
 	if !gh.IsDependabot(pr.Author.Login) {
 		return c
 	}
-	if c.Kind == KindConflict || c.Kind == KindBehind {
+	switch c.Kind {
+	case KindConflict, KindBehind:
 		c.ActionKey, c.ActionLabel = "d", "ask Dependabot to rebase"
-	} else if c.Kind == KindChecksFailing {
+	case KindChecksFailing:
 		c.Alt = "d: ask Dependabot to rebase if the failure is stale"
+	default:
 	}
 	return c
 }
