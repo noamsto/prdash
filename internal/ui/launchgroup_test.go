@@ -40,8 +40,8 @@ func TestLaunchGroupEmptyPlaceholder(t *testing.T) {
 	if lh < 0 || ph < lh || oh < ph {
 		t.Fatalf("want launch header (zero count), placeholder, then first other header; got offsets %d %d %d in\n%s", lh, ph, oh, out)
 	}
-	if got := boardLayout(m)[0]; got != "c/d#09" {
-		t.Fatalf("first shown = %q, want c/d#09", got)
+	if got := boardLayout(m); len(got) == 0 || got[0] != "c/d#09" {
+		t.Fatalf("first shown = %v, want c/d#09 first", got)
 	}
 	if m.cursor != 0 || ps.isFoldStop(0) || ps.repoAt(0) != "c/d" {
 		t.Fatalf("cursor %d is not the first real PR row", m.cursor)
