@@ -1627,8 +1627,7 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 
 // noRepoSectionsFetchCmd is sectionsFetchCmd outside a repo: the cross-repo
 // search is the whole board, so its failure is the board error rather than a
-// hint. A missing cross source lands an empty board instead of falling back to
-// a repo-scoped search.
+// hint, and a missing cross source lands an empty board.
 func (m Model) noRepoSectionsFetchCmd(replace bool) tea.Cmd {
 	crossSrc := m.crossSource
 	state := m.state
