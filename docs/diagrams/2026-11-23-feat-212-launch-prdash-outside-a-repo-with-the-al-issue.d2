@@ -1,0 +1,26 @@
+direction: down
+
+main: "main.go\nRepoFromGit(dir)"
+notice: "RunNotice\n'Not inside a GitHub repository'\nos.Exit(1)" { class: warn }
+model: "ui.Model\nSetRepo(repo)"
+gs: "gh.GraphSource{repo}"
+
+launch: "launchFetchCmds" {
+  sections: "sectionsFetchCmd"
+  prewarm: "issues / members / runs\nprewarm"
+}
+
+fetchprs: "FetchPRs\n'repo:X is:pr …'"
+cross: "FetchCrossRepoPRs\n'is:pr -repo:X …'"
+repoapis: "FetchIssues · ListRuns\nFetchAssignableUsers(X)"
+board: "PRSection\nlaunch group first + placeholder\nthen other repos"
+
+main -> notice: "ErrNoRepo" { class: warn }
+main -> model: "owner/name"
+main -> gs: "owner/name"
+model -> launch
+launch.sections -> fetchprs: "3 searches"
+launch.sections -> cross: "1 aliased search"
+launch.prewarm -> repoapis
+fetchprs -> board
+cross -> board
