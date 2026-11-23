@@ -1133,11 +1133,17 @@ func (m *Model) omniServerCmd() tea.Cmd {
 		if server == m.omniHinted {
 			return nil
 		}
-		m.omniHinted = server
 		if server == "" {
+			m.omniHinted = ""
 			return nil
 		}
-		return m.hint("search qualifiers need " + noRepoHint)
+		// hint is silent while an action runs; record only a shown hint so the
+		// qualifier is hinted again once it can be.
+		cmd := m.hint("search qualifiers need " + noRepoHint)
+		if cmd != nil {
+			m.omniHinted = server
+		}
+		return cmd
 	}
 	if server == m.omniServer {
 		return nil
@@ -3640,10 +3646,16 @@ func (m Model) filterBar() string {
 	case m.filtering:
 		body = m.filterInput.View()
 	case m.filterInput.Value() != "":
+		tail := "  esc clears"
+		if server, _ := parseOmni(m.filterInput.Value()); m.noRepo() && server != "" {
+			tail = "  qualifiers need a repo · esc clears"
+		}
 		body = accentStyle.Render(truncate(m.filterInput.Value(), inner)) +
-			dimStyle.Render("  esc clears")
+			dimStyle.Render(tail)
 	case m.mode == "run":
 		body = dimStyle.Render("filter — branch: · workflow: · event: · @actor · text")
+	case m.noRepo():
+		body = dimStyle.Render("filter — text")
 	default:
 		body = dimStyle.Render("filter — @user · is: · text")
 	}
@@ -4146,7 +4158,11 @@ func (m Model) keyPanes() []legendGroup {
 	nav = append(nav, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
 
-	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}}
+	filterLabel := "filter (@user, is:, text)"
+	if m.noRepo() {
+		filterLabel = "filter (text)"
+	}
+	filters := []keyHint{{"/", filterLabel, nil}}
 	if !m.noRepo() {
 		filters = append(filters, keyHint{"s", "state", nil})
 	}

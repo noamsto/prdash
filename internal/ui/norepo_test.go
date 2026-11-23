@@ -434,3 +434,60 @@ func TestNoRepoChromeOmitsRepoScopedKeys(t *testing.T) {
 		t.Errorf("in-repo status bar lost PRs/Issues/Runs: %q", bar)
 	}
 }
+
+func TestNoRepoQualifierHintWaitsForVisibleHint(t *testing.T) {
+	m, _, _, _ := noRepoModel(t)
+	m, _ = runLaunch(t, m)
+	m, _ = update(m, keyMsg("/"))
+
+	m.actionStatus = &actionStat{}
+	m, _ = typeOmni(t, m, "@bob")
+	if got := failText(m); got != "" {
+		t.Errorf("hint shown while an action runs: %q", got)
+	}
+	if m.omniHinted != "" {
+		t.Errorf("omniHinted = %q, want empty while the hint was suppressed", m.omniHinted)
+	}
+
+	m.actionStatus = &actionStat{settled: true}
+	m, _ = typeOmni(t, m, "x")
+	if got := failText(m); !strings.Contains(got, "search qualifiers need") {
+		t.Errorf("hint after settling = %q", got)
+	}
+}
+
+func TestNoRepoFilterChromeDropsQualifiers(t *testing.T) {
+	m, _, _, _ := noRepoModel(t)
+	m, _ = runLaunch(t, m)
+
+	bar := ansi.Strip(m.filterBar())
+	if !strings.Contains(bar, "filter — text") || strings.Contains(bar, "@user") {
+		t.Errorf("empty filter bar = %q", bar)
+	}
+
+	m, _ = update(m, keyMsg("/"))
+	m, _ = typeOmni(t, m, "is:draft")
+	m, _ = update(m, keyMsg("enter"))
+	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "qualifiers need a repo") {
+		t.Errorf("committed filter bar = %q", bar)
+	}
+
+	found := false
+	for _, g := range m.keyPanes() {
+		for _, h := range g.hints {
+			if h.key == "/" {
+				found = h.label == "filter (text)"
+			}
+		}
+	}
+	if !found {
+		t.Errorf("legend has no hint labelled %q", "filter (text)")
+	}
+
+	in := NewModel(t.TempDir(), "is:open", nil)
+	in.SetRepo("owner/repo")
+	in.width, in.height = 140, 30
+	if bar := ansi.Strip(in.filterBar()); !strings.Contains(bar, "filter — @user · is: · text") {
+		t.Errorf("in-repo filter bar = %q", bar)
+	}
+}
