@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/noamsto/prdash/internal/action"
 	"github.com/noamsto/prdash/internal/cache"
 	"github.com/noamsto/prdash/internal/gh"
 )
@@ -250,5 +253,161 @@ func TestNoRepoCrossFailureIsBoardError(t *testing.T) {
 	}
 	if m.actionStatus != nil && strings.Contains(m.actionStatus.fail, "Other repos:") {
 		t.Errorf("status = %q, want no Other repos hint", m.actionStatus.fail)
+	}
+}
+
+func typeOmni(t *testing.T, m Model, s string) (Model, []tea.Cmd) {
+	t.Helper()
+	var cmds []tea.Cmd
+	for _, r := range s {
+		var cmd tea.Cmd
+		m, cmd = update(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+		cmds = append(cmds, cmd)
+	}
+	return m, cmds
+}
+
+func failText(m Model) string {
+	if m.actionStatus == nil {
+		return ""
+	}
+	return m.actionStatus.fail
+}
+
+func TestNoRepoBoardRendersGroupsOnly(t *testing.T) {
+	m, _, _, _ := noRepoModel(t)
+	m, _ = runLaunch(t, m)
+
+	if got := boardLayout(m); !slices.Equal(got, []string{"b/two#07", "a/one#03"}) {
+		t.Fatalf("layout = %v", got)
+	}
+	view := ansi.Strip(m.render())
+	if strings.Contains(view, "no open PRs") {
+		t.Error("view shows the empty-launch-group placeholder")
+	}
+	if i, j := strings.Index(view, "b/two"), strings.Index(view, "a/one"); i < 0 || j < 0 || i > j {
+		t.Errorf("b/two (%d) must precede a/one (%d)", i, j)
+	}
+	head := ansi.Strip(m.header())
+	if !strings.Contains(head, "all repos") || strings.Contains(head, "Issues") || strings.Contains(head, "Runs") {
+		t.Errorf("header = %q, want all repos and only the PRs board", head)
+	}
+
+	m.cursor = 0
+	before := boardLayout(m)
+	m, _ = update(m, keyMsg("e"))
+	if after := boardLayout(m); slices.Equal(before, after) {
+		t.Errorf("e did not fold the first group: %v", after)
+	}
+}
+
+func TestNoRepoRepoScopedKeysHint(t *testing.T) {
+	m, cross, _, _ := noRepoModel(t)
+	m, _ = runLaunch(t, m)
+
+	for _, tc := range []struct{ key, want string }{
+		{"tab", "Issues and Runs need"},
+		{"shift+tab", "Issues and Runs need"},
+		{"s", "merged and closed need"},
+		{"g", "Grouping by author needs"},
+	} {
+		m.actionStatus = nil
+		var cmd tea.Cmd
+		m, cmd = update(m, keyMsg(tc.key))
+		if cmd == nil {
+			t.Errorf("%s: no clear-status cmd", tc.key)
+		}
+		if m.mode != "pr" || m.state != "open" {
+			t.Errorf("%s: mode/state = %s/%s, want pr/open", tc.key, m.mode, m.state)
+		}
+		if got := failText(m); !strings.Contains(got, tc.want) || !strings.Contains(got, "start prdash inside a GitHub checkout") {
+			t.Errorf("%s: hint = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+
+	m, _ = update(m, keyMsg("/"))
+	var cmds []tea.Cmd
+	m, cmds = typeOmni(t, m, "is:merged")
+	for _, cmd := range cmds {
+		for _, msg := range collectMsgs(t, cmd) {
+			m, _ = update(m, msg)
+		}
+	}
+	if m.omniServer != "" || m.filter != "is:open" {
+		t.Errorf("omniServer/filter = %q/%q, want the filter untouched", m.omniServer, m.filter)
+	}
+	if got := failText(m); !strings.Contains(got, "search qualifiers need") {
+		t.Errorf("qualifier hint = %q", got)
+	}
+	m, _ = update(m, keyMsg("esc"))
+	m, cmd := update(m, keyMsg("ctrl+r"))
+	for _, msg := range collectMsgs(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	if cross.callCount() < 2 {
+		t.Errorf("cross fetches = %d, want the ctrl+r refresh to use the cross source", cross.callCount())
+	}
+}
+
+func TestNoRepoActionTargetsRowRepo(t *testing.T) {
+	m, _, _, _ := noRepoModel(t)
+	checkout := t.TempDir()
+	fd := &fakeDetailSource{}
+	m.SetDetailSource(fd)
+	m.setPRs([]gh.PR{repoPR("other/x", 7, "me", "2026-03-01")})
+	m.renderList()
+
+	oldCheckout, oldPreflight := checkoutForFn, preflightSwitchFn
+	t.Cleanup(func() { checkoutForFn, preflightSwitchFn = oldCheckout, oldPreflight })
+	var gotRepo string
+	checkoutForFn = func(_, repo string) (string, error) {
+		gotRepo = repo
+		return checkout, nil
+	}
+	preflightSwitchFn = func(string, string) (gh.SwitchPreflight, error) { return gh.SwitchPreflight{}, nil }
+	handoff := filepath.Join(t.TempDir(), "handoff")
+	t.Setenv("PRDASH_ACTION_FILE", handoff)
+
+	m, cmd := pressEnter(t, m, 0)
+	if cmd == nil {
+		t.Fatal("enter returned no cmd")
+	}
+	update(m, firstBatchMsg(t, cmd))
+
+	if gotRepo != "other/x" {
+		t.Errorf("checkout resolved for %q, want other/x", gotRepo)
+	}
+	want := []string{"wt", "-C", checkout, "switch", "pr:7"}
+	if got := handoffLines(t, handoff); len(got) != 1 || !slices.Equal(got[0], want) {
+		t.Errorf("handoff = %v, want [%v]", got, want)
+	}
+
+	m.detailSeq++
+	if dc := m.detailCmdForCursor(); dc != nil {
+		collectMsgs(t, dc)
+	}
+	if len(fd.got) != 1 || fd.got[0][0] != (gh.PRRef{Repo: "other/x", Number: 7}) {
+		t.Errorf("detail refs = %v, want other/x#7", fd.got)
+	}
+}
+
+func TestNoRepoNonSwitchExitNotice(t *testing.T) {
+	m, _, _, _ := noRepoModel(t)
+	m.setPRs([]gh.PR{repoPR("other/x", 7, "me", "2026-03-01")})
+	m.renderList()
+	oldCheckout := checkoutForFn
+	t.Cleanup(func() { checkoutForFn = oldCheckout })
+	checkoutForFn = func(_, _ string) (string, error) { return t.TempDir(), nil }
+	m.actions["enter"] = action.Action{
+		Key:      "enter",
+		Command:  action.Command{Argv: []string{"echo", "{{.Number}}"}},
+		ExitsTUI: true,
+	}
+
+	m, cmd := pressEnter(t, m, 0)
+
+	notQuit(t, cmd)
+	if !strings.Contains(m.switchNotice, "needs a launch repo") || strings.Contains(m.switchNotice, "on  rows") {
+		t.Errorf("switchNotice = %q", m.switchNotice)
 	}
 }

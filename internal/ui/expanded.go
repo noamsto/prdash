@@ -487,7 +487,7 @@ func (m Model) expandedLegendGroups() []legendGroup {
 // active tab's content framed in a tabbed box — the same rounded chrome as the
 // board's titled boxes — with the keys hint beneath.
 func (m Model) expandedView() string {
-	n, repo := 0, m.repo
+	n, repo := 0, m.repoLabel()
 	if v, ok := m.cursorVars(); ok {
 		n, repo = v.Number, v.Repo
 	}

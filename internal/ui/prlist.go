@@ -38,6 +38,7 @@ type Model struct {
 	state             string               // open | merged | closed; the s-toggle dimension
 	body              string               // state-agnostic qualifier (e.g. "author:@me", "")
 	mode              string               // "pr" | "issue" | "run"; the Tab-cycle dimension
+	omniHinted        string               // qualifier half last answered with the no-repo hint; never feeds the filter
 	omniServer        string               // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
 	omniSeq           int                  // bumped on each server-qualifier change; gates the debounced SWR refetch
 	boards            map[string]boardView // each inactive board's saved state/preset, by mode (restored when Tab returns to it)
@@ -289,6 +290,19 @@ func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo, m.repoless = repo,
 // an explicit SetRepo("") rather than an empty m.repo, which a model built
 // without SetRepo also has.
 func (m Model) noRepo() bool { return m.repoless }
+
+// noRepoHint finishes a "<feature> needs ..." message for a repo-scoped entry
+// point used outside a checkout.
+const noRepoHint = "a repo: start prdash inside a GitHub checkout"
+
+// repoLabel is the repo shown in headers: the launch repo, or "all repos"
+// outside a checkout.
+func (m Model) repoLabel() string {
+	if m.noRepo() {
+		return "all repos"
+	}
+	return m.repo
+}
 
 // SetReposRoot sets where other repos' local checkouts are looked up.
 func (m *Model) SetReposRoot(root string) { m.reposRoot = root }
@@ -1115,6 +1129,16 @@ func cursorDelta(key string) int {
 // applyFilter (instant), so a pure-text edit arms nothing.
 func (m *Model) omniServerCmd() tea.Cmd {
 	server, _ := parseOmni(m.filterInput.Value())
+	if m.noRepo() {
+		if server == m.omniHinted {
+			return nil
+		}
+		m.omniHinted = server
+		if server == "" {
+			return nil
+		}
+		return m.hint("search qualifiers need " + noRepoHint)
+	}
 	if server == m.omniServer {
 		return nil
 	}
@@ -3128,6 +3152,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleFold()
 			return m, nil
 		case "s":
+			if m.noRepo() {
+				return m.statusHint("merged and closed need " + noRepoHint)
+			}
 			if m.mode == "run" {
 				cmd := m.cycleRunState()
 				return m, cmd
@@ -3139,9 +3166,13 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.filter = searchFor(m.mode, m.state, body)
 			return m, m.switchToFilter()
-		case "tab":
-			return m, m.cycleBoard(1)
-		case "shift+tab":
+		case "tab", "shift+tab":
+			if m.noRepo() {
+				return m.statusHint("Issues and Runs need " + noRepoHint)
+			}
+			if msg.String() == "tab" {
+				return m, m.cycleBoard(1)
+			}
 			return m, m.cycleBoard(-1)
 		case "ctrl+r":
 			// The one refresh the user asked for by name: held rows go once its
@@ -3174,6 +3205,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "g":
 			if m.mode != "pr" {
 				return m.prOnly("Grouping", "g")
+			}
+			if m.noRepo() {
+				return m.statusHint("Grouping by author needs " + noRepoHint)
 			}
 			if !m.sectionsDefault() {
 				return m.statusHint("Already grouped by author in this view")
@@ -3212,7 +3246,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filtering = true
 			cmds := []tea.Cmd{m.filterInput.Focus()}
-			if m.mode == "pr" {
+			if m.mode == "pr" && !m.noRepo() {
 				m.switchMembers(m.repo) // @-completion names the launch repo's users
 				if m.members == nil {
 					cmds = append(cmds, m.fetchMembersCmd(m.repo))
@@ -3227,6 +3261,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.filterInput.SetValue("")
+			m.omniHinted = ""
 			m.sel.clear()
 			anchor, order := m.cursorAnchor()
 			m.revealCursorRepo()
@@ -3820,16 +3855,18 @@ func accentFor(mode string) lipgloss.Style {
 // modeSegments renders the "PRs │ Issues │ Runs" board switch: each segment
 // carries its board glyph, and the active one is lit in that board's accent color.
 func modeSegments(active string) string {
-	return boardSegments(active, false)
+	return boardSegments(active, false, false)
 }
 
 // modeSegmentsCompact is modeSegments with the inactive boards reduced to their
 // glyph, for a header too narrow to fit all three names beside the repo.
 func modeSegmentsCompact(active string) string {
-	return boardSegments(active, true)
+	return boardSegments(active, true, false)
 }
 
-func boardSegments(active string, compact bool) string {
+// boardSegments renders every board, or only PRs when noRepo: Issues and Runs
+// are repo-scoped.
+func boardSegments(active string, compact, noRepo bool) string {
 	seg := func(name, mode string) string {
 		if mode == active {
 			return accentFor(mode).Bold(true).Render(modeGlyph(mode) + " " + name)
@@ -3838,6 +3875,9 @@ func boardSegments(active string, compact bool) string {
 			return dimStyle.Render(modeGlyph(mode))
 		}
 		return dimStyle.Render(modeGlyph(mode) + " " + name)
+	}
+	if noRepo {
+		return seg("PRs", "pr")
 	}
 	sep := dimStyle.Render(" │ ")
 	return seg("PRs", "pr") + sep + seg("Issues", "issue") + sep + seg("Runs", "run")
@@ -3850,7 +3890,7 @@ const minRepoCells = 12
 // header is the global top line: repo · board segments · (spinner) · (badge) ·
 // (selection). The current view (preset/state/count) lives on the list title.
 func (m Model) header() string {
-	boards := "  " + modeSegments(m.mode)
+	boards := "  " + boardSegments(m.mode, false, m.noRepo())
 	sel := ""
 	if n := m.sel.count(); n > 0 {
 		sel = "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
@@ -3868,12 +3908,12 @@ func (m Model) header() string {
 		return m.width - lipgloss.Width(boards) - lipgloss.Width(sel) - lipgloss.Width(spin) - 2
 	}
 	if budget("") < minRepoCells {
-		boards = "  " + modeSegmentsCompact(m.mode)
+		boards = "  " + boardSegments(m.mode, true, m.noRepo())
 	}
 	if budget(spin) < minRepoCells {
 		spin = ""
 	}
-	repo := truncateLeft(m.repo, budget(spin))
+	repo := truncateLeft(m.repoLabel(), budget(spin))
 	h := headerStyle.Render("  "+repo) + boards + spin
 	h += m.statusBadge(m.width - lipgloss.Width(h))
 	h += sel
