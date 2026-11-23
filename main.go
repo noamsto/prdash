@@ -15,16 +15,24 @@ import (
 	"github.com/noamsto/prdash/internal/ui"
 )
 
+var repoFromGit = gh.RepoFromGit
+
+// resolveRepo returns the launch repo, or "" when dir is outside a GitHub
+// checkout (the all-repos board).
+func resolveRepo(dir string) (string, error) {
+	repo, err := repoFromGit(dir)
+	if errors.Is(err, gh.ErrNoRepo) {
+		return "", nil
+	}
+	return repo, err
+}
+
 func main() {
 	dir, _ := os.Getwd()
 
-	repo, err := gh.RepoFromGit(dir)
+	repo, err := resolveRepo(dir)
 	if err != nil {
-		body := "Not inside a GitHub repository.\n\ncd into a repo with a github.com origin remote, then run prdash again."
-		if !errors.Is(err, gh.ErrNoRepo) {
-			body = fmt.Sprintf("Could not resolve the GitHub repo.\n\n%s", err)
-		}
-		ui.RunNotice("prdash", body) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
+		ui.RunNotice("prdash", fmt.Sprintf("Could not resolve the GitHub repo.\n\n%s", err)) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
 		os.Exit(1)
 	}
 
@@ -47,33 +55,7 @@ func main() {
 	}
 	c := cache.Open(filepath.Join(stateDir, "prdash", "results-cache.json"))
 
-	m := ui.NewModel(dir, "is:open", c)
-	m.SetRepo(repo)
-	root := os.Getenv("PRDASH_REPOS_ROOT")
-	if root == "" {
-		root = gh.DefaultReposRoot()
-	}
-	m.SetReposRoot(root)
-	if os.Getenv("PRDASH_FRAME") == "1" {
-		m.SetOuterFrame(true)
-	}
-	gs := gh.NewGraphSource(tok, repo)
-	m.SetPRSource(gs)
-	m.SetDetailSource(gs)
-	m.SetStackSource(gs)
-	m.SetCrossRepoSource(gs)
-	m.SetChecksSource(gs)
-	m.SetStateSource(gs)
-	m.SetIssueSource(gs)
-	m.SetIssueDetailSource(gs)
-	m.SetViewerSource(gs)
-	m.SetMembersSource(gs)
-	m.SetMutationSource(gs)
-	m.SetActionsSource(gs)
-	m.SetRunsSource(gs)
-	m.SetRateSource(gs)
-	m.InitTheme()
-	m.Hydrate()
+	m := buildModel(dir, repo, gh.NewGraphSource(tok, repo), c)
 
 	final, err := tea.NewProgram(m).Run()
 	c.Flush() // persist any debounced cache writes before we exit
@@ -91,6 +73,37 @@ func main() {
 			}
 		}
 	}
+}
+
+// buildModel wires the model for repo ("" for the all-repos board) to gs and c.
+func buildModel(dir, repo string, gs gh.GraphSource, c *cache.Cache) ui.Model {
+	m := ui.NewModel(dir, "is:open", c)
+	m.SetRepo(repo)
+	root := os.Getenv("PRDASH_REPOS_ROOT")
+	if root == "" {
+		root = gh.DefaultReposRoot()
+	}
+	m.SetReposRoot(root)
+	if os.Getenv("PRDASH_FRAME") == "1" {
+		m.SetOuterFrame(true)
+	}
+	m.SetPRSource(gs)
+	m.SetDetailSource(gs)
+	m.SetStackSource(gs)
+	m.SetCrossRepoSource(gs)
+	m.SetChecksSource(gs)
+	m.SetStateSource(gs)
+	m.SetIssueSource(gs)
+	m.SetIssueDetailSource(gs)
+	m.SetViewerSource(gs)
+	m.SetMembersSource(gs)
+	m.SetMutationSource(gs)
+	m.SetActionsSource(gs)
+	m.SetRunsSource(gs)
+	m.SetRateSource(gs)
+	m.InitTheme()
+	m.Hydrate()
+	return m
 }
 
 // runExit runs one queued exits-TUI command with the terminal attached, so an
