@@ -266,5 +266,6 @@ type switchPreflightMsg struct {
 	key      string
 	queue    [][]string // argv sets to run after quit; nil when notice holds the screen
 	notice   string
-	exitsTUI bool // whether a clean result should tea.Quit, mirroring the sync path's a.ExitsTUI check
+	exitsTUI bool                  // whether a clean result should tea.Quit, mirroring the sync path's a.ExitsTUI check
+	remote   []action.HandoffEntry // path-free entries to write once the preflight passes
 }

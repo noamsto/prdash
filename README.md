@@ -160,6 +160,17 @@ for the rows it shows, so folding a group takes its PRs out of that work.
   and painted on launch like the main list. It takes the 100 most recently
   updated matching PRs, so repos past that are not shown.
 
+## Launching for a named repo
+
+`prdash --repo owner/name` shows that repo's board without needing a local
+checkout of it, regardless of the current directory (any other value is
+rejected). Boards, Issues, Runs, the state cycle `s` and typed qualifiers work
+as in a checkout. Actions that need a local checkout of the repo (worktrees,
+branch cleanup) look for one under `$PRDASH_REPOS_ROOT/<owner>/<repo>` and
+otherwise show a notice, or, with `PRDASH_ACTION_FILE` set, hand off a path-free
+entry (see [Worktree handoff](#worktree-handoff)). Without `--repo`, nothing
+changes.
+
 ## Worktree handoff
 
 `enter` and `W` (bulk) open git worktrees, which must run in the parent shell so
@@ -168,9 +179,40 @@ the tmux window can switch. prdash supports two modes:
 - **Standalone** — with no orchestrator, prdash exits the alt-screen and runs the
   command itself (`wt switch <branch>`, or `wt switch pr:N` when the branch isn't
   fetched locally or the PR comes from a fork), so the worktree opens directly.
-- **Orchestrated** — when `PRDASH_ACTION_FILE` is set, prdash appends the chosen
-  command to that file and quits; a wrapper (e.g. the lazytmux popup binding)
-  reads and runs it. This is how the `prefix + p` popup integration works.
+- **Orchestrated** — when `PRDASH_ACTION_FILE` is set, prdash appends one line
+  per chosen action to that file and quits; a wrapper (e.g. a tmux popup binding)
+  reads the file and runs or forwards each entry.
+
+Each line is `<key>\t<json>`, where `<key>` is the action key (`enter`, `W`, …)
+and the JSON is one of two shapes, told apart by its first byte:
+
+- `[...]` — an argv to run, e.g. `["wt","switch","feat/x"]`, or
+  `["wt","-C","/path/to/checkout","switch","pr:7"]` for another repo's local
+  checkout.
+- `{...}` — a path-free entry, written only when prdash was launched with
+  `--repo` and no local checkout of the row's repo exists, so the far side can
+  resolve its own checkout:
+
+  ```json
+  {"repo":"owner/name","kind":"pr","target":"feat/x","pr":7,"args":["switch","feat/x"],"key":"enter"}
+  ```
+
+  | Field | Meaning |
+  |-------|---------|
+  | `repo` | `owner/name` of the row |
+  | `kind` | `pr` or `issue` |
+  | `target` | what `wt switch` should open: the head branch, `pr:N` for fork PRs, the derived branch for issues |
+  | `pr` | PR number (PR rows only); the head branch may not be fetched on the far side, so a consumer can fall back to `pr:<pr>` |
+  | `args` | the `wt` arguments without the leading `wt` and any `-C <dir>`, e.g. `["switch","-c","feat/x"]` for issues |
+  | `key` | the action key, same as the line prefix |
+
+  Compare `repo` case-insensitively (it is GitHub's spelling for PR rows and
+  the `--repo` value as typed for issue rows). Run `args` as an argv; when
+  forwarding over ssh, shell-quote each element on every hop. A head branch that
+  is not a plain branch name is sent as `pr:<pr>` instead.
+
+  With `--repo` and a local checkout at a different path, the argv form is
+  still written, carrying that local path.
 
 On another repo's PR, `enter` and `W` run `wt -C <checkout> switch …` in that
 repo's local checkout (see [Repo groups](#repo-groups)).

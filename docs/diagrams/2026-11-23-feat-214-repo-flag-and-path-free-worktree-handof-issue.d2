@@ -1,0 +1,13 @@
+cwd: "cwd"
+main: "main.go resolveRepo(cwd)\nlaunch repo = cwd checkout only"
+model: "ui.Model.checkoutDir\nlaunch repo -> m.dir (cwd)"
+exit: "actions.go runAction/runBulk\nwt switch argv, Dir=cwd"
+notice: "CheckoutError notice\n(path it tried)"
+file: "PRDASH_ACTION_FILE\nkey TAB argv-json (local paths)"
+consumer: "tmux-og on remote pane\nneeds repo + target, not local paths"
+cwd -> main
+main -> model
+model -> exit
+exit -> notice: "no checkout"
+exit -> file: "argv with local path"
+file -> consumer: "unusable remotely" { style.stroke: red }

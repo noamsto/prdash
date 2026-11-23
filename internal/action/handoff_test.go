@@ -24,3 +24,16 @@ func TestAppendHandoff(t *testing.T) {
 		t.Fatalf("line format: %q", lines[0])
 	}
 }
+
+func TestAppendHandoffRemote(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "actions")
+	e := HandoffEntry{Repo: "o/n", Kind: "pr", Target: "feat/x", PR: 4, Args: []string{"switch", "-c", "feat/x"}, Key: "enter"}
+	if err := AppendHandoffRemote(p, e); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	want := `enter` + "\t" + `{"repo":"o/n","kind":"pr","target":"feat/x","pr":4,"args":["switch","-c","feat/x"],"key":"enter"}` + "\n"
+	if string(b) != want {
+		t.Fatalf("got %q, want %q", b, want)
+	}
+}
