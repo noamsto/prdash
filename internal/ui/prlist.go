@@ -4140,12 +4140,21 @@ func (m Model) keyPanes() []legendGroup {
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand", nil}, keyHint{"e", "fold repo group", nil})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
+	if !m.noRepo() {
+		nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil})
+	}
+	nav = append(nav, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
 
-	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}, {"s", "state", nil}}
+	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}}
+	if !m.noRepo() {
+		filters = append(filters, keyHint{"s", "state", nil})
+	}
 	if m.mode == "pr" {
-		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil}, keyHint{"g", "group by author", nil})
+		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil})
+		if !m.noRepo() {
+			filters = append(filters, keyHint{"g", "group by author", nil})
+		}
 	}
 	groups = append(groups, legendGroup{"filters", filters})
 
@@ -4564,8 +4573,10 @@ func (m Model) statusBar() string {
 	if m.mode == "run" {
 		enter = "logs"
 	}
-	cells = append(cells, keep("↵", enter), keep("a", "actions"),
-		statusCell{hint("⇥", "PRs/Issues/Runs"), shedBoard})
+	cells = append(cells, keep("↵", enter), keep("a", "actions"))
+	if !m.noRepo() {
+		cells = append(cells, statusCell{hint("⇥", "PRs/Issues/Runs"), shedBoard})
+	}
 	if m.mode == "run" {
 		cells = append(cells, statusCell{hint("r", "rerun"), shedRunExtra}, statusCell{hint("o", "open"), shedRunExtra})
 	}

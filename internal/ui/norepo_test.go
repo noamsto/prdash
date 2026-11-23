@@ -411,3 +411,26 @@ func TestNoRepoNonSwitchExitNotice(t *testing.T) {
 		t.Errorf("switchNotice = %q", m.switchNotice)
 	}
 }
+
+func TestNoRepoChromeOmitsRepoScopedKeys(t *testing.T) {
+	m, _, _, _ := noRepoModel(t)
+	m, _ = runLaunch(t, m)
+
+	if bar := ansi.Strip(m.statusBar()); strings.Contains(bar, "PRs/Issues/Runs") {
+		t.Errorf("status bar advertises ⇥ outside a repo: %q", bar)
+	}
+	for _, g := range m.keyPanes() {
+		for _, h := range g.hints {
+			if h.key == "⇥" || h.key == "s" || h.key == "g" {
+				t.Errorf("legend lists %q (%s) outside a repo", h.key, h.label)
+			}
+		}
+	}
+
+	in := NewModel(t.TempDir(), "is:open", nil)
+	in.SetRepo("owner/repo")
+	in.width, in.height = 140, 30
+	if bar := ansi.Strip(in.statusBar()); !strings.Contains(bar, "PRs/Issues/Runs") {
+		t.Errorf("in-repo status bar lost PRs/Issues/Runs: %q", bar)
+	}
+}
