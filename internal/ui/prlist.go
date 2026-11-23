@@ -38,6 +38,7 @@ type Model struct {
 	state             string               // open | merged | closed; the s-toggle dimension
 	body              string               // state-agnostic qualifier (e.g. "author:@me", "")
 	mode              string               // "pr" | "issue" | "run"; the Tab-cycle dimension
+	omniHinted        string               // qualifier half last answered with the no-repo hint; never feeds the filter
 	omniServer        string               // committed server-side qualifier from the omni filter (Phase C); "" on the empty default
 	omniSeq           int                  // bumped on each server-qualifier change; gates the debounced SWR refetch
 	boards            map[string]boardView // each inactive board's saved state/preset, by mode (restored when Tab returns to it)
@@ -80,6 +81,7 @@ type Model struct {
 	filterInput       textinput.Model
 	omniSuggestCursor int // highlighted row in the @-mention autocomplete dropdown
 	repo              string
+	repoless          bool // SetRepo("") was called: launched outside any GitHub checkout
 	actions           map[string]action.Action
 	pending           *action.Action
 	pendingTargets    []gh.PRRef // per-selected pending's target rows, as of the prompt; confirmAnswer refuses a changed set
@@ -281,7 +283,26 @@ func (m *Model) stampRepo(prs []gh.PR) []gh.PR {
 	return out
 }
 
-func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo = repo, repo }
+func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo, m.repoless = repo, repo, repo == "" }
+
+// noRepo reports a launch outside any GitHub checkout: the board shows only
+// the cross-repo search, and every repo-scoped fetch is skipped. It keys on
+// an explicit SetRepo("") rather than an empty m.repo, which a model built
+// without SetRepo also has.
+func (m Model) noRepo() bool { return m.repoless }
+
+// noRepoHint finishes a "<feature> needs ..." message for a repo-scoped entry
+// point used outside a checkout.
+const noRepoHint = "a repo: start prdash inside a GitHub checkout"
+
+// repoLabel is the repo shown in headers: the launch repo, or "all repos"
+// outside a checkout.
+func (m Model) repoLabel() string {
+	if m.noRepo() {
+		return "all repos"
+	}
+	return m.repo
+}
 
 // SetReposRoot sets where other repos' local checkouts are looked up.
 func (m *Model) SetReposRoot(root string) { m.reposRoot = root }
@@ -1108,6 +1129,22 @@ func cursorDelta(key string) int {
 // applyFilter (instant), so a pure-text edit arms nothing.
 func (m *Model) omniServerCmd() tea.Cmd {
 	server, _ := parseOmni(m.filterInput.Value())
+	if m.noRepo() {
+		if server == m.omniHinted {
+			return nil
+		}
+		if server == "" {
+			m.omniHinted = ""
+			return nil
+		}
+		// hint is silent while an action runs; record only a shown hint so the
+		// qualifier is hinted again once it can be.
+		cmd := m.hint("search qualifiers need " + noRepoHint)
+		if cmd != nil {
+			m.omniHinted = server
+		}
+		return cmd
+	}
 	if server == m.omniServer {
 		return nil
 	}
@@ -1329,6 +1366,16 @@ func (m *Model) hydrate() bool {
 		m.hydrateIssueDetail()
 		return true
 	}
+	if m.sectionsDefault() && m.noRepo() {
+		cross, ok := m.cachedPRs(crossRepoFilter, crossRepoLimit)
+		if !ok {
+			return false
+		}
+		m.crossPRs = cross
+		m.setSections(nil, nil, nil, m.viewerLogin)
+		m.hydrateDetail()
+		return true
+	}
 	if m.sectionsDefault() {
 		rev, ok1 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
 		revd, _ := m.cachedPRs(searchFor("pr", m.state, reviewedBody), defaultLimit)
@@ -1520,6 +1567,9 @@ func (m Model) issueFetchCmd(filter string, replace bool) tea.Cmd {
 // they're independent, so wall-clock is the slowest of them, not their sum.
 // replace rides onto sectionsFetchedMsg.replace; see fetchCmd.
 func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
+	if m.noRepo() {
+		return m.noRepoSectionsFetchCmd(replace)
+	}
 	src := m.prSource
 	state := m.state
 	crossSrc := m.crossSource
@@ -1572,6 +1622,24 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
 			open: open.prs, openRaw: open.raw, replace: replace,
 			cross: cross.prs, crossRaw: cross.raw, crossOK: crossSrc != nil && cross.err == nil, crossErr: cross.err}
+	}
+}
+
+// noRepoSectionsFetchCmd is sectionsFetchCmd outside a repo: the cross-repo
+// search is the whole board, so its failure is the board error rather than a
+// hint, and a missing cross source lands an empty board.
+func (m Model) noRepoSectionsFetchCmd(replace bool) tea.Cmd {
+	crossSrc := m.crossSource
+	state := m.state
+	return func() tea.Msg {
+		if crossSrc == nil {
+			return sectionsFetchedMsg{state: state, crossOK: true, replace: replace}
+		}
+		cross, raw, err := crossSrc.FetchCrossRepoPRs(crossRepoFilter, crossRepoLimit)
+		if err != nil {
+			return fetchFailedMsg{err: err, mode: "pr", filter: searchFor("pr", state, ""), replace: replace}
+		}
+		return sectionsFetchedMsg{state: state, cross: cross, crossRaw: raw, crossOK: true, replace: replace}
 	}
 }
 
@@ -2113,6 +2181,11 @@ func (m Model) Init() tea.Cmd {
 // invalidateLaunchCache marks these same keys Stale at mutation dispatch, so
 // the gate can never trust a snapshot a mutation has since made questionable.
 func (m Model) launchGateKeys() []string {
+	if m.noRepo() {
+		// Gated even without a cross source: the key is then never written, so
+		// it is never fresh and the fetch lands the empty board.
+		return []string{prKey("", crossRepoFilter, crossRepoLimit)}
+	}
 	keys := []string{
 		prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit),
 		prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit),
@@ -2183,6 +2256,14 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 			}
 			return msg
 		})
+	}
+	if m.noRepo() {
+		// Issues, members and runs are repo-scoped; only the viewer (grouping,
+		// Mine) still applies.
+		if m.viewerLogin == "" {
+			cmds = append(cmds, m.fetchViewerCmd())
+		}
+		return cmds
 	}
 	// All-or-nothing, like the PR gate above: a fresh assigned half plus a
 	// missing wide half paints a board with no Others at all, so any one
@@ -2273,7 +2354,11 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.heldStatesCmd())
 	case sectionsFetchedMsg:
-		if m.cache != nil {
+		if m.cache != nil && m.noRepo() {
+			if msg.crossOK && msg.crossRaw != nil {
+				m.cache.Set(prKey(m.repo, crossRepoFilter, crossRepoLimit), msg.crossRaw)
+			}
+		} else if m.cache != nil {
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewedBody), defaultLimit), msg.reviewedRaw)
 			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
@@ -2469,7 +2554,12 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cache.Set(viewerKey(), raw)
 			}
 		}
-		if m.sectionsDefault() {
+		if m.sectionsDefault() && m.noRepo() {
+			if m.loaded {
+				// The cross rows already live in m.crossPRs; regroup them under the viewer.
+				m.setSections(nil, nil, nil, m.viewerLogin)
+			}
+		} else if m.sectionsDefault() {
 			rev, _ := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
 			revd, _ := m.cachedPRs(searchFor("pr", m.state, reviewedBody), defaultLimit)
 			open, ok := m.cachedPRs("is:open", openListLimit)
@@ -3067,6 +3157,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleFold()
 			return m, nil
 		case "s":
+			if m.noRepo() {
+				return m.statusHint("merged and closed need " + noRepoHint)
+			}
 			if m.mode == "run" {
 				cmd := m.cycleRunState()
 				return m, cmd
@@ -3078,9 +3171,13 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.filter = searchFor(m.mode, m.state, body)
 			return m, m.switchToFilter()
-		case "tab":
-			return m, m.cycleBoard(1)
-		case "shift+tab":
+		case "tab", "shift+tab":
+			if m.noRepo() {
+				return m.statusHint("Issues and Runs need " + noRepoHint)
+			}
+			if msg.String() == "tab" {
+				return m, m.cycleBoard(1)
+			}
 			return m, m.cycleBoard(-1)
 		case "ctrl+r":
 			// The one refresh the user asked for by name: held rows go once its
@@ -3113,6 +3210,9 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "g":
 			if m.mode != "pr" {
 				return m.prOnly("Grouping", "g")
+			}
+			if m.noRepo() {
+				return m.statusHint("Grouping by author needs " + noRepoHint)
 			}
 			if !m.sectionsDefault() {
 				return m.statusHint("Already grouped by author in this view")
@@ -3151,7 +3251,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filtering = true
 			cmds := []tea.Cmd{m.filterInput.Focus()}
-			if m.mode == "pr" {
+			if m.mode == "pr" && !m.noRepo() {
 				m.switchMembers(m.repo) // @-completion names the launch repo's users
 				if m.members == nil {
 					cmds = append(cmds, m.fetchMembersCmd(m.repo))
@@ -3166,6 +3266,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.filterInput.SetValue("")
+			m.omniHinted = ""
 			m.sel.clear()
 			anchor, order := m.cursorAnchor()
 			m.revealCursorRepo()
@@ -3544,10 +3645,16 @@ func (m Model) filterBar() string {
 	case m.filtering:
 		body = m.filterInput.View()
 	case m.filterInput.Value() != "":
+		tail := "  esc clears"
+		if server, _ := parseOmni(m.filterInput.Value()); m.noRepo() && server != "" {
+			tail = "  qualifiers need a repo · esc clears"
+		}
 		body = accentStyle.Render(truncate(m.filterInput.Value(), inner)) +
-			dimStyle.Render("  esc clears")
+			dimStyle.Render(tail)
 	case m.mode == "run":
 		body = dimStyle.Render("filter — branch: · workflow: · event: · @actor · text")
+	case m.noRepo():
+		body = dimStyle.Render("filter — text")
 	default:
 		body = dimStyle.Render("filter — @user · is: · text")
 	}
@@ -3759,16 +3866,18 @@ func accentFor(mode string) lipgloss.Style {
 // modeSegments renders the "PRs │ Issues │ Runs" board switch: each segment
 // carries its board glyph, and the active one is lit in that board's accent color.
 func modeSegments(active string) string {
-	return boardSegments(active, false)
+	return boardSegments(active, false, false)
 }
 
 // modeSegmentsCompact is modeSegments with the inactive boards reduced to their
 // glyph, for a header too narrow to fit all three names beside the repo.
 func modeSegmentsCompact(active string) string {
-	return boardSegments(active, true)
+	return boardSegments(active, true, false)
 }
 
-func boardSegments(active string, compact bool) string {
+// boardSegments renders every board, or only PRs when noRepo: Issues and Runs
+// are repo-scoped.
+func boardSegments(active string, compact, noRepo bool) string {
 	seg := func(name, mode string) string {
 		if mode == active {
 			return accentFor(mode).Bold(true).Render(modeGlyph(mode) + " " + name)
@@ -3777,6 +3886,9 @@ func boardSegments(active string, compact bool) string {
 			return dimStyle.Render(modeGlyph(mode))
 		}
 		return dimStyle.Render(modeGlyph(mode) + " " + name)
+	}
+	if noRepo {
+		return seg("PRs", "pr")
 	}
 	sep := dimStyle.Render(" │ ")
 	return seg("PRs", "pr") + sep + seg("Issues", "issue") + sep + seg("Runs", "run")
@@ -3789,7 +3901,7 @@ const minRepoCells = 12
 // header is the global top line: repo · board segments · (spinner) · (badge) ·
 // (selection). The current view (preset/state/count) lives on the list title.
 func (m Model) header() string {
-	boards := "  " + modeSegments(m.mode)
+	boards := "  " + boardSegments(m.mode, false, m.noRepo())
 	sel := ""
 	if n := m.sel.count(); n > 0 {
 		sel = "  " + selMarkStyle.Render(fmt.Sprintf("%d selected", n))
@@ -3807,12 +3919,12 @@ func (m Model) header() string {
 		return m.width - lipgloss.Width(boards) - lipgloss.Width(sel) - lipgloss.Width(spin) - 2
 	}
 	if budget("") < minRepoCells {
-		boards = "  " + modeSegmentsCompact(m.mode)
+		boards = "  " + boardSegments(m.mode, true, m.noRepo())
 	}
 	if budget(spin) < minRepoCells {
 		spin = ""
 	}
-	repo := truncateLeft(m.repo, budget(spin))
+	repo := truncateLeft(m.repoLabel(), budget(spin))
 	h := headerStyle.Render("  "+repo) + boards + spin
 	h += m.statusBadge(m.width - lipgloss.Width(h))
 	h += sel
@@ -4039,12 +4151,25 @@ func (m Model) keyPanes() []legendGroup {
 	if m.mode == "pr" {
 		nav = append(nav, keyHint{"→/l", "expand", nil}, keyHint{"e", "fold repo group", nil})
 	}
-	nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil}, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
+	if !m.noRepo() {
+		nav = append(nav, keyHint{"⇥", "PRs/Issues/Runs", nil})
+	}
+	nav = append(nav, keyHint{"space", "select", nil}, keyHint{"V", "cluster", nil})
 	groups = append(groups, legendGroup{"navigation", nav})
 
-	filters := []keyHint{{"/", "filter (@user, is:, text)", nil}, {"s", "state", nil}}
+	filterLabel := "filter (@user, is:, text)"
+	if m.noRepo() {
+		filterLabel = "filter (text)"
+	}
+	filters := []keyHint{{"/", filterLabel, nil}}
+	if !m.noRepo() {
+		filters = append(filters, keyHint{"s", "state", nil})
+	}
 	if m.mode == "pr" {
-		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil}, keyHint{"g", "group by author", nil})
+		filters = append(filters, keyHint{"R", "reviewers", nil}, keyHint{"D", "drafts", nil})
+		if !m.noRepo() {
+			filters = append(filters, keyHint{"g", "group by author", nil})
+		}
 	}
 	groups = append(groups, legendGroup{"filters", filters})
 
@@ -4463,8 +4588,10 @@ func (m Model) statusBar() string {
 	if m.mode == "run" {
 		enter = "logs"
 	}
-	cells = append(cells, keep("↵", enter), keep("a", "actions"),
-		statusCell{hint("⇥", "PRs/Issues/Runs"), shedBoard})
+	cells = append(cells, keep("↵", enter), keep("a", "actions"))
+	if !m.noRepo() {
+		cells = append(cells, statusCell{hint("⇥", "PRs/Issues/Runs"), shedBoard})
+	}
 	if m.mode == "run" {
 		cells = append(cells, statusCell{hint("r", "rerun"), shedRunExtra}, statusCell{hint("o", "open"), shedRunExtra})
 	}

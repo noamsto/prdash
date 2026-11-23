@@ -47,6 +47,15 @@ func (m *Model) withSwitchRef(v action.Vars, i int, dir string) action.Vars {
 
 var checkoutForFn = gh.CheckoutFor
 
+// switchOnlyNotice explains why a non-switch action cannot run on a row from
+// another repo; tail is appended verbatim.
+func (m Model) switchOnlyNotice(key, tail string) string {
+	if m.noRepo() {
+		return fmt.Sprintf("%s needs a launch repo: start prdash inside the repo's checkout%s", key, tail)
+	}
+	return fmt.Sprintf("%s runs only on %s rows%s", key, m.repo, tail)
+}
+
 // checkoutDir is the local checkout git and wt run in for a row of repo: the
 // launch directory for the launch repo, the sibling checkout under reposRoot
 // for any other.
@@ -252,7 +261,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		if dir != m.dir {
 			if !isWorktreeSwitch(argv) {
-				m.switchNotice = fmt.Sprintf("%s runs only on %s rows", a.Key, m.repo)
+				m.switchNotice = m.switchOnlyNotice(a.Key, "")
 				return nil
 			}
 			argv = otherRepoSwitchArgv(argv, dir)
@@ -771,7 +780,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		}
 		if dir != m.dir {
 			if a.ExitsTUI && !isWorktreeSwitch(argv) {
-				m.switchNotice = fmt.Sprintf("%s runs only on %s rows. No actions were queued.", a.Key, m.repo)
+				m.switchNotice = m.switchOnlyNotice(a.Key, ". No actions were queued.")
 				return nil
 			}
 			argv = otherRepoSwitchArgv(argv, dir)

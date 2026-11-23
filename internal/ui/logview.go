@@ -443,7 +443,7 @@ func (m Model) logViewRender() string {
 	}
 	repo := m.logRepo
 	if repo == "" {
-		repo = m.repo
+		repo = m.repoLabel()
 	}
 	bw := m.expandedBoxWidth()
 	head := headerStyle.Render(expandedHeader(repo, n, bw))

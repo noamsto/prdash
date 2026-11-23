@@ -10,6 +10,9 @@ import (
 )
 
 func (s GraphSource) FetchIssues(filter string, limit int) ([]Issue, []byte, error) {
+	if s.repo == "" {
+		return nil, nil, ErrNoRepo
+	}
 	issues, err := s.queryIssues(context.Background(), filter, limit)
 	if err != nil {
 		return nil, nil, err

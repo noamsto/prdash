@@ -1,0 +1,27 @@
+direction: down
+
+main: "main.go\nresolveRepo(dir)"
+notice: "RunNotice + exit 1\n(other errors only)"
+build: "buildModel\nSetRepo(\"\")" { class: good }
+gs: "gh.GraphSource{repo: \"\"}"
+
+launch: "launchFetchCmds" {
+  sections: "sectionsFetchCmd\nnoRepo: cross only" { class: good }
+  prewarm: "issues / members / runs\nskipped when noRepo" { class: good }
+}
+
+cross: "FetchCrossRepoPRs\n'is:pr … author:@me'\n'is:pr … user:@me'" { class: good }
+guards: "FetchPRs · FetchIssues\nreturn ErrNoRepo\n(never 'repo:')" { class: good }
+board: "PRSection\nrepo groups only\nheader 'all repos'" { class: good }
+keys: "Tab · s · g · qualifiers\nstatus hint" { class: good }
+actions: "row actions\nCheckoutFor(row.Repo)"
+
+main -> notice: "other error"
+main -> build: "ErrNoRepo → \"\"" { class: good }
+main -> gs
+build -> launch
+launch.sections -> cross: "1 aliased search" { style.animated: true }
+launch.sections -> guards: "not called" { style.stroke-dash: 3 }
+cross -> board { style.animated: true }
+board -> keys
+board -> actions

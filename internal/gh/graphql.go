@@ -53,17 +53,24 @@ func NewGraphSource(token, repo string) GraphSource {
 }
 
 func (s GraphSource) FetchPRs(filter string, limit int) ([]PR, []byte, error) {
+	if s.repo == "" {
+		return nil, nil, ErrNoRepo
+	}
 	// gh pr list --search implicitly scopes to the repo and to PRs; the raw
 	// search API needs both qualifiers spelled out.
 	return s.fetchSearch(fmt.Sprintf("repo:%s is:pr %s", s.repo, filter), limit)
 }
 
 // FetchCrossRepoPRs lists PRs matching filter in every repo except s.repo that
-// the viewer authored or that live under their account. GitHub search can't OR
-// author: with user:, so the two searches share one aliased request and merge
-// here: deduped by PR, newest first, capped at limit.
+// the viewer authored or that live under their account (every repo when s.repo
+// is empty). GitHub search can't OR author: with user:, so the two searches
+// share one aliased request and merge here: deduped by PR, newest first, capped
+// at limit.
 func (s GraphSource) FetchCrossRepoPRs(filter string, limit int) (prs []PR, raw []byte, err error) {
-	base := fmt.Sprintf("is:pr -repo:%s %s", s.repo, filter)
+	base := "is:pr " + filter
+	if s.repo != "" {
+		base = fmt.Sprintf("is:pr -repo:%s %s", s.repo, filter)
+	}
 	var res struct {
 		Authored struct {
 			Nodes []struct {

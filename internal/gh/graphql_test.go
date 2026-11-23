@@ -217,3 +217,64 @@ func TestFetchCrossRepoPRs(t *testing.T) {
 		t.Errorf("raw round-trip = %d PRs, err %v; want 3", len(back), err)
 	}
 }
+
+func TestFetchCrossRepoPRsNoRepo(t *testing.T) {
+	var gotAuthored, gotOwned string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var req struct {
+			Variables struct {
+				Authored string `json:"authored"`
+				Owned    string `json:"owned"`
+			} `json:"variables"`
+		}
+		_ = json.Unmarshal(b, &req)
+		gotAuthored, gotOwned = req.Variables.Authored, req.Variables.Owned
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"authored":{"nodes":[]},"owned":{"nodes":[]}}}`))
+	}))
+	defer srv.Close()
+
+	s := testQuerySource(srv, "")
+	if _, _, err := s.FetchCrossRepoPRs("is:open archived:false sort:updated-desc", 3); err != nil {
+		t.Fatalf("FetchCrossRepoPRs: %v", err)
+	}
+	if want := "is:pr is:open archived:false sort:updated-desc author:@me"; gotAuthored != want {
+		t.Errorf("authored q = %q, want %q", gotAuthored, want)
+	}
+	if want := "is:pr is:open archived:false sort:updated-desc user:@me"; gotOwned != want {
+		t.Errorf("owned q = %q, want %q", gotOwned, want)
+	}
+	if strings.Contains(gotAuthored, "repo:") || strings.Contains(gotOwned, "repo:") {
+		t.Errorf("no-repo queries must not contain repo: %q / %q", gotAuthored, gotOwned)
+	}
+}
+
+func TestEmptyRepoFetchesNeverQuery(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	gs := testQuerySource(srv, "")
+	rest := testSource(srv, "", "tok")
+	calls := map[string]func() error{
+		"FetchPRs":             func() error { _, _, err := gs.FetchPRs("is:open", 10); return err },
+		"FetchIssues":          func() error { _, _, err := gs.FetchIssues("is:open", 10); return err },
+		"FetchIssueDetail":     func() error { _, _, err := gs.FetchIssueDetail(1); return err },
+		"FetchAssignableUsers": func() error { _, _, err := gs.FetchAssignableUsers(""); return err },
+		"ListRuns":             func() error { _, _, err := rest.ListRuns(10); return err },
+		"ListRunJobs":          func() error { _, _, err := rest.ListRunJobs(1); return err },
+	}
+	for name, call := range calls {
+		if err := call(); err == nil {
+			t.Errorf("%s: want error for empty repo, got nil", name)
+		}
+	}
+	if requests != 0 {
+		t.Errorf("HTTP requests = %d, want 0", requests)
+	}
+}
