@@ -80,6 +80,7 @@ type Model struct {
 	filterInput       textinput.Model
 	omniSuggestCursor int // highlighted row in the @-mention autocomplete dropdown
 	repo              string
+	repoless          bool // SetRepo("") was called: launched outside any GitHub checkout
 	actions           map[string]action.Action
 	pending           *action.Action
 	pendingTargets    []gh.PRRef // per-selected pending's target rows, as of the prompt; confirmAnswer refuses a changed set
@@ -281,7 +282,13 @@ func (m *Model) stampRepo(prs []gh.PR) []gh.PR {
 	return out
 }
 
-func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo = repo, repo }
+func (m *Model) SetRepo(repo string) { m.repo, m.membersRepo, m.repoless = repo, repo, repo == "" }
+
+// noRepo reports a launch outside any GitHub checkout: the board shows only
+// the cross-repo search, and every repo-scoped fetch is skipped. It keys on
+// an explicit SetRepo("") rather than an empty m.repo, which a model built
+// without SetRepo also has.
+func (m Model) noRepo() bool { return m.repoless }
 
 // SetReposRoot sets where other repos' local checkouts are looked up.
 func (m *Model) SetReposRoot(root string) { m.reposRoot = root }
@@ -1329,6 +1336,16 @@ func (m *Model) hydrate() bool {
 		m.hydrateIssueDetail()
 		return true
 	}
+	if m.sectionsDefault() && m.noRepo() {
+		cross, ok := m.cachedPRs(crossRepoFilter, crossRepoLimit)
+		if !ok {
+			return false
+		}
+		m.crossPRs = cross
+		m.setSections(nil, nil, nil, m.viewerLogin)
+		m.hydrateDetail()
+		return true
+	}
 	if m.sectionsDefault() {
 		rev, ok1 := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
 		revd, _ := m.cachedPRs(searchFor("pr", m.state, reviewedBody), defaultLimit)
@@ -1520,6 +1537,9 @@ func (m Model) issueFetchCmd(filter string, replace bool) tea.Cmd {
 // they're independent, so wall-clock is the slowest of them, not their sum.
 // replace rides onto sectionsFetchedMsg.replace; see fetchCmd.
 func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
+	if m.noRepo() {
+		return m.noRepoSectionsFetchCmd(replace)
+	}
 	src := m.prSource
 	state := m.state
 	crossSrc := m.crossSource
@@ -1572,6 +1592,25 @@ func (m Model) sectionsFetchCmd(replace bool) tea.Cmd {
 			reviewed: reviewed.prs, reviewedRaw: reviewed.raw,
 			open: open.prs, openRaw: open.raw, replace: replace,
 			cross: cross.prs, crossRaw: cross.raw, crossOK: crossSrc != nil && cross.err == nil, crossErr: cross.err}
+	}
+}
+
+// noRepoSectionsFetchCmd is sectionsFetchCmd outside a repo: the cross-repo
+// search is the whole board, so its failure is the board error rather than a
+// hint. A missing cross source lands an empty board instead of falling back to
+// a repo-scoped search.
+func (m Model) noRepoSectionsFetchCmd(replace bool) tea.Cmd {
+	crossSrc := m.crossSource
+	state := m.state
+	return func() tea.Msg {
+		if crossSrc == nil {
+			return sectionsFetchedMsg{state: state, crossOK: true, replace: replace}
+		}
+		cross, raw, err := crossSrc.FetchCrossRepoPRs(crossRepoFilter, crossRepoLimit)
+		if err != nil {
+			return fetchFailedMsg{err: err, mode: "pr", filter: searchFor("pr", state, ""), replace: replace}
+		}
+		return sectionsFetchedMsg{state: state, cross: cross, crossRaw: raw, crossOK: true, replace: replace}
 	}
 }
 
@@ -2113,6 +2152,11 @@ func (m Model) Init() tea.Cmd {
 // invalidateLaunchCache marks these same keys Stale at mutation dispatch, so
 // the gate can never trust a snapshot a mutation has since made questionable.
 func (m Model) launchGateKeys() []string {
+	if m.noRepo() {
+		// Gated even without a cross source: the key is then never written, so
+		// it is never fresh and the fetch lands the empty board.
+		return []string{prKey("", crossRepoFilter, crossRepoLimit)}
+	}
 	keys := []string{
 		prKey(m.repo, searchFor("pr", m.state, reviewBody), defaultLimit),
 		prKey(m.repo, searchFor("pr", m.state, reviewedBody), defaultLimit),
@@ -2183,6 +2227,14 @@ func (m Model) launchFetchCmds() []tea.Cmd {
 			}
 			return msg
 		})
+	}
+	if m.noRepo() {
+		// Issues, members and runs are repo-scoped; only the viewer (grouping,
+		// Mine) still applies.
+		if m.viewerLogin == "" {
+			cmds = append(cmds, m.fetchViewerCmd())
+		}
+		return cmds
 	}
 	// All-or-nothing, like the PR gate above: a fresh assigned half plus a
 	// missing wide half paints a board with no Others at all, so any one
@@ -2273,7 +2325,11 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.detailCmdForCursor(), m.heldStatesCmd())
 	case sectionsFetchedMsg:
-		if m.cache != nil {
+		if m.cache != nil && m.noRepo() {
+			if msg.crossOK && msg.crossRaw != nil {
+				m.cache.Set(prKey(m.repo, crossRepoFilter, crossRepoLimit), msg.crossRaw)
+			}
+		} else if m.cache != nil {
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewBody), defaultLimit), msg.reviewRaw)
 			m.cache.Set(prKey(m.repo, searchFor("pr", msg.state, reviewedBody), defaultLimit), msg.reviewedRaw)
 			m.cache.Set(prKey(m.repo, "is:open", openListLimit), msg.openRaw)
@@ -2469,7 +2525,12 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cache.Set(viewerKey(), raw)
 			}
 		}
-		if m.sectionsDefault() {
+		if m.sectionsDefault() && m.noRepo() {
+			if m.loaded {
+				// The cross rows already live in m.crossPRs; regroup them under the viewer.
+				m.setSections(nil, nil, nil, m.viewerLogin)
+			}
+		} else if m.sectionsDefault() {
 			rev, _ := m.cachedPRs(searchFor("pr", m.state, reviewBody), defaultLimit)
 			revd, _ := m.cachedPRs(searchFor("pr", m.state, reviewedBody), defaultLimit)
 			open, ok := m.cachedPRs("is:open", openListLimit)

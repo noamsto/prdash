@@ -27,7 +27,8 @@ key.
 
 ## Install
 
-Run in any GitHub repo checkout (requires the [`gh`](https://cli.github.com) CLI,
+Run anywhere: inside a GitHub checkout it shows that repo first; elsewhere it
+shows the all-repos board (requires the [`gh`](https://cli.github.com) CLI,
 authenticated):
 
 ```sh
@@ -107,9 +108,9 @@ pointer is over the visible preview pane.
 ## Repo groups
 
 The default PR board (state `open`, no typed qualifier) groups PRs by
-repository. The current repo's group comes first, with its Review
-requested / Mine / Others sections (or by author under `g`). It always leads
-the board and is always expanded; with no open PRs of its own it shows its
+repository. Inside a checkout, the current repo's group comes first, with its
+Review requested / Mine / Others sections (or by author under `g`). It always
+leads the board and is always expanded; with no open PRs of its own it shows its
 header with a muted `no open PRs` line. Below it, one
 group per other repo with an open PR you opened, or any open PR in a repo
 you own, newest activity first.
@@ -139,6 +140,14 @@ for the rows it shows, so folding a group takes its PRs out of that work.
   folds: `e` on it is a no-op with a status hint.
 - `/` matches PRs inside folded groups, and reveals the group when you clear or
   leave the filter on a match.
+- **Outside a repo:** run from a directory that isn't a GitHub checkout, the
+  board shows only the cross-repo groups (PRs you opened, plus any open PR in a
+  repo you own), newest group first, each foldable with `e`. The header reads
+  `all repos`; there is no current-repo group. The Issues and Runs boards (`⇥`),
+  the state cycle `s` (merged, closed), `g` and typed qualifiers in `/` need a
+  repo and answer with a status hint. `/` still fuzzy-finds. Worktree actions
+  (`enter`, `W`, `X`) use the checkout at `$PRDASH_REPOS_ROOT/<owner>/<repo>`
+  for every row.
 - **Worktrees on another repo:** `enter`, `W` and `X` use the checkout at
   `$PRDASH_REPOS_ROOT/<owner>/<repo>` (default `~/git`), only if its `origin` is
   that repo. Otherwise prdash shows a notice with the path it tried and does
