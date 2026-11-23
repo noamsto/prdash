@@ -450,7 +450,7 @@ func TestNoRepoQualifierHintWaitsForVisibleHint(t *testing.T) {
 	}
 
 	m.actionStatus = &actionStat{settled: true}
-	m, _ = typeOmni(t, m, "x")
+	m, _ = typeOmni(t, m, " x")
 	if got := failText(m); !strings.Contains(got, "search qualifiers need") {
 		t.Errorf("hint after settling = %q", got)
 	}
