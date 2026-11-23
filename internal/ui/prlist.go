@@ -156,6 +156,8 @@ type Model struct {
 	viewerLogin       string                 // authenticated user's login; splits Mine from Others in the sections view
 	pendingExec       [][]string             // exits-TUI commands to run after quit when no orchestrator sink is set
 	reposRoot         string                 // parent of the sibling checkouts other-repo rows run git/wt in
+	launchRemote      bool                   // the launch repo has no checkout at m.dir (--repo from elsewhere)
+	pathFree          bool                   // a checkout-less worktree switch hands off a remote entry instead of a notice
 	switchNotice      string                 // read-only wt preflight failure; held until a keypress
 	switchChecking    bool                   // a switchPreflightCmd is in flight; blocks a second dispatch
 	themeMode         string                 // "light"|"dark"; active palette mode
@@ -306,6 +308,14 @@ func (m Model) repoLabel() string {
 
 // SetReposRoot sets where other repos' local checkouts are looked up.
 func (m *Model) SetReposRoot(root string) { m.reposRoot = root }
+
+// SetLaunchCheckout records whether the launch directory is a checkout of the
+// launch repo; false makes the launch repo resolve like any other repo.
+func (m *Model) SetLaunchCheckout(local bool) { m.launchRemote = !local }
+
+// SetPathFree lets a worktree switch on a row without a local checkout hand
+// off a path-free entry for the orchestrator to resolve.
+func (m *Model) SetPathFree(on bool) { m.pathFree = on }
 
 // ciRerunWindow is how long a PR keeps its optimistic checks-in-progress state
 // after an update-branch or rerun. Long enough for GitHub to queue the new runs,
@@ -2755,6 +2765,7 @@ func (m Model) updateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, argv := range msg.queue {
 			m.queueExit(msg.key, argv)
 		}
+		m.writeRemote(msg.remote)
 		if msg.exitsTUI {
 			return m, tea.Quit
 		}

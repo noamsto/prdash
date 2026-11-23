@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -27,10 +29,64 @@ func resolveRepo(dir string) (string, error) {
 	return repo, err
 }
 
+var (
+	repoOwnerRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
+	repoNameRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
+
+func validRepoFlag(v string) bool {
+	owner, name, ok := strings.Cut(v, "/")
+	return ok && repoOwnerRe.MatchString(owner) && repoNameRe.MatchString(name) && name != "." && name != ".."
+}
+
+// parseRepoFlag extracts --repo from args wherever it appears. Everything else
+// is ignored so a launch without --repo behaves exactly as before.
+func parseRepoFlag(args []string) (repo string, given bool, err error) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		name, val, hasVal := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-"), "=")
+		if !strings.HasPrefix(arg, "-") || name != "repo" {
+			continue
+		}
+		if !hasVal {
+			if i+1 >= len(args) {
+				return "", true, errors.New("--repo needs a value: owner/name")
+			}
+			i++
+			val = args[i]
+		}
+		repo, given = val, true
+	}
+	if given && !validRepoFlag(repo) {
+		return "", true, fmt.Errorf("invalid --repo %q: want owner/name", repo)
+	}
+	return repo, given, nil
+}
+
+// launchRepo resolves the launch repo. With a --repo flag the flag wins and
+// local reports whether dir is a checkout of it; otherwise it is resolveRepo's.
+func launchRepo(dir, flagRepo string) (repo string, local bool, err error) {
+	if flagRepo == "" {
+		repo, err = resolveRepo(dir)
+		return repo, true, err
+	}
+	cwdRepo, err := resolveRepo(dir)
+	return flagRepo, err == nil && strings.EqualFold(cwdRepo, flagRepo), nil
+}
+
 func main() {
 	dir, _ := os.Getwd()
 
-	repo, err := resolveRepo(dir)
+	flagRepo, pathFree, err := parseRepoFlag(os.Args[1:])
+	if err != nil {
+		ui.RunNotice("prdash", err.Error()) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
+		os.Exit(1)
+	}
+
+	repo, local, err := launchRepo(dir, flagRepo)
 	if err != nil {
 		ui.RunNotice("prdash", fmt.Sprintf("Could not resolve the GitHub repo.\n\n%s", err)) //nolint:errcheck,gosec // G104: best-effort notice before the process exits
 		os.Exit(1)
@@ -56,6 +112,8 @@ func main() {
 	c := cache.Open(filepath.Join(stateDir, "prdash", "results-cache.json"))
 
 	m := buildModel(dir, repo, gh.NewGraphSource(tok, repo), c)
+	m.SetLaunchCheckout(local)
+	m.SetPathFree(pathFree)
 
 	final, err := tea.NewProgram(m).Run()
 	c.Flush() // persist any debounced cache writes before we exit

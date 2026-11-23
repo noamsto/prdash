@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -49,7 +50,10 @@ var checkoutForFn = gh.CheckoutFor
 
 // switchOnlyNotice explains why a non-switch action cannot run on a row from
 // another repo; tail is appended verbatim.
-func (m Model) switchOnlyNotice(key, tail string) string {
+func (m Model) switchOnlyNotice(key, repo, tail string) string {
+	if m.launchRemote {
+		return fmt.Sprintf("%s needs prdash started in %s's checkout%s", key, m.repo, tail)
+	}
 	if m.noRepo() {
 		return fmt.Sprintf("%s needs a launch repo: start prdash inside the repo's checkout%s", key, tail)
 	}
@@ -60,7 +64,7 @@ func (m Model) switchOnlyNotice(key, tail string) string {
 // launch directory for the launch repo, the sibling checkout under reposRoot
 // for any other.
 func (m Model) checkoutDir(repo string) (string, error) {
-	if repo == "" || strings.EqualFold(repo, m.repo) {
+	if repo == "" || (strings.EqualFold(repo, m.repo) && !m.launchRemote) {
 		return m.dir, nil
 	}
 	return checkoutForFn(m.reposRoot, repo)
@@ -169,6 +173,49 @@ func (m *Model) queueExit(key string, argv []string) {
 	m.pendingExec = append(m.pendingExec, argv)
 }
 
+// writeRemote appends path-free entries to the handoff file.
+func (m *Model) writeRemote(entries []action.HandoffEntry) {
+	path := os.Getenv("PRDASH_ACTION_FILE")
+	for _, e := range entries {
+		_ = action.AppendHandoffRemote(path, e)
+	}
+}
+
+// remoteEntry builds the path-free handoff for a worktree switch on row i when
+// its repo has no local checkout; ok is false when the row must fall back to
+// the checkout error notice.
+func (m *Model) remoteEntry(a action.Action, v action.Vars, i int, cerr error) (e action.HandoffEntry, ok bool) {
+	var ce *gh.CheckoutError
+	if !m.pathFree || !errors.As(cerr, &ce) || os.Getenv("PRDASH_ACTION_FILE") == "" {
+		return e, false
+	}
+	e = action.HandoffEntry{Repo: v.Repo, Kind: "issue", Target: v.Branch, Key: a.Key}
+	if ps, isPR := m.section.(*PRSection); isPR && i >= 0 && i < ps.Len() {
+		p := ps.prAt(i)
+		e.Kind, e.PR, e.Target = "pr", p.Number, p.HeadRefName
+		if p.IsCrossRepository || !safeHeadRef(p.HeadRefName) {
+			e.Target = fmt.Sprintf("pr:%d", p.Number)
+		}
+		v.SwitchRef = e.Target
+	}
+	argv, err := a.ExpandArgv(v)
+	if err != nil || !isWorktreeSwitch(argv) {
+		return e, false
+	}
+	if argv[1] == "-C" {
+		argv = argv[2:]
+	}
+	e.Args = argv[1:]
+	e.Target = argv[len(argv)-1]
+	return e, true
+}
+
+var headRefRe = regexp.MustCompile(`^[A-Za-z0-9._/@+-]+$`)
+
+func safeHeadRef(ref string) bool {
+	return !strings.HasPrefix(ref, "-") && headRefRe.MatchString(ref)
+}
+
 func isWorktreeSwitch(argv []string) bool {
 	if len(argv) >= 4 && argv[0] == "wt" && argv[1] == "-C" {
 		return argv[3] == "switch"
@@ -188,7 +235,7 @@ type switchItem struct {
 // switchPreflightCmd runs the (potentially slow) wt-list + git inspection for
 // each item in order off the Update goroutine, stopping at the first
 // collision. This is what keeps `enter`/`W` from freezing the TUI.
-func switchPreflightCmd(key string, items []switchItem, exitsTUI bool) tea.Cmd {
+func switchPreflightCmd(key string, items []switchItem, exitsTUI bool, remote []action.HandoffEntry) tea.Cmd {
 	return func() tea.Msg {
 		for i, it := range items {
 			r, err := preflightSwitchFn(it.dir, it.branch)
@@ -208,7 +255,7 @@ func switchPreflightCmd(key string, items []switchItem, exitsTUI bool) tea.Cmd {
 		for i, it := range items {
 			queue[i] = it.argv
 		}
-		return switchPreflightMsg{key: key, queue: queue, exitsTUI: exitsTUI}
+		return switchPreflightMsg{key: key, queue: queue, exitsTUI: exitsTUI, remote: remote}
 	}
 }
 
@@ -251,6 +298,10 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 	if a.ExitsTUI {
 		dir, err := m.checkoutDir(v.Repo)
 		if err != nil {
+			if e, ok := m.remoteEntry(a, v, m.cursor, err); ok {
+				m.writeRemote([]action.HandoffEntry{e})
+				return tea.Quit
+			}
 			m.switchNotice = err.Error()
 			return nil
 		}
@@ -261,7 +312,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 		}
 		if dir != m.dir {
 			if !isWorktreeSwitch(argv) {
-				m.switchNotice = m.switchOnlyNotice(a.Key, "")
+				m.switchNotice = m.switchOnlyNotice(a.Key, v.Repo, "")
 				return nil
 			}
 			argv = otherRepoSwitchArgv(argv, dir)
@@ -280,7 +331,7 @@ func (m *Model) runAction(a action.Action) tea.Cmd {
 			return nil // a preflight is already in flight; ignore the repeat keypress
 		}
 		m.switchChecking = true
-		return tea.Batch(switchPreflightCmd(a.Key, []switchItem{{argv: argv, branch: v.Branch, dir: dir}}, true), m.startSpinner())
+		return tea.Batch(switchPreflightCmd(a.Key, []switchItem{{argv: argv, branch: v.Branch, dir: dir}}, true, nil), m.startSpinner())
 	}
 
 	switch a.Command.Builtin {
@@ -763,6 +814,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 	// The only non-native bulk actions are exits-TUI worktree fan-outs.
 	var items []switchItem
 	var unresolved []string
+	var remote []action.HandoffEntry
 	for _, i := range m.selectedOrCursor() {
 		if i < 0 || i >= m.section.Len() {
 			continue
@@ -770,6 +822,10 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		v := m.varsAt(i)
 		dir, err := m.checkoutDir(v.Repo)
 		if err != nil {
+			if e, ok := m.remoteEntry(a, v, i, err); ok {
+				remote = append(remote, e)
+				continue
+			}
 			unresolved = append(unresolved, err.Error())
 			continue
 		}
@@ -780,7 +836,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		}
 		if dir != m.dir {
 			if a.ExitsTUI && !isWorktreeSwitch(argv) {
-				m.switchNotice = m.switchOnlyNotice(a.Key, ". No actions were queued.")
+				m.switchNotice = m.switchOnlyNotice(a.Key, v.Repo, ". No actions were queued.")
 				return nil
 			}
 			argv = otherRepoSwitchArgv(argv, dir)
@@ -792,7 +848,11 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return nil
 	}
 	if len(items) == 0 {
-		return nil
+		if len(remote) == 0 {
+			return nil
+		}
+		m.writeRemote(remote)
+		return tea.Quit
 	}
 	// Fast, synchronous path: not a worktree switch, or no working directory yet
 	// (test doubles and callers constructing a model before selecting a repo) —
@@ -802,6 +862,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		for _, it := range items {
 			m.queueExit(a.Key, it.argv)
 		}
+		m.writeRemote(remote)
 		if a.ExitsTUI {
 			return tea.Quit
 		}
@@ -811,7 +872,7 @@ func (m *Model) runBulk(a action.Action) tea.Cmd {
 		return nil
 	}
 	m.switchChecking = true
-	return tea.Batch(switchPreflightCmd(a.Key, items, a.ExitsTUI), m.startSpinner())
+	return tea.Batch(switchPreflightCmd(a.Key, items, a.ExitsTUI, remote), m.startSpinner())
 }
 
 func (m Model) resolvePRAction(a action.Action) action.Action {

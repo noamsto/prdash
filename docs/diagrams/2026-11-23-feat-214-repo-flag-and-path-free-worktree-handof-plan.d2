@@ -1,0 +1,12 @@
+flag: "--repo owner/name\nmain.go parseRepoFlag (new)" { style.stroke: green }
+launch: "launchRepo -> repo, local (new)" { style.stroke: green }
+model: "Model.SetLaunchCheckout / SetPathFree (new)" { style.stroke: green }
+dir: "checkoutDir: m.dir only when local\nelse checkoutForFn(reposRoot)" { style.stroke: green }
+exit: "runAction / runBulk"
+remote: "remoteEntry (new)\nrepo, kind, target, pr, args, key" { style.stroke: green }
+file: "PRDASH_ACTION_FILE\nkey TAB {json} line"
+notice: "notice (unchanged without --repo\nor without ACTION_FILE)"
+flag -> launch -> model -> dir -> exit
+exit -> remote: "CheckoutError + pathFree + ACTION_FILE"
+remote -> file
+exit -> notice: "otherwise"
