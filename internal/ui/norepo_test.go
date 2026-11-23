@@ -218,7 +218,7 @@ func TestNoRepoHydratePaintsCrossCache(t *testing.T) {
 
 func TestNoRepoViewerArrivalRepaints(t *testing.T) {
 	m, cross, _, _ := noRepoModel(t)
-	m, _ = update(m, collectMsgs(t, m.sectionsFetchCmd(true))[0])
+	m, _ = update(m, msgOf[sectionsFetchedMsg](t, collectMsgs(t, m.sectionsFetchCmd(true))))
 	if cross.callCount() != 1 || !m.loaded {
 		t.Fatalf("setup: cross calls = %d, loaded = %v", cross.callCount(), m.loaded)
 	}
@@ -311,7 +311,7 @@ func TestNoRepoRepoScopedKeysHint(t *testing.T) {
 		{"s", "merged and closed need"},
 		{"g", "Grouping by author needs"},
 	} {
-		m.actionStatus = nil
+		m.actionStatus = &actionStat{settled: true}
 		var cmd tea.Cmd
 		m, cmd = update(m, keyMsg(tc.key))
 		if cmd == nil {
